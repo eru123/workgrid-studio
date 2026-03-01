@@ -2,7 +2,8 @@ import { useState, useCallback } from "react";
 import { useSchemaStore } from "@/state/schemaStore";
 import { useProfilesStore } from "@/state/profilesStore";
 import { useLayoutStore } from "@/state/layoutStore";
-import { dbListDatabases, dbListTables, dbListColumns } from "@/lib/db";
+import { useEffect } from "react";
+import { dbListDatabases, dbListTables, dbListColumns, dbDisconnect } from "@/lib/db";
 import { cn } from "@/lib/utils/cn";
 import {
     Database,
@@ -15,8 +16,25 @@ import {
     PlugZap,
     Loader2,
     AlertCircle,
-    HardDrive,
+    FolderPlus,
+    Maximize2,
+    Minimize2,
+    RefreshCw,
 } from "lucide-react";
+import {
+    SiPostgresql,
+    SiMysql,
+    SiSqlite,
+    SiMariadb,
+} from "react-icons/si";
+
+const DB_ICONS: Record<string, any> = {
+    postgres: SiPostgresql,
+    mysql: SiMysql,
+    sqlite: SiSqlite,
+    mariadb: SiMariadb,
+    mssql: Database
+};
 
 type ExpandedSet = Record<string, boolean>;
 
@@ -26,6 +44,15 @@ export function ExplorerTree() {
     const [expanded, setExpanded] = useState<ExpandedSet>({});
 
     const connectedList = profiles.filter((p) => p.connectionStatus === "connected");
+
+    const [contextMenu, setContextMenu] = useState<{ id: string, x: number, y: number } | null>(null);
+
+    // Hide context menu on click outside
+    useEffect(() => {
+        const handleClick = () => setContextMenu(null);
+        window.addEventListener("click", handleClick);
+        return () => window.removeEventListener("click", handleClick);
+    }, []);
 
     const toggle = useCallback((key: string) => {
         setExpanded((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -53,11 +80,125 @@ export function ExplorerTree() {
                         profileId={profile.id}
                         name={meta?.name ?? profile.name}
                         color={meta?.color ?? profile.color}
+                        type={profile.type}
                         expanded={expanded}
                         toggle={toggle}
+                        onContextMenu={(e) => {
+                            e.preventDefault();
+                            setContextMenu({ id: profile.id, x: e.clientX, y: e.clientY });
+                        }}
                     />
                 );
             })}
+
+            {/* Context Menu Dropdown */}
+            {contextMenu && (() => {
+                const profile = profiles.find((p) => p.id === contextMenu.id);
+                if (!profile) return null;
+
+                const handleDisconnect = async () => {
+                    setContextMenu(null);
+                    try { await dbDisconnect(profile.id); } catch { /* ignore */ }
+                    useProfilesStore.getState().setConnectionStatus(profile.id, "disconnected");
+                    useSchemaStore.getState().removeConnection(profile.id);
+                };
+
+                const handleRefresh = async () => {
+                    setContextMenu(null);
+                    const schemaStore = useSchemaStore.getState();
+                    schemaStore.setLoading(profile.id, "databases", true);
+                    schemaStore.clearError(`dbs-${profile.id}`);
+                    try {
+                        const dbs = await dbListDatabases(profile.id);
+                        schemaStore.setDatabases(profile.id, dbs);
+                        setExpanded(prev => ({ ...prev, [`profile-${profile.id}`]: true }));
+                    } catch (e) {
+                        schemaStore.setError(`dbs-${profile.id}`, String(e));
+                    } finally {
+                        schemaStore.setLoading(profile.id, "databases", false);
+                    }
+                };
+
+                const handleCreateDatabase = () => {
+                    setContextMenu(null);
+                    alert("Create Database feature not yet implemented.");
+                };
+
+                const handleExpandAll = () => {
+                    setContextMenu(null);
+                    const dbs = useSchemaStore.getState().databases[profile.id];
+                    if (dbs) {
+                        setExpanded(prev => {
+                            const next = { ...prev, [`profile-${profile.id}`]: true };
+                            dbs.forEach(db => {
+                                next[`db-${profile.id}::${db}`] = true;
+                            });
+                            return next;
+                        });
+                    }
+                };
+
+                const handleCollapseAll = () => {
+                    setContextMenu(null);
+                    setExpanded(prev => {
+                        const next = { ...prev };
+                        Object.keys(next).forEach(k => {
+                            if (k.startsWith(`db-${profile.id}::`) || k === `profile-${profile.id}`) {
+                                next[k] = false;
+                            }
+                        });
+                        return next;
+                    });
+                };
+
+                return (
+                    <div
+                        className="fixed z-[100] min-w-[180px] bg-popover text-popover-foreground border rounded-md shadow-md p-1 text-xs"
+                        style={{
+                            top: Math.min(contextMenu.y, window.innerHeight - 200),
+                            left: Math.min(contextMenu.x, window.innerWidth - 180),
+                        }}
+                    >
+                        <button
+                            className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2"
+                            onClick={handleDisconnect}
+                        >
+                            <PlugZap className="w-3.5 h-3.5 text-red-500" />
+                            Disconnect
+                        </button>
+                        <button
+                            className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2"
+                            onClick={handleRefresh}
+                        >
+                            <RefreshCw className="w-3.5 h-3.5 text-muted-foreground" />
+                            Refresh
+                        </button>
+                        <div className="h-px bg-border my-1 mx-1" />
+                        <button
+                            className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2"
+                            onClick={handleCreateDatabase}
+                        >
+                            <FolderPlus className="w-3.5 h-3.5 text-muted-foreground" />
+                            Create Database...
+                        </button>
+                        <div className="h-px bg-border my-1 mx-1" />
+                        <button
+                            className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2"
+                            onClick={handleExpandAll}
+                        >
+                            <Maximize2 className="w-3.5 h-3.5 text-muted-foreground" />
+                            Expand All
+                        </button>
+                        <button
+                            className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2"
+                            onClick={handleCollapseAll}
+                        >
+                            <Minimize2 className="w-3.5 h-3.5 text-muted-foreground" />
+                            Collapse All
+                        </button>
+                    </div>
+                );
+            })()}
         </div>
     );
 }
@@ -68,14 +209,18 @@ function ProfileNode({
     profileId,
     name,
     color,
+    type,
     expanded,
     toggle,
+    onContextMenu,
 }: {
     profileId: string;
     name: string;
     color: string;
+    type: string;
     expanded: ExpandedSet;
     toggle: (key: string) => void;
+    onContextMenu?: (e: React.MouseEvent) => void;
 }) {
     const databases = useSchemaStore((s) => s.databases[profileId]);
     const loading = useSchemaStore((s) => s.loadingDatabases[profileId]);
@@ -130,7 +275,11 @@ function ProfileNode({
                 onChevronClick={handleExpand}
                 onLabelClick={handleLabelClick}
                 onDoubleClick={handleDoubleClick}
-                icon={<HardDrive className="w-3.5 h-3.5" style={{ color }} />}
+                onContextMenu={onContextMenu}
+                icon={(() => {
+                    const Icon = DB_ICONS[type] || Database;
+                    return <Icon className="w-3.5 h-3.5" style={{ color }} />;
+                })()}
                 label={name}
                 badge={databases ? String(databases.length) : undefined}
                 bold
@@ -360,6 +509,7 @@ function TreeRow({
     onChevronClick,
     onLabelClick,
     onDoubleClick,
+    onContextMenu,
     icon,
     label,
     badge,
@@ -372,6 +522,7 @@ function TreeRow({
     onChevronClick?: () => void;
     onLabelClick?: () => void;
     onDoubleClick?: () => void;
+    onContextMenu?: (e: React.MouseEvent) => void;
     icon: React.ReactNode;
     label: string;
     badge?: string;
@@ -390,6 +541,7 @@ function TreeRow({
             )}
             style={{ paddingLeft: `${depth * 14 + 6}px` }}
             onDoubleClick={onDoubleClick}
+            onContextMenu={onContextMenu}
         >
             {/* Chevron — has its own click handler */}
             {isFolder ? (
