@@ -1,8 +1,10 @@
 import { useLayoutStore } from "@/state/layoutStore";
+import { useSchemaStore } from "@/state/schemaStore";
 import { Database, FileCode2, Bot, CheckSquare, Terminal, Server } from "lucide-react";
 
 export function WelcomeTab() {
     const { openTab, togglePanel, setActiveView } = useLayoutStore();
+    const connectedProfiles = useSchemaStore((s) => s.connectedProfiles);
 
     return (
         <div className="w-full h-full overflow-y-auto flex flex-col">
@@ -24,7 +26,15 @@ export function WelcomeTab() {
                         Get Started
                     </p>
                     <button
-                        onClick={() => openTab({ title: "New Query", type: "sql" })}
+                        onClick={() => {
+                            const entries = Object.entries(connectedProfiles);
+                            const meta: Record<string, string> = {};
+                            if (entries.length > 0) {
+                                meta.profileId = entries[0][0];
+                                meta.profileName = entries[0][1].name;
+                            }
+                            openTab({ title: "New Query", type: "sql", meta });
+                        }}
                         className="w-full flex items-center gap-3 px-4 py-3 rounded-lg border bg-card hover:bg-accent transition-colors text-left group"
                     >
                         <FileCode2 className="w-5 h-5 text-muted-foreground group-hover:text-accent-foreground" />

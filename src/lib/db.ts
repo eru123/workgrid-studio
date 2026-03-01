@@ -153,3 +153,16 @@ export interface CollationResponse {
 export async function dbGetCollations(profileId: string): Promise<CollationResponse> {
     return invoke<CollationResponse>("db_get_collations", { profileId });
 }
+
+// ─── Query execution (returns results) ──────────────────────────────
+
+export interface QueryResultSet {
+    columns: string[];
+    rows: (string | number | null)[][];
+    affected_rows: number;
+    info: string;
+}
+
+export async function dbQuery(profileId: string, query: string): Promise<QueryResultSet[]> {
+    return invoke<QueryResultSet[]>("db_query", { profileId, query });
+}

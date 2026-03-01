@@ -814,6 +814,132 @@ async fn db_get_collations(
     })
 }
 
+#[derive(Debug, Serialize, Clone)]
+pub struct QueryResultSet {
+    pub columns: Vec<String>,
+    pub rows: Vec<Vec<serde_json::Value>>,
+    pub affected_rows: u64,
+    pub info: String,
+}
+
+#[tauri::command]
+async fn db_query(
+    state: State<'_, DbState>,
+    profile_id: String,
+    query: String,
+) -> Result<Vec<QueryResultSet>, String> {
+    let pool = get_pool(&state, &profile_id)?;
+    let mut conn = pool.get_conn().await.map_err(|e| {
+        let msg = format!("Connection error: {}", e);
+        log_error(&profile_id, &msg);
+        msg
+    })?;
+
+    // Split by semicolons for multi-statement support (simple split)
+    let statements: Vec<&str> = query.split(';')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    let mut results = Vec::new();
+
+    for stmt in &statements {
+        log_query(&profile_id, stmt);
+
+        // Try as a query that returns rows
+        match conn.query::<mysql_async::Row, _>(*stmt).await {
+            Ok(rows) => {
+                if rows.is_empty() {
+                    // Might be DDL/DML — report affected rows
+                    results.push(QueryResultSet {
+                        columns: vec![],
+                        rows: vec![],
+                        affected_rows: 0,
+                        info: format!("OK (0 rows)"),
+                    });
+                } else {
+                    // Extract column names from first row
+                    let columns: Vec<String> = rows[0]
+                        .columns_ref()
+                        .iter()
+                        .map(|c| c.name_str().to_string())
+                        .collect();
+
+                    let mut result_rows = Vec::new();
+                    for row in &rows {
+                        let mut vals = Vec::new();
+                        for i in 0..columns.len() {
+                            // Access raw mysql_async::Value to avoid panics on NULL
+                            let raw: &mysql_async::Value = &row[i];
+                            let val: serde_json::Value = match raw {
+                                mysql_async::Value::NULL => serde_json::Value::Null,
+                                mysql_async::Value::Bytes(b) => {
+                                    // Try to interpret as UTF-8 string
+                                    match String::from_utf8(b.clone()) {
+                                        Ok(s) => serde_json::Value::String(s),
+                                        Err(_) => serde_json::Value::String(
+                                            format!("[binary {} bytes]", b.len())
+                                        ),
+                                    }
+                                }
+                                mysql_async::Value::Int(n) => {
+                                    serde_json::Value::Number(serde_json::Number::from(*n))
+                                }
+                                mysql_async::Value::UInt(n) => {
+                                    serde_json::Value::Number(serde_json::Number::from(*n))
+                                }
+                                mysql_async::Value::Float(f) => {
+                                    match serde_json::Number::from_f64(*f as f64) {
+                                        Some(n) => serde_json::Value::Number(n),
+                                        None => serde_json::Value::String(f.to_string()),
+                                    }
+                                }
+                                mysql_async::Value::Double(f) => {
+                                    match serde_json::Number::from_f64(*f) {
+                                        Some(n) => serde_json::Value::Number(n),
+                                        None => serde_json::Value::String(f.to_string()),
+                                    }
+                                }
+                                mysql_async::Value::Date(y, m, d, h, mi, s, _us) => {
+                                    serde_json::Value::String(
+                                        format!("{:04}-{:02}-{:02} {:02}:{:02}:{:02}", y, m, d, h, mi, s)
+                                    )
+                                }
+                                mysql_async::Value::Time(neg, d, h, mi, s, _us) => {
+                                    let sign = if *neg { "-" } else { "" };
+                                    let total_hours = (*d as u32) * 24 + (*h as u32);
+                                    serde_json::Value::String(
+                                        format!("{}{:02}:{:02}:{:02}", sign, total_hours, mi, s)
+                                    )
+                                }
+                            };
+                            vals.push(val);
+                        }
+                        result_rows.push(vals);
+                    }
+
+                    let count = result_rows.len();
+                    log_query_result(&profile_id, stmt, count);
+
+                    results.push(QueryResultSet {
+                        columns,
+                        rows: result_rows,
+                        affected_rows: count as u64,
+                        info: format!("{} row(s) returned", count),
+                    });
+                }
+            }
+            Err(e) => {
+                let msg = format!("Query error [{}]: {}", stmt, e);
+                log_error(&profile_id, &msg);
+                return Err(msg);
+            }
+        }
+    }
+
+    Ok(results)
+}
+
 #[tauri::command]
 fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
@@ -848,6 +974,7 @@ pub fn run() {
             db_kill_process,
             db_execute_query,
             db_get_collations,
+            db_query,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

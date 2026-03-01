@@ -3,12 +3,13 @@ import { useLayoutStore, SplitTree, EditorTab } from "@/state/layoutStore";
 import { Sash } from "./Sash";
 import { cn } from "@/lib/utils/cn";
 import { X, Plus } from "lucide-react";
+import { useSchemaStore } from "@/state/schemaStore";
 import { WelcomeTab } from "@/components/views/WelcomeTab";
 import { ModelsPage } from "@/components/views/ModelsPage";
 import { TasksView } from "@/components/views/TasksView";
 import { DatabaseView } from "@/components/views/DatabaseView";
 import { TableDesigner } from "@/components/views/TableDesigner";
-import { CodeEditorShell } from "@/components/ui/CodeEditorShell";
+import { QueryTab } from "@/components/views/QueryTab";
 
 function TabContent({ tab }: { tab: EditorTab }) {
     switch (tab.type) {
@@ -35,9 +36,12 @@ function TabContent({ tab }: { tab: EditorTab }) {
             );
         case "sql":
             return (
-                <div className="w-full h-full p-2">
-                    <CodeEditorShell value="" language="sql" />
-                </div>
+                <QueryTab
+                    tabId={tab.id}
+                    profileId={tab.meta?.profileId ?? ""}
+                    profileName={tab.meta?.profileName ?? "Server"}
+                    database={tab.meta?.database}
+                />
             );
         default:
             return (
@@ -50,6 +54,7 @@ function TabContent({ tab }: { tab: EditorTab }) {
 
 export function EditorNode({ tree }: { tree: SplitTree }) {
     const { resizeNode, openTab, closeTab, closeOtherTabs, closeTabsToRight, closeAllTabs, setActiveTab } = useLayoutStore();
+    const connectedProfiles = useSchemaStore((s) => s.connectedProfiles);
 
     const [contextMenu, setContextMenu] = useState<{ x: number; y: number; tabId: string } | null>(null);
 
@@ -113,7 +118,15 @@ export function EditorNode({ tree }: { tree: SplitTree }) {
                     ))}
                     {/* New tab button */}
                     <button
-                        onClick={() => openTab({ title: "New Query", type: "sql" }, tree.id)}
+                        onClick={() => {
+                            const entries = Object.entries(connectedProfiles);
+                            const meta: Record<string, string> = {};
+                            if (entries.length > 0) {
+                                meta.profileId = entries[0][0];
+                                meta.profileName = entries[0][1].name;
+                            }
+                            openTab({ title: "New Query", type: "sql", meta }, tree.id);
+                        }}
                         className="h-full px-2 text-muted-foreground hover:text-foreground hover:bg-background/50 transition-colors"
                         title="New SQL Query (Ctrl+N)"
                     >
