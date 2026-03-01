@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useMemo } from "react";
 import { useSchemaStore } from "@/state/schemaStore";
+import { CreateDatabaseModal } from "./CreateDatabaseModal";
 import { useProfilesStore } from "@/state/profilesStore";
 import { useLayoutStore } from "@/state/layoutStore";
 import { dbListDatabases, dbListTables, dbListColumns, dbDisconnect } from "@/lib/db";
@@ -46,6 +47,7 @@ export function ExplorerTree() {
     const connectedList = profiles.filter((p) => p.connectionStatus === "connected");
 
     const [contextMenu, setContextMenu] = useState<{ id: string, x: number, y: number } | null>(null);
+    const [createDbProfileId, setCreateDbProfileId] = useState<string | null>(null);
     const [dbFilter, setDbFilter] = useState("");
     const [tableFilter, setTableFilter] = useState("");
 
@@ -163,7 +165,7 @@ export function ExplorerTree() {
 
                 const handleCreateDatabase = () => {
                     setContextMenu(null);
-                    alert("Create Database feature not yet implemented.");
+                    setCreateDbProfileId(profile.id);
                 };
 
                 const handleExpandAll = async () => {
@@ -277,6 +279,16 @@ export function ExplorerTree() {
                     </div>
                 );
             })()}
+
+            {createDbProfileId !== null && (
+                <CreateDatabaseModal
+                    profileId={createDbProfileId}
+                    onClose={() => setCreateDbProfileId(null)}
+                    onCreated={() => {
+                        setExpanded(prev => ({ ...prev, [`profile-${createDbProfileId}`]: true }));
+                    }}
+                />
+            )}
         </div>
     );
 }

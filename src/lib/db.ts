@@ -140,3 +140,7 @@ export async function readProfileLog(profileId: string, logType: LogType): Promi
 export async function clearProfileLog(profileId: string, logType: LogType): Promise<void> {
     return invoke<void>("clear_profile_log", { profileId, logType });
 }
+
+export async function dbExecuteQuery(profileId: string, query: string): Promise<void> {
+    return invoke<void>("db_execute_query", { profileId, query });
+}

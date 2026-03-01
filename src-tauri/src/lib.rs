@@ -749,6 +749,30 @@ async fn db_kill_process(
 }
 
 #[tauri::command]
+async fn db_execute_query(
+    state: State<'_, DbState>,
+    profile_id: String,
+    query: String,
+) -> Result<(), String> {
+    let pool = get_pool(&state, &profile_id)?;
+    let mut conn = pool.get_conn().await.map_err(|e| {
+        let msg = format!("Connection error: {}", e);
+        log_error(&profile_id, &msg);
+        msg
+    })?;
+
+    conn.query_drop(&query).await.map_err(|e| {
+        let msg = format!("Query error [{}]: {}", query, e);
+        log_error(&profile_id, &msg);
+        msg
+    })?;
+
+    log_query(&profile_id, &query);
+
+    Ok(())
+}
+
+#[tauri::command]
 fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
 }
@@ -780,6 +804,7 @@ pub fn run() {
             db_get_status,
             db_get_processes,
             db_kill_process,
+            db_execute_query,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
