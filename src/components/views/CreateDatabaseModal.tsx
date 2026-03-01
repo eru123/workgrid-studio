@@ -1,6 +1,6 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { X } from "lucide-react";
-import { dbExecuteQuery, dbListDatabases } from "@/lib/db";
+import { dbExecuteQuery, dbListDatabases, dbGetCollations } from "@/lib/db";
 import { useSchemaStore } from "@/state/schemaStore";
 
 interface Props {
@@ -9,24 +9,29 @@ interface Props {
     onCreated?: () => void;
 }
 
-const COLLATIONS = [
-    "utf8mb4_general_ci",
-    "utf8mb4_unicode_ci",
-    "utf8mb4_bin",
-    "utf8mb4_0900_ai_ci",
-    "utf8_general_ci",
-    "utf8_unicode_ci",
-    "utf8_bin",
-    "latin1_swedish_ci",
-    "latin1_general_ci",
-    "latin1_bin"
-];
-
 export function CreateDatabaseModal({ profileId, onClose, onCreated }: Props) {
     const [name, setName] = useState("");
-    const [collation, setCollation] = useState("utf8mb4_0900_ai_ci");
+    const [collation, setCollation] = useState("");
+    const [collations, setCollations] = useState<string[]>([]);
+    const [defaultCollation, setDefaultCollation] = useState("");
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [error, setError] = useState<string | null>(null);
+
+    useEffect(() => {
+        dbGetCollations(profileId)
+            .then(res => {
+                setCollations(res.collations);
+                setDefaultCollation(res.default_collation);
+                if (res.default_collation) {
+                    setCollation(res.default_collation);
+                } else if (res.collations.length > 0) {
+                    setCollation(res.collations[0]);
+                }
+            })
+            .catch(e => {
+                setError("Failed to fetch collations: " + String(e));
+            });
+    }, [profileId]);
 
     const createCode = useMemo(() => {
         let sql = `CREATE DATABASE \`${name || "database_name"}\``;
@@ -103,14 +108,14 @@ export function CreateDatabaseModal({ profileId, onClose, onCreated }: Props) {
                             onChange={(e) => setCollation(e.target.value)}
                             className="h-8 rounded bg-secondary/50 border px-2 focus:outline-none focus:ring-1 focus:ring-primary w-full"
                         >
-                            {COLLATIONS.map(col => (
+                            {collations.map(col => (
                                 <option key={col} value={col}>{col}</option>
                             ))}
                         </select>
                     </div>
 
                     <div className="text-xs pl-[88px] text-muted-foreground">
-                        Servers default: utf8mb4_0900_ai_ci
+                        Servers default: {defaultCollation || "Unknown"}
                     </div>
 
                     <div className="flex justify-end gap-2 pt-2">

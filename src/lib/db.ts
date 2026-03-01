@@ -144,3 +144,12 @@ export async function clearProfileLog(profileId: string, logType: LogType): Prom
 export async function dbExecuteQuery(profileId: string, query: string): Promise<void> {
     return invoke<void>("db_execute_query", { profileId, query });
 }
+
+export interface CollationResponse {
+    collations: string[];
+    default_collation: string;
+}
+
+export async function dbGetCollations(profileId: string): Promise<CollationResponse> {
+    return invoke<CollationResponse>("db_get_collations", { profileId });
+}

@@ -772,6 +772,48 @@ async fn db_execute_query(
     Ok(())
 }
 
+#[derive(Debug, Serialize, Clone)]
+pub struct CollationResponse {
+    pub collations: Vec<String>,
+    pub default_collation: String,
+}
+
+#[tauri::command]
+async fn db_get_collations(
+    state: State<'_, DbState>,
+    profile_id: String,
+) -> Result<CollationResponse, String> {
+    let pool = get_pool(&state, &profile_id)?;
+    let mut conn = pool.get_conn().await.map_err(|e| {
+        let msg = format!("Connection error: {}", e);
+        log_error(&profile_id, &msg);
+        msg
+    })?;
+
+    let mut collations = Vec::new();
+    if let Ok(rows) = conn.query::<mysql_async::Row, _>("SHOW COLLATION").await {
+        for row in rows {
+            if let Some(col) = row.get::<String, usize>(0) {
+                collations.push(col);
+            }
+        }
+    }
+    
+    let mut default_collation = String::from("utf8mb4_general_ci");
+    if let Ok(mut rows) = conn.query::<mysql_async::Row, _>("SHOW CHARACTER SET WHERE Charset = 'utf8mb4'").await {
+        if let Some(row) = rows.pop() {
+            if let Some(col) = row.get::<String, usize>(2) {
+                default_collation = col;
+            }
+        }
+    }
+
+    Ok(CollationResponse {
+        collations,
+        default_collation,
+    })
+}
+
 #[tauri::command]
 fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
@@ -805,6 +847,7 @@ pub fn run() {
             db_get_processes,
             db_kill_process,
             db_execute_query,
+            db_get_collations,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
