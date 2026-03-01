@@ -24,7 +24,22 @@ import {
     Server,
     Loader2,
     MoreVertical,
+    Database,
 } from "lucide-react";
+import {
+    SiPostgresql,
+    SiMysql,
+    SiSqlite,
+    SiMariadb,
+} from "react-icons/si";
+
+const DB_ICONS: Record<DatabaseType, React.ElementType> = {
+    postgres: SiPostgresql,
+    mysql: SiMysql,
+    sqlite: SiSqlite,
+    mariadb: SiMariadb,
+    mssql: Database,
+};
 
 type ViewMode = "list" | "create" | "edit";
 
@@ -193,25 +208,27 @@ export function ServersSidebar() {
                                     setContextMenu({ id: profile.id, x: e.clientX, y: e.clientY });
                                 }}
                             >
-                                <button
+                                <div
+                                    role="button"
+                                    tabIndex={0}
                                     onClick={() => handleDoubleClick(profile.id)}
-                                    className="w-full text-left px-3 py-1.5 flex items-center gap-2.5 transition-colors group relative hover:bg-accent/50"
+                                    className="w-full text-left px-3 py-1.5 flex items-center gap-2.5 transition-colors group relative hover:bg-accent/50 cursor-pointer"
                                     title="Click to connect / open"
                                 >
-                                    {/* Color dot + status */}
-                                    <div className="relative shrink-0">
-                                        <div
-                                            className="w-3.5 h-3.5 rounded"
-                                            style={{ backgroundColor: profile.color }}
-                                        />
+                                    {/* DB Icon + status */}
+                                    <div className="relative shrink-0 flex items-center justify-center w-5 h-5">
+                                        {(() => {
+                                            const Icon = DB_ICONS[profile.type];
+                                            return <Icon className="w-3.5 h-3.5 text-muted-foreground transition-colors group-hover/item:text-foreground" style={{ color: profile.connectionStatus === "connected" ? profile.color : undefined }} />;
+                                        })()}
                                         {profile.connectionStatus === "connected" && (
-                                            <div className="absolute -bottom-0.5 -right-0.5 w-2 h-2 rounded-full bg-green-500 border border-background" />
+                                            <div className="absolute -bottom-0.5 -right-0 w-2 h-2 rounded-full bg-green-500 border border-background" />
                                         )}
                                         {profile.connectionStatus === "connecting" && (
-                                            <div className="absolute -bottom-0.5 -right-0.5 w-2 h-2 rounded-full bg-yellow-500 border border-background animate-pulse" />
+                                            <div className="absolute -bottom-0.5 -right-0 w-2 h-2 rounded-full bg-yellow-500 border border-background animate-pulse" />
                                         )}
                                         {profile.connectionStatus === "error" && (
-                                            <div className="absolute -bottom-0.5 -right-0.5 w-2 h-2 rounded-full bg-red-500 border border-background" />
+                                            <div className="absolute -bottom-0.5 -right-0 w-2 h-2 rounded-full bg-red-500 border border-background" />
                                         )}
                                     </div>
 
@@ -257,7 +274,7 @@ export function ServersSidebar() {
                                             <MoreVertical className="w-3.5 h-3.5" />
                                         </button>
                                     </div>
-                                </button>
+                                </div>
 
                                 {connectError && profile.connectionStatus === "error" && (
                                     <div className="px-3 pb-2 pt-1">
@@ -363,24 +380,24 @@ export function ServersSidebar() {
                             <div>
                                 <label className="text-xs font-semibold block mb-1.5">Database Type</label>
                                 <div className="grid grid-cols-5 gap-2">
-                                    {(Object.keys(DB_TYPE_LABELS) as DatabaseType[]).map((type) => (
-                                        <button
-                                            key={type}
-                                            onClick={() => handleTypeChange(type)}
-                                            className={cn(
-                                                "flex flex-col items-center gap-1.5 py-3 px-1 rounded-md border text-xs transition-all",
-                                                formData.type === type
-                                                    ? "border-primary bg-primary/10 text-primary font-medium"
-                                                    : "border-border bg-secondary/30 text-muted-foreground hover:bg-secondary/80 hover:text-foreground"
-                                            )}
-                                        >
-                                            <div
-                                                className="w-3.5 h-3.5 rounded-full"
-                                                style={{ backgroundColor: DB_TYPE_COLORS[type] }}
-                                            />
-                                            <span>{DB_TYPE_LABELS[type]}</span>
-                                        </button>
-                                    ))}
+                                    {(Object.keys(DB_TYPE_LABELS) as DatabaseType[]).map((type) => {
+                                        const Icon = DB_ICONS[type];
+                                        return (
+                                            <button
+                                                key={type}
+                                                onClick={() => handleTypeChange(type)}
+                                                className={cn(
+                                                    "flex flex-col items-center gap-1.5 py-3 px-1 rounded-md border text-xs transition-all",
+                                                    formData.type === type
+                                                        ? "border-primary bg-primary/10 text-primary font-medium"
+                                                        : "border-border bg-secondary/30 text-muted-foreground hover:bg-secondary/80 hover:text-foreground"
+                                                )}
+                                            >
+                                                <Icon className="w-4 h-4" style={{ color: formData.type === type ? DB_TYPE_COLORS[type] : undefined }} />
+                                                <span>{DB_TYPE_LABELS[type]}</span>
+                                            </button>
+                                        );
+                                    })}
                                 </div>
                             </div>
 
