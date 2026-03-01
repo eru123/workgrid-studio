@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
     useProfilesStore,
     DatabaseProfile,
@@ -21,9 +21,9 @@ import {
     Plug,
     PlugZap,
     X,
-    ChevronRight,
     Server,
     Loader2,
+    MoreVertical,
 } from "lucide-react";
 
 type ViewMode = "list" | "create" | "edit";
@@ -38,8 +38,14 @@ export function ServersSidebar() {
     const [viewMode, setViewMode] = useState<ViewMode>("list");
     const [editingId, setEditingId] = useState<string | null>(null);
     const [formData, setFormData] = useState<ProfileFormData>(createDefaultFormData());
-    const [expandedId, setExpandedId] = useState<string | null>(null);
     const [connectError, setConnectError] = useState<string | null>(null);
+    const [contextMenu, setContextMenu] = useState<{ id: string; x: number; y: number } | null>(null);
+
+    useEffect(() => {
+        const handleClick = () => setContextMenu(null);
+        window.addEventListener("click", handleClick);
+        return () => window.removeEventListener("click", handleClick);
+    }, []);
 
     const handleCreate = () => {
         setFormData(createDefaultFormData());
@@ -80,16 +86,14 @@ export function ServersSidebar() {
         setEditingId(null);
     };
 
-    const handleDelete = async (id: string, e: React.MouseEvent) => {
-        e.stopPropagation();
+    const handleDelete = async (id: string) => {
         try { await dbDisconnect(id); } catch { /* ignore */ }
         removeConnection(id);
         deleteProfile(id);
-        if (expandedId === id) setExpandedId(null);
+        setContextMenu(null);
     };
 
-    const handleConnect = async (id: string, e?: React.MouseEvent) => {
-        if (e) e.stopPropagation();
+    const handleConnect = async (id: string) => {
         const profile = profiles.find((p) => p.id === id);
         if (!profile) return;
         setConnectError(null);
@@ -116,7 +120,6 @@ export function ServersSidebar() {
             } catch (e) {
                 setConnectionStatus(id, "error");
                 setConnectError(String(e));
-                setExpandedId(id); // Show error inside the expanded card
             }
         }
     };
@@ -131,11 +134,6 @@ export function ServersSidebar() {
         } else {
             handleConnect(id);
         }
-    };
-
-    const toggleExpand = (id: string) => {
-        setExpandedId(prev => prev === id ? null : id);
-        setConnectError(null); // Clear errors when toggling
     };
 
     const handleTypeChange = (type: DatabaseType) => {
@@ -186,26 +184,24 @@ export function ServersSidebar() {
                     </div>
                 ) : (
                     profiles.map((profile) => {
-                        const isExpanded = expandedId === profile.id;
-
                         return (
                             <div
                                 key={profile.id}
-                                className={cn(
-                                    "flex flex-col rounded border overflow-hidden transition-all",
-                                    isExpanded ? "border-primary/50 bg-accent/30" : "border-border/40 hover:border-border/80 bg-background"
-                                )}
+                                className="flex flex-col bg-transparent relative group/item"
+                                onContextMenu={(e) => {
+                                    e.preventDefault();
+                                    setContextMenu({ id: profile.id, x: e.clientX, y: e.clientY });
+                                }}
                             >
                                 <button
-                                    onClick={() => toggleExpand(profile.id)}
-                                    onDoubleClick={() => handleDoubleClick(profile.id)}
-                                    className="w-full text-left px-3 py-2.5 flex items-center gap-2.5 transition-colors group relative"
-                                    title="Double click to connect"
+                                    onClick={() => handleDoubleClick(profile.id)}
+                                    className="w-full text-left px-3 py-1.5 flex items-center gap-2.5 transition-colors group relative hover:bg-accent/50"
+                                    title="Click to connect / open"
                                 >
                                     {/* Color dot + status */}
                                     <div className="relative shrink-0">
                                         <div
-                                            className="w-4 h-4 rounded"
+                                            className="w-3.5 h-3.5 rounded"
                                             style={{ backgroundColor: profile.color }}
                                         />
                                         {profile.connectionStatus === "connected" && (
@@ -220,15 +216,15 @@ export function ServersSidebar() {
                                     </div>
 
                                     <div className="flex-1 min-w-0">
-                                        <div className="text-sm font-medium truncate">{profile.name}</div>
-                                        <div className="text-[10px] text-muted-foreground truncate">
+                                        <div className="text-[13px] font-medium truncate leading-tight">{profile.name}</div>
+                                        <div className="text-[10px] text-muted-foreground truncate leading-tight mt-0.5">
                                             {profile.type === "sqlite"
                                                 ? profile.filePath || "No file set"
                                                 : `${profile.host}:${profile.port ?? "—"}`}
                                         </div>
                                     </div>
 
-                                    <div className="shrink-0 text-muted-foreground/50 transition-transform">
+                                    <div className="shrink-0 text-muted-foreground/50 transition-transform flex items-center gap-0.5 ml-auto">
                                         {profile.connectionStatus === "connected" ? (
                                             <button
                                                 onClick={(e) => { e.stopPropagation(); handleConnect(profile.id); }}
@@ -238,55 +234,39 @@ export function ServersSidebar() {
                                                 <PlugZap className="w-3.5 h-3.5" />
                                             </button>
                                         ) : profile.connectionStatus === "connecting" ? (
-                                            <Loader2 className="w-3.5 h-3.5 animate-spin mx-1" />
+                                            <div className="w-6 h-6 flex items-center justify-center">
+                                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                            </div>
                                         ) : (
                                             <button
                                                 onClick={(e) => { e.stopPropagation(); handleConnect(profile.id); }}
                                                 title="Connect"
-                                                className="w-6 h-6 flex items-center justify-center rounded hover:bg-primary/20 hover:text-primary transition-colors"
+                                                className="w-6 h-6 flex items-center justify-center rounded hover:bg-primary/20 hover:text-primary transition-colors opacity-0 group-hover:opacity-100 focus:opacity-100"
                                             >
                                                 <Plug className="w-3.5 h-3.5" />
                                             </button>
                                         )}
+                                        <button
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                setContextMenu({ id: profile.id, x: e.clientX, y: e.clientY });
+                                            }}
+                                            className="w-6 h-6 flex items-center justify-center rounded hover:bg-muted transition-colors opacity-0 group-hover:opacity-100 focus:opacity-100"
+                                            title="More Actions"
+                                        >
+                                            <MoreVertical className="w-3.5 h-3.5" />
+                                        </button>
                                     </div>
-
-                                    <ChevronRight className={cn(
-                                        "w-3.5 h-3.5 text-muted-foreground/50 transition-transform shrink-0 ml-1.5",
-                                        isExpanded && "rotate-90"
-                                    )} />
                                 </button>
 
-                                {/* Expanded Actions */}
-                                {isExpanded && (
-                                    <div className="px-3 pb-3 pt-1 border-t border-border/50 bg-accent/10">
-                                        {/* Action buttons */}
-                                        <div className="grid grid-cols-3 gap-1.5 mb-2 mt-2">
-                                            <button
-                                                onClick={() => handleEdit(profile)}
-                                                className="flex flex-col items-center justify-center gap-1 py-1.5 text-[10px] rounded border bg-background hover:bg-accent hover:text-foreground text-muted-foreground transition-colors"
-                                            >
-                                                <Pencil className="w-3.5 h-3.5" /> Edit
-                                            </button>
-                                            <button
-                                                onClick={() => duplicateProfile(profile.id)}
-                                                className="flex flex-col items-center justify-center gap-1 py-1.5 text-[10px] rounded border bg-background hover:bg-accent hover:text-foreground text-muted-foreground transition-colors"
-                                            >
-                                                <Copy className="w-3.5 h-3.5" /> Duplicate
-                                            </button>
-                                            <button
-                                                onClick={(e) => handleDelete(profile.id, e)}
-                                                className="flex flex-col items-center justify-center gap-1 py-1.5 text-[10px] rounded border border-red-800/30 text-red-500/80 hover:bg-red-900/20 hover:text-red-400 transition-colors"
-                                            >
-                                                <Trash2 className="w-3.5 h-3.5" /> Delete
+                                {connectError && profile.connectionStatus === "error" && (
+                                    <div className="px-3 pb-2 pt-1">
+                                        <div className="text-[10px] text-red-500/90 font-mono break-all overflow-hidden relative pr-4 bg-red-500/10 border border-red-500/20 rounded-md p-1.5">
+                                            {connectError}
+                                            <button onClick={() => setConnectError(null)} className="absolute top-1 right-1 p-0.5 rounded text-red-400 hover:text-red-300 transition-colors">
+                                                <X className="w-3 h-3" />
                                             </button>
                                         </div>
-
-                                        {/* Connection Error */}
-                                        {connectError && profile.connectionStatus === "error" && (
-                                            <div className="mt-2 px-2 py-1.5 rounded bg-red-900/20 border border-red-800/40 text-[10px] text-red-400 font-mono break-all line-clamp-3 overflow-hidden">
-                                                {connectError}
-                                            </div>
-                                        )}
                                     </div>
                                 )}
                             </div>
@@ -294,6 +274,59 @@ export function ServersSidebar() {
                     })
                 )}
             </div>
+
+            {/* Context Menu Dropdown */}
+            {contextMenu && (() => {
+                const profile = profiles.find(p => p.id === contextMenu.id);
+                if (!profile) return null;
+                const isConnected = profile.connectionStatus === "connected";
+
+                return (
+                    <div
+                        className="fixed z-[100] min-w-[160px] bg-popover text-popover-foreground border rounded-md shadow-md p-1 text-xs"
+                        style={{
+                            top: Math.min(contextMenu.y, window.innerHeight - 180),
+                            left: Math.min(contextMenu.x, window.innerWidth - 160),
+                        }}
+                    >
+                        <button
+                            className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2"
+                            onClick={() => {
+                                setContextMenu(null);
+                                handleConnect(profile.id);
+                            }}
+                        >
+                            {isConnected ? <PlugZap className="w-3.5 h-3.5 text-red-400" /> : <Plug className="w-3.5 h-3.5 text-primary" />}
+                            {isConnected ? "Disconnect" : "Connect"}
+                        </button>
+                        <button
+                            className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2"
+                            onClick={() => {
+                                setContextMenu(null);
+                                handleEdit(profile);
+                            }}
+                        >
+                            <Pencil className="w-3.5 h-3.5 text-muted-foreground" /> Edit
+                        </button>
+                        <button
+                            className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2"
+                            onClick={() => {
+                                setContextMenu(null);
+                                duplicateProfile(profile.id);
+                            }}
+                        >
+                            <Copy className="w-3.5 h-3.5 text-muted-foreground" /> Duplicate
+                        </button>
+                        <div className="h-px bg-border my-1" />
+                        <button
+                            className="w-full text-left px-2 py-1.5 hover:bg-red-500/20 text-red-500 rounded flex items-center gap-2"
+                            onClick={() => handleDelete(profile.id)}
+                        >
+                            <Trash2 className="w-3.5 h-3.5" /> Delete
+                        </button>
+                    </div>
+                );
+            })()}
 
             {/* Modal Form overlay rendered absolutely within the sidebar / screen */}
             {viewMode !== "list" && (

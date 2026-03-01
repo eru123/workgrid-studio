@@ -116,11 +116,13 @@ export function Workbench() {
                     className="relative bg-muted/10 border-r flex flex-col"
                     style={{ width: primarySidebarWidth }}
                 >
-                    <div className="h-9 px-4 flex items-center border-b">
-                        <span className="font-semibold text-xs uppercase tracking-wider">
-                            {activityItems.find((i) => i.id === activeView)?.label ?? "Explorer"}
-                        </span>
-                    </div>
+                    {activeView !== "servers" && (
+                        <div className="h-9 px-4 flex items-center border-b shrink-0 bg-background/50">
+                            <span className="font-semibold text-xs uppercase tracking-wider">
+                                {activityItems.find((i) => i.id === activeView)?.label ?? "Explorer"}
+                            </span>
+                        </div>
+                    )}
                     <div className="flex-1 overflow-auto">
                         {activeView === "explorer" && (
                             <ExplorerTree />
