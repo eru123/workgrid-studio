@@ -183,12 +183,12 @@ export function DatabaseView({ tabId, profileId, profileName, database }: Props)
             {/* Header breadcrumb & Tabs */}
             <div className="h-9 border-b flex items-center shrink-0 bg-muted/20">
                 <div className="flex items-center px-4 h-full gap-2 shrink-0">
-                    <Database className="w-3.5 h-3.5 text-primary" />
+                    <HardDrive className="w-3.5 h-3.5 text-primary" />
                     <span className="text-xs font-medium">{profileName}</span>
                     {database ? (
                         <>
                             <span className="text-xs text-muted-foreground">›</span>
-                            <HardDrive className="w-3 h-3 text-yellow-500/80" />
+                            <Database className="w-3 h-3 text-yellow-500/80" />
                             <span className="text-xs font-medium">Database: {database}</span>
                             <span className="text-xs text-muted-foreground ml-1">›</span>
                             <Table2 className="w-3 h-3 text-blue-400" />
@@ -339,7 +339,7 @@ function DatabasesTable({
                             onDoubleClick={() => onSelectDatabase(db.name)}
                         >
                             <td className="px-3 py-1.5 flex items-center gap-1.5">
-                                <HardDrive
+                                <Database
                                     className={cn(
                                         "w-3 h-3 shrink-0",
                                         db.name === highlightDb ? "text-yellow-400" : "text-yellow-500/60"

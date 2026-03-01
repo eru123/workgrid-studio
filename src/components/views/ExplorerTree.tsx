@@ -130,7 +130,7 @@ function ProfileNode({
                 onChevronClick={handleExpand}
                 onLabelClick={handleLabelClick}
                 onDoubleClick={handleDoubleClick}
-                icon={<Database className="w-3.5 h-3.5" style={{ color }} />}
+                icon={<HardDrive className="w-3.5 h-3.5" style={{ color }} />}
                 label={name}
                 badge={databases ? String(databases.length) : undefined}
                 bold
@@ -230,7 +230,7 @@ function DatabaseNode({
                 onChevronClick={handleExpand}
                 onLabelClick={handleLabelClick}
                 onDoubleClick={handleDoubleClick}
-                icon={<HardDrive className="w-3.5 h-3.5 text-yellow-500/80" />}
+                icon={<Database className="w-3.5 h-3.5 text-yellow-500/80" />}
                 label={database}
                 badge={tables ? String(tables.length) : undefined}
             />
