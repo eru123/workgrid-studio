@@ -5,8 +5,8 @@ export function WelcomeTab() {
     const { openTab, togglePanel, setActiveView } = useLayoutStore();
 
     return (
-        <div className="w-full h-full flex items-center justify-center">
-            <div className="max-w-lg w-full flex flex-col items-center gap-8 px-6">
+        <div className="w-full h-full overflow-y-auto flex flex-col">
+            <div className="m-auto max-w-lg w-full flex flex-col items-center gap-8 px-6 py-8">
                 {/* Logo / Title */}
                 <div className="flex flex-col items-center gap-2">
                     <div className="w-14 h-14 rounded-xl bg-primary flex items-center justify-center">
