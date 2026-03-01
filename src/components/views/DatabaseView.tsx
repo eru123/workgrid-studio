@@ -4,7 +4,6 @@ import { useLayoutStore } from "@/state/layoutStore";
 import { cn } from "@/lib/utils/cn";
 import {
     Database,
-    HardDrive,
     Loader2,
     AlertCircle,
     X,
@@ -182,26 +181,19 @@ export function DatabaseView({ tabId, profileId, profileName, database }: Props)
         <div className="w-full h-full flex flex-col bg-background relative">
             {/* Header breadcrumb & Tabs */}
             <div className="h-9 border-b flex items-center shrink-0 bg-muted/20">
-                <div className="flex items-center px-4 h-full gap-2 shrink-0">
-                    <HardDrive className="w-3.5 h-3.5 text-primary" />
-                    <span className="text-xs font-medium">{profileName}</span>
-                    {database ? (
-                        <>
-                            <span className="text-xs text-muted-foreground">›</span>
-                            <Database className="w-3 h-3 text-yellow-500/80" />
-                            <span className="text-xs font-medium">Database: {database}</span>
-                            <span className="text-xs text-muted-foreground ml-1">›</span>
-                            <Table2 className="w-3 h-3 text-blue-400" />
-                            <span className="text-xs font-medium text-foreground">Tables ({tableInfos.length || "…"})</span>
-                        </>
-                    ) : (
-                        <span className="text-xs text-muted-foreground ml-1 mr-2">›</span>
-                    )}
-                </div>
+                {database && (
+                    <div className="flex items-center px-4 h-full gap-2 shrink-0">
+                        <Database className="w-3 h-3 text-yellow-500/80" />
+                        <span className="text-xs font-medium">Database: {database}</span>
+                        <span className="text-xs text-muted-foreground ml-1 px-1">›</span>
+                        <Table2 className="w-3 h-3 text-blue-400" />
+                        <span className="text-xs font-medium text-foreground">Tables ({tableInfos.length || "…"})</span>
+                    </div>
+                )}
 
                 {/* Sub-tab bar integrated */}
                 {subTabs.length > 0 && (
-                    <div className="flex items-center h-full px-2 gap-1 overflow-x-auto border-l border-border/50">
+                    <div className="flex items-center h-full px-2 gap-1 overflow-x-auto">
                         {subTabs.map((tab) => (
                             <button
                                 key={tab.id}
