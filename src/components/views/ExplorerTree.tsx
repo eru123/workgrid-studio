@@ -399,7 +399,15 @@ export function ExplorerTree() {
                                     </button>
                                     <div className="h-px bg-border my-1 mx-1" />
                                     <ContextSubmenu label="Create" icon={<PlusSquare className="w-3.5 h-3.5 text-muted-foreground" />}>
-                                        <button className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2" onClick={() => setContextMenu(null)}>
+                                        <button className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2" onClick={() => {
+                                            setContextMenu(null);
+                                            const openTab = useLayoutStore.getState().openTab;
+                                            openTab({
+                                                title: `New Table @ ${targetDbs[0]}`,
+                                                type: "table-designer",
+                                                meta: { profileId, database: targetDbs[0] },
+                                            });
+                                        }}>
                                             <Table2 className="w-3.5 h-3.5 text-muted-foreground" /> Table
                                         </button>
                                         <button className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2" onClick={() => setContextMenu(null)}>

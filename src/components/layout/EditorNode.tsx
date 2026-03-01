@@ -7,6 +7,7 @@ import { WelcomeTab } from "@/components/views/WelcomeTab";
 import { ModelsPage } from "@/components/views/ModelsPage";
 import { TasksView } from "@/components/views/TasksView";
 import { DatabaseView } from "@/components/views/DatabaseView";
+import { TableDesigner } from "@/components/views/TableDesigner";
 import { CodeEditorShell } from "@/components/ui/CodeEditorShell";
 
 function TabContent({ tab }: { tab: EditorTab }) {
@@ -22,6 +23,14 @@ function TabContent({ tab }: { tab: EditorTab }) {
                     profileId={tab.meta?.profileId ?? ""}
                     profileName={tab.meta?.profileName ?? "Database"}
                     database={tab.meta?.database}
+                />
+            );
+        case "table-designer":
+            return (
+                <TableDesigner
+                    profileId={tab.meta?.profileId ?? ""}
+                    database={tab.meta?.database ?? ""}
+                    tableName={tab.meta?.tableName}
                 />
             );
         case "sql":

@@ -2,7 +2,7 @@ import { create } from "zustand";
 
 export type SplitDirection = "horizontal" | "vertical";
 
-export type EditorTabType = "sql" | "results" | "schema" | "models" | "tasks" | "database-view";
+export type EditorTabType = "sql" | "results" | "schema" | "models" | "tasks" | "database-view" | "table-designer";
 
 export interface EditorTab {
     id: string;
