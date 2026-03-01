@@ -124,12 +124,48 @@ export function ExplorerTree() {
                     alert("Create Database feature not yet implemented.");
                 };
 
-                const handleExpandAll = () => {
+                const handleExpandAll = async () => {
                     setContextMenu(null);
-                    const dbs = useSchemaStore.getState().databases[profile.id];
+                    const schemaStore = useSchemaStore.getState();
+
+                    let dbs = schemaStore.databases[profile.id];
+                    if (!dbs) {
+                        schemaStore.setLoading(profile.id, "databases", true);
+                        schemaStore.clearError(`dbs-${profile.id}`);
+                        try {
+                            dbs = await dbListDatabases(profile.id);
+                            schemaStore.setDatabases(profile.id, dbs);
+                        } catch (e) {
+                            schemaStore.setError(`dbs-${profile.id}`, String(e));
+                        } finally {
+                            schemaStore.setLoading(profile.id, "databases", false);
+                        }
+                    }
+
                     if (dbs) {
+                        setExpanded(prev => ({ ...prev, [`profile-${profile.id}`]: true }));
+
+                        // Fetch tables for all dbs in parallel
+                        await Promise.all(dbs.map(async (db) => {
+                            const cacheKey = `${profile.id}::${db}`;
+                            const tables = schemaStore.tables[cacheKey];
+
+                            if (!tables) {
+                                schemaStore.setLoading(cacheKey, "tables", true);
+                                schemaStore.clearError(`tbl-${cacheKey}`);
+                                try {
+                                    const tbls = await dbListTables(profile.id, db);
+                                    schemaStore.setTables(profile.id, db, tbls);
+                                } catch (e) {
+                                    schemaStore.setError(`tbl-${cacheKey}`, String(e));
+                                } finally {
+                                    schemaStore.setLoading(cacheKey, "tables", false);
+                                }
+                            }
+                        }));
+
                         setExpanded(prev => {
-                            const next = { ...prev, [`profile-${profile.id}`]: true };
+                            const next = { ...prev };
                             dbs.forEach(db => {
                                 next[`db-${profile.id}::${db}`] = true;
                             });
