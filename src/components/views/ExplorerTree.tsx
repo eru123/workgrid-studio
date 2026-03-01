@@ -1,9 +1,12 @@
 import { useState, useCallback, useEffect, useMemo } from "react";
 import { useSchemaStore } from "@/state/schemaStore";
 import { CreateDatabaseModal } from "./CreateDatabaseModal";
+import { ConfirmModal } from "./ConfirmModal";
+import { EditDatabaseModal } from "./EditDatabaseModal";
+import { ContextSubmenu } from "./ContextSubmenu";
 import { useProfilesStore } from "@/state/profilesStore";
 import { useLayoutStore } from "@/state/layoutStore";
-import { dbListDatabases, dbListTables, dbListColumns, dbDisconnect } from "@/lib/db";
+import { dbListDatabases, dbListTables, dbListColumns, dbDisconnect, dbExecuteQuery } from "@/lib/db";
 import { cn } from "@/lib/utils/cn";
 import {
     Database,
@@ -21,6 +24,12 @@ import {
     Minimize2,
     RefreshCw,
     X,
+    Trash,
+    Pencil,
+    CheckSquare,
+    Square,
+    PlusSquare,
+    FileCode2,
 } from "lucide-react";
 import {
     SiPostgresql,
@@ -39,6 +48,10 @@ const DB_ICONS: Record<string, any> = {
 
 type ExpandedSet = Record<string, boolean>;
 
+type ContextMenuTarget =
+    | { type: "server", profileId: string }
+    | { type: "database", profileId: string, databases: string[] };
+
 export function ExplorerTree() {
     const connectedProfiles = useSchemaStore((s) => s.connectedProfiles);
     const profiles = useProfilesStore((s) => s.profiles);
@@ -46,8 +59,11 @@ export function ExplorerTree() {
 
     const connectedList = profiles.filter((p) => p.connectionStatus === "connected");
 
-    const [contextMenu, setContextMenu] = useState<{ id: string, x: number, y: number } | null>(null);
+    const [contextMenu, setContextMenu] = useState<{ target: ContextMenuTarget, x: number, y: number } | null>(null);
+    const [selectedDatabases, setSelectedDatabases] = useState<Set<string>>(new Set());
     const [createDbProfileId, setCreateDbProfileId] = useState<string | null>(null);
+    const [dropDbState, setDropDbState] = useState<{ profileId: string, databases: string[] } | null>(null);
+    const [editDbState, setEditDbState] = useState<{ profileId: string, database: string } | null>(null);
     const [dbFilter, setDbFilter] = useState("");
     const [tableFilter, setTableFilter] = useState("");
 
@@ -126,9 +142,36 @@ export function ExplorerTree() {
                             toggle={toggle}
                             dbFilter={dbFilter}
                             tableFilter={tableFilter}
-                            onContextMenu={(e) => {
+                            selectedDatabases={selectedDatabases}
+                            onSelectDatabase={(dbCacheKey, multi) => {
+                                setSelectedDatabases(prev => {
+                                    if (multi) {
+                                        const next = new Set(prev);
+                                        if (next.has(dbCacheKey)) next.delete(dbCacheKey);
+                                        else next.add(dbCacheKey);
+                                        return next;
+                                    }
+                                    return new Set([dbCacheKey]);
+                                });
+                            }}
+                            onContextMenuServer={(e) => {
                                 e.preventDefault();
-                                setContextMenu({ id: profile.id, x: e.clientX, y: e.clientY });
+                                setContextMenu({ target: { type: "server", profileId: profile.id }, x: e.clientX, y: e.clientY });
+                            }}
+                            onContextMenuDatabase={(e, database) => {
+                                e.preventDefault();
+                                const dbCacheKey = `${profile.id}::${database}`;
+                                let currentSelection = selectedDatabases;
+                                if (!currentSelection.has(dbCacheKey)) {
+                                    currentSelection = new Set([dbCacheKey]);
+                                    setSelectedDatabases(currentSelection);
+                                }
+
+                                const dbsUnderProfile = Array.from(currentSelection)
+                                    .filter(k => k.startsWith(profile.id + "::"))
+                                    .map(k => k.split("::")[1]);
+
+                                setContextMenu({ target: { type: "database", profileId: profile.id, databases: dbsUnderProfile }, x: e.clientX, y: e.clientY });
                             }}
                         />
                     );
@@ -137,69 +180,159 @@ export function ExplorerTree() {
 
             {/* Context Menu Dropdown */}
             {contextMenu && (() => {
-                const profile = profiles.find((p) => p.id === contextMenu.id);
+                const { target } = contextMenu;
+                const profileId = target.profileId;
+                const profile = profiles.find((p) => p.id === profileId);
                 if (!profile) return null;
 
-                const handleDisconnect = async () => {
-                    setContextMenu(null);
-                    try { await dbDisconnect(profile.id); } catch { /* ignore */ }
-                    useProfilesStore.getState().setConnectionStatus(profile.id, "disconnected");
-                    useSchemaStore.getState().removeConnection(profile.id);
+                const menuStyle = {
+                    top: Math.min(contextMenu.y, window.innerHeight - 280),
+                    left: Math.min(contextMenu.x, window.innerWidth - 200),
                 };
 
-                const handleRefresh = async () => {
-                    setContextMenu(null);
-                    const schemaStore = useSchemaStore.getState();
-                    schemaStore.setLoading(profile.id, "databases", true);
-                    schemaStore.clearError(`dbs-${profile.id}`);
-                    try {
-                        const dbs = await dbListDatabases(profile.id);
-                        schemaStore.setDatabases(profile.id, dbs);
-                        setExpanded(prev => ({ ...prev, [`profile-${profile.id}`]: true }));
-                    } catch (e) {
-                        schemaStore.setError(`dbs-${profile.id}`, String(e));
-                    } finally {
-                        schemaStore.setLoading(profile.id, "databases", false);
-                    }
-                };
+                // ─── Server context menu ─────────────────────
+                if (target.type === "server") {
+                    const handleDisconnect = async () => {
+                        setContextMenu(null);
+                        try { await dbDisconnect(profileId); } catch { /* ignore */ }
+                        useProfilesStore.getState().setConnectionStatus(profileId, "disconnected");
+                        useSchemaStore.getState().removeConnection(profileId);
+                    };
 
-                const handleCreateDatabase = () => {
-                    setContextMenu(null);
-                    setCreateDbProfileId(profile.id);
-                };
-
-                const handleExpandAll = async () => {
-                    setContextMenu(null);
-                    const schemaStore = useSchemaStore.getState();
-
-                    let dbs = schemaStore.databases[profile.id];
-                    if (!dbs) {
-                        schemaStore.setLoading(profile.id, "databases", true);
-                        schemaStore.clearError(`dbs-${profile.id}`);
+                    const handleRefresh = async () => {
+                        setContextMenu(null);
+                        const schemaStore = useSchemaStore.getState();
+                        schemaStore.setLoading(profileId, "databases", true);
+                        schemaStore.clearError(`dbs-${profileId}`);
                         try {
-                            dbs = await dbListDatabases(profile.id);
-                            schemaStore.setDatabases(profile.id, dbs);
+                            const dbs = await dbListDatabases(profileId);
+                            schemaStore.setDatabases(profileId, dbs);
+                            setExpanded(prev => ({ ...prev, [`profile-${profileId}`]: true }));
                         } catch (e) {
-                            schemaStore.setError(`dbs-${profile.id}`, String(e));
+                            schemaStore.setError(`dbs-${profileId}`, String(e));
                         } finally {
-                            schemaStore.setLoading(profile.id, "databases", false);
+                            schemaStore.setLoading(profileId, "databases", false);
                         }
-                    }
+                    };
 
-                    if (dbs) {
-                        setExpanded(prev => ({ ...prev, [`profile-${profile.id}`]: true }));
+                    const handleCreateDatabase = () => {
+                        setContextMenu(null);
+                        setCreateDbProfileId(profileId);
+                    };
 
-                        // Fetch tables for all dbs in parallel
-                        await Promise.all(dbs.map(async (db) => {
-                            const cacheKey = `${profile.id}::${db}`;
-                            const tables = schemaStore.tables[cacheKey];
+                    const handleExpandAll = async () => {
+                        setContextMenu(null);
+                        const schemaStore = useSchemaStore.getState();
+                        let dbs = schemaStore.databases[profileId];
+                        if (!dbs) {
+                            schemaStore.setLoading(profileId, "databases", true);
+                            schemaStore.clearError(`dbs-${profileId}`);
+                            try {
+                                dbs = await dbListDatabases(profileId);
+                                schemaStore.setDatabases(profileId, dbs);
+                            } catch (e) {
+                                schemaStore.setError(`dbs-${profileId}`, String(e));
+                            } finally {
+                                schemaStore.setLoading(profileId, "databases", false);
+                            }
+                        }
+                        if (dbs) {
+                            setExpanded(prev => ({ ...prev, [`profile-${profileId}`]: true }));
+                            await Promise.all(dbs.map(async (db) => {
+                                const cacheKey = `${profileId}::${db}`;
+                                if (!schemaStore.tables[cacheKey]) {
+                                    schemaStore.setLoading(cacheKey, "tables", true);
+                                    schemaStore.clearError(`tbl-${cacheKey}`);
+                                    try {
+                                        const tbls = await dbListTables(profileId, db);
+                                        schemaStore.setTables(profileId, db, tbls);
+                                    } catch (e) {
+                                        schemaStore.setError(`tbl-${cacheKey}`, String(e));
+                                    } finally {
+                                        schemaStore.setLoading(cacheKey, "tables", false);
+                                    }
+                                }
+                            }));
+                            setExpanded(prev => {
+                                const next = { ...prev };
+                                dbs.forEach(db => { next[`db-${profileId}::${db}`] = true; });
+                                return next;
+                            });
+                        }
+                    };
 
-                            if (!tables) {
+                    const handleCollapseAll = () => {
+                        setContextMenu(null);
+                        setExpanded(prev => {
+                            const next = { ...prev };
+                            Object.keys(next).forEach(k => {
+                                if (k.startsWith(`db-${profileId}::`) || k === `profile-${profileId}`) {
+                                    next[k] = false;
+                                }
+                            });
+                            return next;
+                        });
+                    };
+
+                    return (
+                        <div className="fixed z-[100] min-w-[180px] bg-popover text-popover-foreground border rounded-md shadow-md p-1 text-xs" style={menuStyle}>
+                            <button className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2" onClick={handleDisconnect}>
+                                <PlugZap className="w-3.5 h-3.5 text-red-500" /> Disconnect
+                            </button>
+                            <button className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2" onClick={handleRefresh}>
+                                <RefreshCw className="w-3.5 h-3.5 text-muted-foreground" /> Refresh
+                            </button>
+                            <div className="h-px bg-border my-1 mx-1" />
+                            <button className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2" onClick={handleCreateDatabase}>
+                                <FolderPlus className="w-3.5 h-3.5 text-muted-foreground" /> Create Database...
+                            </button>
+                            <div className="h-px bg-border my-1 mx-1" />
+                            <button className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2" onClick={handleExpandAll}>
+                                <Maximize2 className="w-3.5 h-3.5 text-muted-foreground" /> Expand All
+                            </button>
+                            <button className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2" onClick={handleCollapseAll}>
+                                <Minimize2 className="w-3.5 h-3.5 text-muted-foreground" /> Collapse All
+                            </button>
+                        </div>
+                    );
+                }
+
+                // ─── Database context menu ───────────────────
+                if (target.type === "database") {
+                    const { databases: targetDbs } = target;
+                    const isMulti = targetDbs.length > 1;
+
+                    const handleShowTables = () => {
+                        setContextMenu(null);
+                        const openTab = useLayoutStore.getState().openTab;
+                        openTab({
+                            title: `Database: ${targetDbs[0]}`,
+                            type: "database-view",
+                            meta: { profileId, profileName: profile.name, database: targetDbs[0] },
+                        });
+                    };
+
+                    const handleEditDatabase = () => {
+                        setContextMenu(null);
+                        setEditDbState({ profileId, database: targetDbs[0] });
+                    };
+
+                    const handleDrop = () => {
+                        setContextMenu(null);
+                        setDropDbState({ profileId, databases: targetDbs });
+                    };
+
+                    const handleExpandAll = async () => {
+                        setContextMenu(null);
+                        const schemaStore = useSchemaStore.getState();
+                        await Promise.all(targetDbs.map(async (db) => {
+                            const cacheKey = `${profileId}::${db}`;
+                            if (!schemaStore.tables[cacheKey]) {
                                 schemaStore.setLoading(cacheKey, "tables", true);
                                 schemaStore.clearError(`tbl-${cacheKey}`);
                                 try {
-                                    const tbls = await dbListTables(profile.id, db);
-                                    schemaStore.setTables(profile.id, db, tbls);
+                                    const tbls = await dbListTables(profileId, db);
+                                    schemaStore.setTables(profileId, db, tbls);
                                 } catch (e) {
                                     schemaStore.setError(`tbl-${cacheKey}`, String(e));
                                 } finally {
@@ -207,78 +340,158 @@ export function ExplorerTree() {
                                 }
                             }
                         }));
-
                         setExpanded(prev => {
                             const next = { ...prev };
-                            dbs.forEach(db => {
-                                next[`db-${profile.id}::${db}`] = true;
-                            });
+                            targetDbs.forEach(db => { next[`db-${profileId}::${db}`] = true; });
                             return next;
                         });
-                    }
-                };
+                    };
 
-                const handleCollapseAll = () => {
-                    setContextMenu(null);
-                    setExpanded(prev => {
-                        const next = { ...prev };
-                        Object.keys(next).forEach(k => {
-                            if (k.startsWith(`db-${profile.id}::`) || k === `profile-${profile.id}`) {
-                                next[k] = false;
-                            }
+                    const handleCollapseAll = () => {
+                        setContextMenu(null);
+                        setExpanded(prev => {
+                            const next = { ...prev };
+                            targetDbs.forEach(db => { next[`db-${profileId}::${db}`] = false; });
+                            return next;
                         });
-                        return next;
-                    });
-                };
+                    };
 
-                return (
-                    <div
-                        className="fixed z-[100] min-w-[180px] bg-popover text-popover-foreground border rounded-md shadow-md p-1 text-xs"
-                        style={{
-                            top: Math.min(contextMenu.y, window.innerHeight - 200),
-                            left: Math.min(contextMenu.x, window.innerWidth - 180),
-                        }}
-                    >
-                        <button
-                            className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2"
-                            onClick={handleDisconnect}
-                        >
-                            <PlugZap className="w-3.5 h-3.5 text-red-500" />
-                            Disconnect
-                        </button>
-                        <button
-                            className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2"
-                            onClick={handleRefresh}
-                        >
-                            <RefreshCw className="w-3.5 h-3.5 text-muted-foreground" />
-                            Refresh
-                        </button>
-                        <div className="h-px bg-border my-1 mx-1" />
-                        <button
-                            className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2"
-                            onClick={handleCreateDatabase}
-                        >
-                            <FolderPlus className="w-3.5 h-3.5 text-muted-foreground" />
-                            Create Database...
-                        </button>
-                        <div className="h-px bg-border my-1 mx-1" />
-                        <button
-                            className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2"
-                            onClick={handleExpandAll}
-                        >
-                            <Maximize2 className="w-3.5 h-3.5 text-muted-foreground" />
-                            Expand All
-                        </button>
-                        <button
-                            className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2"
-                            onClick={handleCollapseAll}
-                        >
-                            <Minimize2 className="w-3.5 h-3.5 text-muted-foreground" />
-                            Collapse All
-                        </button>
-                    </div>
-                );
+                    const handleSelectAll = () => {
+                        setContextMenu(null);
+                        const allDbs = useSchemaStore.getState().databases[profileId] || [];
+                        setSelectedDatabases(new Set(allDbs.map(db => `${profileId}::${db}`)));
+                    };
+
+                    const handleDeselectAll = () => {
+                        setContextMenu(null);
+                        setSelectedDatabases(new Set());
+                    };
+
+                    return (
+                        <div className="fixed z-[100] min-w-[200px] bg-popover text-popover-foreground border rounded-md shadow-md p-1 text-xs" style={menuStyle}>
+                            {isMulti ? (
+                                <>
+                                    <button className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2" onClick={handleSelectAll}>
+                                        <CheckSquare className="w-3.5 h-3.5 text-muted-foreground" /> Select All
+                                    </button>
+                                    <button className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2" onClick={handleDeselectAll}>
+                                        <Square className="w-3.5 h-3.5 text-muted-foreground" /> Deselect All
+                                    </button>
+                                    <div className="h-px bg-border my-1 mx-1" />
+                                    <button className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2 text-red-400" onClick={handleDrop}>
+                                        <Trash className="w-3.5 h-3.5" /> Drop ({targetDbs.length} databases)
+                                    </button>
+                                    <div className="h-px bg-border my-1 mx-1" />
+                                    <button className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2" onClick={handleExpandAll}>
+                                        <Maximize2 className="w-3.5 h-3.5 text-muted-foreground" /> Expand All
+                                    </button>
+                                    <button className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2" onClick={handleCollapseAll}>
+                                        <Minimize2 className="w-3.5 h-3.5 text-muted-foreground" /> Collapse All
+                                    </button>
+                                </>
+                            ) : (
+                                <>
+                                    <button className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2" onClick={handleShowTables}>
+                                        <Table2 className="w-3.5 h-3.5 text-muted-foreground" /> Show Tables
+                                    </button>
+                                    <button className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2" onClick={handleEditDatabase}>
+                                        <Pencil className="w-3.5 h-3.5 text-muted-foreground" /> Edit Database...
+                                    </button>
+                                    <div className="h-px bg-border my-1 mx-1" />
+                                    <ContextSubmenu label="Create" icon={<PlusSquare className="w-3.5 h-3.5 text-muted-foreground" />}>
+                                        <button className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2" onClick={() => setContextMenu(null)}>
+                                            <Table2 className="w-3.5 h-3.5 text-muted-foreground" /> Table
+                                        </button>
+                                        <button className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2" onClick={() => setContextMenu(null)}>
+                                            <FileCode2 className="w-3.5 h-3.5 text-muted-foreground" /> View
+                                        </button>
+                                        <button className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2" onClick={() => setContextMenu(null)}>
+                                            <FileCode2 className="w-3.5 h-3.5 text-muted-foreground" /> Stored Procedure
+                                        </button>
+                                        <button className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2" onClick={() => setContextMenu(null)}>
+                                            <FileCode2 className="w-3.5 h-3.5 text-muted-foreground" /> Stored Function
+                                        </button>
+                                        <button className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2" onClick={() => setContextMenu(null)}>
+                                            <FileCode2 className="w-3.5 h-3.5 text-muted-foreground" /> Trigger
+                                        </button>
+                                        <button className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2" onClick={() => setContextMenu(null)}>
+                                            <FileCode2 className="w-3.5 h-3.5 text-muted-foreground" /> Event
+                                        </button>
+                                    </ContextSubmenu>
+                                    <div className="h-px bg-border my-1 mx-1" />
+                                    <button className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2 text-red-400" onClick={handleDrop}>
+                                        <Trash className="w-3.5 h-3.5" /> Drop Database
+                                    </button>
+                                    <div className="h-px bg-border my-1 mx-1" />
+                                    <button className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2" onClick={handleExpandAll}>
+                                        <Maximize2 className="w-3.5 h-3.5 text-muted-foreground" /> Expand All
+                                    </button>
+                                    <button className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2" onClick={handleCollapseAll}>
+                                        <Minimize2 className="w-3.5 h-3.5 text-muted-foreground" /> Collapse All
+                                    </button>
+                                </>
+                            )}
+                        </div>
+                    );
+                }
+
+                return null;
             })()}
+
+            {/* ─── Drop Confirmation Modal ──────────────────── */}
+            {dropDbState && (
+                <ConfirmModal
+                    title={`Drop ${dropDbState.databases.length > 1 ? dropDbState.databases.length + " Databases" : "Database"}`}
+                    message={
+                        dropDbState.databases.length > 1
+                            ? `Are you sure you want to permanently drop these ${dropDbState.databases.length} databases?\n\n${dropDbState.databases.map(d => `• ${d}`).join("\n")}\n\nThis action cannot be undone.`
+                            : `Are you sure you want to permanently drop database "${dropDbState.databases[0]}"?\n\nThis action cannot be undone.`
+                    }
+                    confirmLabel="Drop"
+                    danger
+                    onCancel={() => setDropDbState(null)}
+                    onConfirm={async () => {
+                        const { profileId: pid, databases: dbsToDrop } = dropDbState;
+                        setDropDbState(null);
+                        for (const db of dbsToDrop) {
+                            try {
+                                await dbExecuteQuery(pid, `DROP DATABASE \`${db}\``);
+                            } catch (e) {
+                                console.error(`Failed to drop ${db}:`, e);
+                            }
+                        }
+                        const schemaStore = useSchemaStore.getState();
+                        schemaStore.setLoading(pid, "databases", true);
+                        try {
+                            const freshDbs = await dbListDatabases(pid);
+                            schemaStore.setDatabases(pid, freshDbs);
+                        } catch { /* ignore */ } finally {
+                            schemaStore.setLoading(pid, "databases", false);
+                        }
+                        setSelectedDatabases(new Set());
+                    }}
+                />
+            )}
+
+            {/* ─── Edit Database Modal ──────────────────────── */}
+            {editDbState && (
+                <EditDatabaseModal
+                    profileId={editDbState.profileId}
+                    database={editDbState.database}
+                    onClose={() => setEditDbState(null)}
+                    onCompleted={async () => {
+                        setEditDbState(null);
+                        const schemaStore = useSchemaStore.getState();
+                        schemaStore.setLoading(editDbState.profileId, "databases", true);
+                        try {
+                            const freshDbs = await dbListDatabases(editDbState.profileId);
+                            schemaStore.setDatabases(editDbState.profileId, freshDbs);
+                        } catch { /* ignore */ } finally {
+                            schemaStore.setLoading(editDbState.profileId, "databases", false);
+                        }
+                    }}
+                />
+            )}
 
             {createDbProfileId !== null && (
                 <CreateDatabaseModal
@@ -302,7 +515,10 @@ function ProfileNode({
     type,
     expanded,
     toggle,
-    onContextMenu,
+    onContextMenuServer,
+    onContextMenuDatabase,
+    onSelectDatabase,
+    selectedDatabases,
     dbFilter,
     tableFilter,
 }: {
@@ -312,7 +528,10 @@ function ProfileNode({
     type: string;
     expanded: ExpandedSet;
     toggle: (key: string) => void;
-    onContextMenu?: (e: React.MouseEvent) => void;
+    onContextMenuServer: (e: React.MouseEvent) => void;
+    onContextMenuDatabase: (e: React.MouseEvent, database: string) => void;
+    onSelectDatabase: (cacheKey: string, multi: boolean) => void;
+    selectedDatabases: Set<string>;
     dbFilter: string;
     tableFilter: string;
 }) {
@@ -380,7 +599,7 @@ function ProfileNode({
                 onChevronClick={handleExpand}
                 onLabelClick={handleLabelClick}
                 onDoubleClick={handleDoubleClick}
-                onContextMenu={onContextMenu}
+                onContextMenu={onContextMenuServer}
                 icon={(() => {
                     const Icon = DB_ICONS[type] || Database;
                     return <Icon className="w-3.5 h-3.5" style={{ color }} />;
@@ -407,6 +626,9 @@ function ProfileNode({
                             expanded={expanded}
                             toggle={toggle}
                             tableFilter={tableFilter}
+                            onSelectDatabase={onSelectDatabase}
+                            selectedDatabases={selectedDatabases}
+                            onContextMenuDatabase={onContextMenuDatabase}
                         />
                     ))}
                 </>
@@ -424,6 +646,9 @@ function DatabaseNode({
     expanded,
     toggle,
     tableFilter,
+    onSelectDatabase,
+    selectedDatabases,
+    onContextMenuDatabase,
 }: {
     profileId: string;
     profileName: string;
@@ -431,6 +656,9 @@ function DatabaseNode({
     expanded: ExpandedSet;
     toggle: (key: string) => void;
     tableFilter: string;
+    onSelectDatabase: (cacheKey: string, multi: boolean) => void;
+    selectedDatabases: Set<string>;
+    onContextMenuDatabase: (e: React.MouseEvent, database: string) => void;
 }) {
     const cacheKey = `${profileId}::${database}`;
     const tables = useSchemaStore((s) => s.tables[cacheKey]);
@@ -472,17 +700,22 @@ function DatabaseNode({
         }
     }, [tables, tableFilter]);
 
-    // Single click on label → open database tab
-    const handleLabelClick = () => {
-        openTab({
-            title: `Database: ${database}`,
-            type: "database-view",
-            meta: {
-                profileId,
-                profileName,
-                database,
-            },
-        });
+    // Single click on label → open database tab OR select if ctrl/cmd held
+    const handleLabelClick = (e: React.MouseEvent) => {
+        if (e.ctrlKey || e.metaKey) {
+            onSelectDatabase(cacheKey, true);
+        } else {
+            onSelectDatabase(cacheKey, false);
+            openTab({
+                title: `Database: ${database}`,
+                type: "database-view",
+                meta: {
+                    profileId,
+                    profileName,
+                    database,
+                },
+            });
+        }
     };
 
     // Double click on label → expand
@@ -495,9 +728,11 @@ function DatabaseNode({
             <TreeRow
                 depth={1}
                 isOpen={isOpen}
+                selected={selectedDatabases.has(cacheKey)}
                 onChevronClick={handleExpand}
                 onLabelClick={handleLabelClick}
                 onDoubleClick={handleDoubleClick}
+                onContextMenu={(e) => onContextMenuDatabase(e, database)}
                 icon={<Database className="w-3.5 h-3.5 text-yellow-500/80" />}
                 label={database}
                 badge={filteredTables ? String(filteredTables.length) : undefined}
@@ -635,11 +870,12 @@ function TreeRow({
     suffix,
     bold,
     muted,
+    selected,
 }: {
     depth: number;
     isOpen?: boolean;
     onChevronClick?: () => void;
-    onLabelClick?: () => void;
+    onLabelClick?: (e: React.MouseEvent) => void;
     onDoubleClick?: () => void;
     onContextMenu?: (e: React.MouseEvent) => void;
     icon: React.ReactNode;
@@ -648,6 +884,7 @@ function TreeRow({
     suffix?: React.ReactNode;
     bold?: boolean;
     muted?: boolean;
+    selected?: boolean;
 }) {
     const isFolder = isOpen !== undefined;
 
@@ -656,7 +893,8 @@ function TreeRow({
             className={cn(
                 "flex items-center h-[22px] cursor-pointer hover:bg-accent/50 transition-colors",
                 bold && "font-medium",
-                muted && "opacity-60"
+                muted && "opacity-60",
+                selected && "bg-accent/80 text-accent-foreground"
             )}
             style={{ paddingLeft: `${depth * 14 + 6}px` }}
             onDoubleClick={onDoubleClick}
@@ -682,7 +920,7 @@ function TreeRow({
                 className="flex items-center flex-1 min-w-0"
                 onClick={(e) => {
                     e.stopPropagation();
-                    onLabelClick?.();
+                    onLabelClick?.(e);
                 }}
             >
                 <span className="w-4 h-4 flex items-center justify-center shrink-0 mr-1">
