@@ -1,8 +1,7 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import { useSchemaStore } from "@/state/schemaStore";
 import { useProfilesStore } from "@/state/profilesStore";
 import { useLayoutStore } from "@/state/layoutStore";
-import { useEffect } from "react";
 import { dbListDatabases, dbListTables, dbListColumns, dbDisconnect } from "@/lib/db";
 import { cn } from "@/lib/utils/cn";
 import {
@@ -20,6 +19,7 @@ import {
     Maximize2,
     Minimize2,
     RefreshCw,
+    X,
 } from "lucide-react";
 import {
     SiPostgresql,
@@ -46,6 +46,8 @@ export function ExplorerTree() {
     const connectedList = profiles.filter((p) => p.connectionStatus === "connected");
 
     const [contextMenu, setContextMenu] = useState<{ id: string, x: number, y: number } | null>(null);
+    const [dbFilter, setDbFilter] = useState("");
+    const [tableFilter, setTableFilter] = useState("");
 
     // Hide context menu on click outside
     useEffect(() => {
@@ -71,25 +73,65 @@ export function ExplorerTree() {
     }
 
     return (
-        <div className="select-none text-[12px]">
-            {connectedList.map((profile) => {
-                const meta = connectedProfiles[profile.id];
-                return (
-                    <ProfileNode
-                        key={profile.id}
-                        profileId={profile.id}
-                        name={meta?.name ?? profile.name}
-                        color={meta?.color ?? profile.color}
-                        type={profile.type}
-                        expanded={expanded}
-                        toggle={toggle}
-                        onContextMenu={(e) => {
-                            e.preventDefault();
-                            setContextMenu({ id: profile.id, x: e.clientX, y: e.clientY });
-                        }}
+        <div className="flex flex-col h-full bg-background select-none text-[12px]">
+            {/* Filter Bar */}
+            <div className="shrink-0 flex items-center h-[26px] border-b bg-muted/20 text-[11px]">
+                <div className="flex-1 flex items-center h-full px-2 border-r focus-within:bg-muted/30 transition-colors">
+                    <Database className="w-3 h-3 text-muted-foreground mr-1.5 shrink-0" />
+                    <input
+                        type="text"
+                        placeholder="Database filter"
+                        value={dbFilter}
+                        onChange={(e) => setDbFilter(e.target.value)}
+                        className="bg-transparent border-none outline-none w-full text-foreground placeholder:text-muted-foreground/60 h-full"
                     />
-                );
-            })}
+                    {dbFilter && (
+                        <X
+                            className="w-3 h-3 text-muted-foreground cursor-pointer hover:text-foreground shrink-0"
+                            onClick={() => setDbFilter("")}
+                        />
+                    )}
+                </div>
+                <div className="flex-1 flex items-center h-full px-2 focus-within:bg-muted/30 transition-colors">
+                    <Table2 className="w-3 h-3 text-muted-foreground mr-1.5 shrink-0" />
+                    <input
+                        type="text"
+                        placeholder="Table filter"
+                        value={tableFilter}
+                        onChange={(e) => setTableFilter(e.target.value)}
+                        className="bg-transparent border-none outline-none w-full text-foreground placeholder:text-muted-foreground/60 h-full font-mono"
+                    />
+                    {tableFilter && (
+                        <X
+                            className="w-3 h-3 text-muted-foreground cursor-pointer hover:text-foreground shrink-0"
+                            onClick={() => setTableFilter("")}
+                        />
+                    )}
+                </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto overflow-x-hidden pt-1">
+                {connectedList.map((profile) => {
+                    const meta = connectedProfiles[profile.id];
+                    return (
+                        <ProfileNode
+                            key={profile.id}
+                            profileId={profile.id}
+                            name={meta?.name ?? profile.name}
+                            color={meta?.color ?? profile.color}
+                            type={profile.type}
+                            expanded={expanded}
+                            toggle={toggle}
+                            dbFilter={dbFilter}
+                            tableFilter={tableFilter}
+                            onContextMenu={(e) => {
+                                e.preventDefault();
+                                setContextMenu({ id: profile.id, x: e.clientX, y: e.clientY });
+                            }}
+                        />
+                    );
+                })}
+            </div>
 
             {/* Context Menu Dropdown */}
             {contextMenu && (() => {
@@ -249,6 +291,8 @@ function ProfileNode({
     expanded,
     toggle,
     onContextMenu,
+    dbFilter,
+    tableFilter,
 }: {
     profileId: string;
     name: string;
@@ -257,6 +301,8 @@ function ProfileNode({
     expanded: ExpandedSet;
     toggle: (key: string) => void;
     onContextMenu?: (e: React.MouseEvent) => void;
+    dbFilter: string;
+    tableFilter: string;
 }) {
     const databases = useSchemaStore((s) => s.databases[profileId]);
     const loading = useSchemaStore((s) => s.loadingDatabases[profileId]);
@@ -288,6 +334,17 @@ function ProfileNode({
         }
     };
 
+    const filteredDatabases = useMemo(() => {
+        if (!databases) return null;
+        if (!dbFilter.trim()) return databases;
+        try {
+            const re = new RegExp(dbFilter, "i");
+            return databases.filter(db => re.test(db));
+        } catch {
+            return databases;
+        }
+    }, [databases, dbFilter]);
+
     const handleLabelClick = () => {
         openTab({
             title: name,
@@ -317,7 +374,7 @@ function ProfileNode({
                     return <Icon className="w-3.5 h-3.5" style={{ color }} />;
                 })()}
                 label={name}
-                badge={databases ? String(databases.length) : undefined}
+                badge={filteredDatabases ? String(filteredDatabases.length) : undefined}
                 bold
             />
 
@@ -329,7 +386,7 @@ function ProfileNode({
                     {error && (
                         <TreeRow depth={1} icon={<AlertCircle className="w-3 h-3 text-red-400" />} label={error} muted />
                     )}
-                    {databases?.map((db) => (
+                    {filteredDatabases?.map((db) => (
                         <DatabaseNode
                             key={db}
                             profileId={profileId}
@@ -337,6 +394,7 @@ function ProfileNode({
                             database={db}
                             expanded={expanded}
                             toggle={toggle}
+                            tableFilter={tableFilter}
                         />
                     ))}
                 </>
@@ -353,12 +411,14 @@ function DatabaseNode({
     database,
     expanded,
     toggle,
+    tableFilter,
 }: {
     profileId: string;
     profileName: string;
     database: string;
     expanded: ExpandedSet;
     toggle: (key: string) => void;
+    tableFilter: string;
 }) {
     const cacheKey = `${profileId}::${database}`;
     const tables = useSchemaStore((s) => s.tables[cacheKey]);
@@ -389,6 +449,17 @@ function DatabaseNode({
         }
     };
 
+    const filteredTables = useMemo(() => {
+        if (!tables) return null;
+        if (!tableFilter.trim()) return tables;
+        try {
+            const re = new RegExp(tableFilter, "i");
+            return tables.filter(t => re.test(t));
+        } catch {
+            return tables;
+        }
+    }, [tables, tableFilter]);
+
     // Single click on label → open database tab
     const handleLabelClick = () => {
         openTab({
@@ -417,7 +488,7 @@ function DatabaseNode({
                 onDoubleClick={handleDoubleClick}
                 icon={<Database className="w-3.5 h-3.5 text-yellow-500/80" />}
                 label={database}
-                badge={tables ? String(tables.length) : undefined}
+                badge={filteredTables ? String(filteredTables.length) : undefined}
             />
 
             {isOpen && (
@@ -428,7 +499,7 @@ function DatabaseNode({
                     {error && (
                         <TreeRow depth={2} icon={<AlertCircle className="w-3 h-3 text-red-400" />} label={error} muted />
                     )}
-                    {tables?.map((table) => (
+                    {filteredTables?.map((table) => (
                         <TableNode
                             key={table}
                             profileId={profileId}
