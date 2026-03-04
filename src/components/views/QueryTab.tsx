@@ -1,6 +1,7 @@
-import { useState, useCallback, useRef, useMemo } from "react";
+import { useState, useCallback, useRef, useMemo, useEffect } from "react";
 import { dbQuery, QueryResultSet } from "@/lib/db";
 import { useSchemaStore } from "@/state/schemaStore";
+import { useLayoutStore } from "@/state/layoutStore";
 import {
   Play,
   Square,
@@ -26,7 +27,7 @@ import { cn } from "@/lib/utils/cn";
 interface Props {
   tabId: string;
   profileId: string;
-  profileName: string;
+  // profileName?: string;
   database?: string;
 }
 
@@ -37,7 +38,7 @@ interface Props {
 export function QueryTab({
   tabId: _tabId,
   profileId,
-  profileName,
+  // profileName,
   database: initialDatabase,
 }: Props) {
   // ── State ──────────────────────────────────────────────────
@@ -55,13 +56,62 @@ export function QueryTab({
   const draggingRef = useRef(false);
 
   // ── Database from schema store ────────────────────────────
-  const storeDatabases = useSchemaStore((s) => s.databases[profileId]);
-  const databases = storeDatabases ?? [];
+  const connectedProfiles = useSchemaStore((s) => s.connectedProfiles);
+  const updateTab = useLayoutStore((s) => s.updateTab);
+
+  const [selectedProfileId, setSelectedProfileId] = useState(profileId);
   const [selectedDb, setSelectedDb] = useState(initialDatabase ?? "");
 
-  // ── Run query ─────────────────────────────────────────────
+  const profileIds = useMemo(
+    () => Object.keys(connectedProfiles),
+    [connectedProfiles],
+  );
+
+  // Auto-update server selection if disconnected or initially empty
+  useEffect(() => {
+    if (!selectedProfileId || !connectedProfiles[selectedProfileId]) {
+      if (profileIds.length > 0) {
+        const fallbackId = profileIds.includes(profileId)
+          ? profileId
+          : profileIds[profileIds.length - 1];
+        setSelectedProfileId(fallbackId);
+      } else if (selectedProfileId !== "") {
+        setSelectedProfileId("");
+      }
+    }
+  }, [connectedProfiles, selectedProfileId, profileIds, profileId]);
+
+  const storeDatabases = useSchemaStore((s) =>
+    selectedProfileId ? s.databases[selectedProfileId] : undefined,
+  );
+  const databases = storeDatabases ?? [];
+
+  // Auto-select database if unselected or old one disappeared
+  useEffect(() => {
+    if (databases.length > 0) {
+      if (!selectedDb) {
+        setSelectedDb(databases[0]);
+      } else if (!databases.includes(selectedDb)) {
+        setSelectedDb(databases[0]);
+      }
+    }
+  }, [databases, selectedDb]);
+
+  // Sync state to layout tab metadata
+  useEffect(() => {
+    if (_tabId && selectedProfileId) {
+      updateTab(_tabId, {
+        meta: {
+          profileId: selectedProfileId,
+          profileName: connectedProfiles[selectedProfileId]?.name || "Server",
+          database: selectedDb,
+        },
+      });
+    }
+  }, [selectedProfileId, selectedDb, _tabId, updateTab, connectedProfiles]);
+
   const handleRun = useCallback(async () => {
-    if (!sql.trim() || running) return;
+    if (!sql.trim() || running || !selectedProfileId) return;
     setRunning(true);
     setError(null);
     setResults([]);
@@ -75,7 +125,7 @@ export function QueryTab({
       if (selectedDb) {
         fullQuery = `USE \`${selectedDb}\`;\n${sql}`;
       }
-      const res = await dbQuery(profileId, fullQuery);
+      const res = await dbQuery(selectedProfileId, fullQuery);
       const elapsed = performance.now() - startTime;
       setExecutionTime(elapsed);
 
@@ -91,7 +141,7 @@ export function QueryTab({
     } finally {
       setRunning(false);
     }
-  }, [sql, profileId, selectedDb, running]);
+  }, [sql, selectedProfileId, selectedDb, running]);
 
   // ── Clear ─────────────────────────────────────────────────
   const handleClear = useCallback(() => {
@@ -276,11 +326,23 @@ export function QueryTab({
 
         {/* ─── Server + Database indicator ─── */}
         <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1 text-muted-foreground">
-            <Server className="w-3 h-3" />
-            <span className="text-xs font-medium text-foreground">
-              {profileName}
-            </span>
+          <div className="flex items-center gap-1">
+            <Server className="w-3 h-3 text-muted-foreground" />
+            <select
+              value={selectedProfileId}
+              onChange={(e) => {
+                setSelectedProfileId(e.target.value);
+                setSelectedDb("");
+              }}
+              className="h-6 text-xs bg-secondary/50 border rounded px-1.5 focus:outline-none focus:ring-1 focus:ring-primary min-w-[120px] max-w-[150px] truncate"
+            >
+              <option value="">(no server)</option>
+              {Object.entries(connectedProfiles).map(([id, p]) => (
+                <option key={id} value={id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
           </div>
 
           <div className="flex items-center gap-1">
@@ -288,7 +350,7 @@ export function QueryTab({
             <select
               value={selectedDb}
               onChange={(e) => setSelectedDb(e.target.value)}
-              className="h-6 text-xs bg-secondary/50 border rounded px-1.5 focus:outline-none focus:ring-1 focus:ring-primary min-w-[120px]"
+              className="h-6 text-xs bg-secondary/50 border rounded px-1.5 focus:outline-none focus:ring-1 focus:ring-primary min-w-[120px] max-w-[150px] truncate"
             >
               <option value="">(no database)</option>
               {databases.map((db) => (
