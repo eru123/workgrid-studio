@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useLayoutStore, ActivityView } from "@/state/layoutStore";
 import { useProfilesStore } from "@/state/profilesStore";
+import { useAppVersion } from "@/hooks/useAppVersion";
 import { Sash } from "./Sash";
 import { EditorNode } from "./EditorNode";
 import { ExplorerTree } from "@/components/views/ExplorerTree";
@@ -26,6 +27,7 @@ const activityItems: { id: ActivityView; icon: any; label: string }[] = [
 ];
 
 export function Workbench() {
+    const appVersion = useAppVersion();
     const {
         activityBarWidth,
         primarySidebarWidth,
@@ -188,7 +190,7 @@ export function Workbench() {
                 {/* Status Bar */}
                 <div className="h-6 bg-primary text-primary-foreground flex items-center px-4 text-xs gap-4 shrink-0">
                     <span>WorkGrid Studio</span>
-                    <span className="ml-auto opacity-70">v0.1.0</span>
+                    <span className="ml-auto opacity-70">v{appVersion}</span>
                 </div>
             </div>
         </div>

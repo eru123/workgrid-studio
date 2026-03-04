@@ -1,10 +1,12 @@
 import { useLayoutStore } from "@/state/layoutStore";
 import { useSchemaStore } from "@/state/schemaStore";
+import { useAppVersion } from "@/hooks/useAppVersion";
 import { Database, FileCode2, Bot, CheckSquare, Terminal, Server } from "lucide-react";
 
 export function WelcomeTab() {
     const { openTab, togglePanel, setActiveView } = useLayoutStore();
     const connectedProfiles = useSchemaStore((s) => s.connectedProfiles);
+    const appVersion = useAppVersion();
 
     return (
         <div className="w-full h-full overflow-y-auto flex flex-col">
@@ -93,7 +95,7 @@ export function WelcomeTab() {
 
                 {/* Footer hint */}
                 <p className="text-xs text-muted-foreground/60 text-center">
-                    WorkGrid Studio v0.1.0
+                    WorkGrid Studio v{appVersion}
                 </p>
             </div>
         </div>

@@ -17,7 +17,12 @@ function readJson(filePath) {
 }
 
 function writeJson(filePath, data) {
-  fs.writeFileSync(filePath, `${JSON.stringify(data, null, 2)}\n`, "utf8");
+  const current = fs.readFileSync(filePath, "utf8");
+  const eol = current.includes("\r\n") ? "\r\n" : "\n";
+  const next = `${JSON.stringify(data, null, 2)}${eol}`;
+  if (current !== next) {
+    fs.writeFileSync(filePath, next, "utf8");
+  }
 }
 
 function isSemver(version) {
@@ -78,6 +83,61 @@ function updateCargoTomlPackageVersion(content, version) {
   return nextLines.join(eol);
 }
 
+function readCargoTomlPackageVersion(content) {
+  const lines = content.split(/\r?\n/);
+  let inPackageSection = false;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (/^\[[^\]]+\]$/.test(trimmed)) {
+      inPackageSection = trimmed === "[package]";
+      continue;
+    }
+
+    if (inPackageSection) {
+      const match = trimmed.match(/^version\s*=\s*"([^"]+)"/);
+      if (match) {
+        return match[1];
+      }
+    }
+  }
+
+  throw new Error("Could not find [package] version in src-tauri/Cargo.toml");
+}
+
+function getCurrentVersions() {
+  const packageJson = readJson(PACKAGE_JSON_PATH);
+  const tauriConf = readJson(TAURI_CONF_PATH);
+  const cargoTomlContent = fs.readFileSync(CARGO_TOML_PATH, "utf8");
+  const cargoVersion = readCargoTomlPackageVersion(cargoTomlContent);
+
+  return {
+    packageVersion: packageJson.version,
+    tauriVersion: tauriConf.version,
+    cargoVersion,
+  };
+}
+
+function checkVersionSync() {
+  const versions = getCurrentVersions();
+  const synced =
+    versions.packageVersion === versions.tauriVersion &&
+    versions.packageVersion === versions.cargoVersion;
+
+  if (!synced) {
+    throw new Error(
+      [
+        "Version mismatch detected:",
+        `- package.json: ${versions.packageVersion}`,
+        `- src-tauri/tauri.conf.json: ${versions.tauriVersion}`,
+        `- src-tauri/Cargo.toml: ${versions.cargoVersion}`,
+      ].join("\n")
+    );
+  }
+
+  return versions.packageVersion;
+}
+
 function syncVersion(version) {
   if (!isSemver(version)) {
     throw new Error(`Invalid semantic version: "${version}"`);
@@ -89,7 +149,9 @@ function syncVersion(version) {
 
   const cargoToml = fs.readFileSync(CARGO_TOML_PATH, "utf8");
   const nextCargoToml = updateCargoTomlPackageVersion(cargoToml, version);
-  fs.writeFileSync(CARGO_TOML_PATH, nextCargoToml, "utf8");
+  if (cargoToml !== nextCargoToml) {
+    fs.writeFileSync(CARGO_TOML_PATH, nextCargoToml, "utf8");
+  }
 }
 
 function main() {
@@ -105,6 +167,12 @@ function main() {
   if (command === "sync") {
     syncVersion(version);
     console.log(`Synchronized version: ${version}`);
+    return;
+  }
+
+  if (command === "check") {
+    const syncedVersion = checkVersionSync();
+    console.log(`Version files are synchronized: ${syncedVersion}`);
     return;
   }
 
@@ -124,7 +192,7 @@ function main() {
   }
 
   throw new Error(
-    `Unknown command "${command}". Use one of: sync | bump <patch|minor|major> | current`
+    `Unknown command "${command}". Use one of: sync | check | bump <patch|minor|major> | current`
   );
 }
 

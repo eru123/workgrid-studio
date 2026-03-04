@@ -134,6 +134,12 @@ This generates static assets in `dist/`.
   pnpm version:sync
   ```
 
+- Check version sync state:
+
+  ```bash
+  pnpm version:check
+  ```
+
 - Bump and sync:
 
   ```bash
@@ -148,6 +154,6 @@ This generates static assets in `dist/`.
   pnpm version:current
   ```
 
-`pnpm build` runs version sync automatically via `prebuild`.
+`pnpm build` runs `version:sync` and `version:check` automatically via `prebuild`.
 
 The GitHub Actions workflow `manual-multi-platform-build.yml` now asks for bump level on dispatch, bumps/syncs version files, commits and tags (`app-vX.Y.Z`), then builds releases from that version tag.
