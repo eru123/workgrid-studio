@@ -122,3 +122,32 @@ This generates static assets in `dist/`.
   ```
 
   Build outputs are generated under `src-tauri/target/release/bundle/`.
+
+## Versioning
+
+`package.json` is the version source of truth.  
+`src-tauri/tauri.conf.json` and `src-tauri/Cargo.toml` are synced automatically.
+
+- Sync all version files:
+
+  ```bash
+  pnpm version:sync
+  ```
+
+- Bump and sync:
+
+  ```bash
+  pnpm version:bump:patch
+  pnpm version:bump:minor
+  pnpm version:bump:major
+  ```
+
+- Read current version:
+
+  ```bash
+  pnpm version:current
+  ```
+
+`pnpm build` runs version sync automatically via `prebuild`.
+
+The GitHub Actions workflow `manual-multi-platform-build.yml` now asks for bump level on dispatch, bumps/syncs version files, commits and tags (`app-vX.Y.Z`), then builds releases from that version tag.
