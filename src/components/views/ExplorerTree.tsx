@@ -30,6 +30,9 @@ import {
     Square,
     PlusSquare,
     FileCode2,
+    Server,
+    Plus,
+    TableProperties,
 } from "lucide-react";
 import {
     SiPostgresql,
@@ -50,11 +53,13 @@ type ExpandedSet = Record<string, boolean>;
 
 type ContextMenuTarget =
     | { type: "server", profileId: string }
-    | { type: "database", profileId: string, databases: string[] };
+    | { type: "database", profileId: string, databases: string[] }
+    | { type: "table", profileId: string, database: string, table: string };
 
 export function ExplorerTree() {
     const connectedProfiles = useSchemaStore((s) => s.connectedProfiles);
     const profiles = useProfilesStore((s) => s.profiles);
+    const setActiveView = useLayoutStore((s) => s.setActiveView);
     const [expanded, setExpanded] = useState<ExpandedSet>({});
 
     const connectedList = profiles.filter((p) => p.connectionStatus === "connected");
@@ -80,12 +85,19 @@ export function ExplorerTree() {
 
     if (connectedList.length === 0) {
         return (
-            <div className="p-3 text-center">
-                <PlugZap className="w-8 h-8 text-muted-foreground/20 mx-auto mb-2" />
-                <p className="text-xs text-muted-foreground mb-1">No connections</p>
-                <p className="text-[10px] text-muted-foreground/60">
-                    Connect to a database to browse its schema.
+            <div className="p-6 text-center mt-6">
+                <Server className="w-10 h-10 text-muted-foreground/20 mx-auto mb-3" />
+                <p className="text-xs text-muted-foreground mb-1 font-medium">No active connections</p>
+                <p className="text-[10px] text-muted-foreground/60 mb-4">
+                    Connect to a server to browse databases and tables.
                 </p>
+                <button
+                    onClick={() => setActiveView("servers")}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+                >
+                    <Plus className="w-3.5 h-3.5" />
+                    Add Connection
+                </button>
             </div>
         );
     }
@@ -172,6 +184,10 @@ export function ExplorerTree() {
                                     .map(k => k.split("::")[1]);
 
                                 setContextMenu({ target: { type: "database", profileId: profile.id, databases: dbsUnderProfile }, x: e.clientX, y: e.clientY });
+                            }}
+                            onContextMenuTable={(e, database, table) => {
+                                e.preventDefault();
+                                setContextMenu({ target: { type: "table", profileId: profile.id, database, table }, x: e.clientX, y: e.clientY });
                             }}
                         />
                     );
@@ -394,6 +410,16 @@ export function ExplorerTree() {
                                     <button className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2" onClick={handleShowTables}>
                                         <Table2 className="w-3.5 h-3.5 text-muted-foreground" /> Show Tables
                                     </button>
+                                    <button className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2" onClick={() => {
+                                        setContextMenu(null);
+                                        useLayoutStore.getState().openTab({
+                                            title: `Query: ${targetDbs[0]}`,
+                                            type: "sql",
+                                            meta: { profileId, database: targetDbs[0] },
+                                        });
+                                    }}>
+                                        <FileCode2 className="w-3.5 h-3.5 text-muted-foreground" /> New Query
+                                    </button>
                                     <button className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2" onClick={handleEditDatabase}>
                                         <Pencil className="w-3.5 h-3.5 text-muted-foreground" /> Edit Database...
                                     </button>
@@ -439,6 +465,46 @@ export function ExplorerTree() {
                                     </button>
                                 </>
                             )}
+                        </div>
+                    );
+                }
+
+                // ─── Table context menu ──────────────────────
+                if (target.type === "table") {
+                    const { database: targetDb, table: targetTable } = target;
+                    return (
+                        <div className="fixed z-[100] min-w-[180px] bg-popover text-popover-foreground border rounded-md shadow-md p-1 text-xs" style={menuStyle}>
+                            <button className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2" onClick={() => {
+                                setContextMenu(null);
+                                useLayoutStore.getState().openTab({
+                                    title: `Query: ${targetDb}`,
+                                    type: "sql",
+                                    meta: { profileId, database: targetDb },
+                                });
+                            }}>
+                                <FileCode2 className="w-3.5 h-3.5 text-muted-foreground" /> New Query
+                            </button>
+                            <button className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2" onClick={() => {
+                                setContextMenu(null);
+                                useLayoutStore.getState().openTab({
+                                    title: `Database: ${targetDb}`,
+                                    type: "database-view",
+                                    meta: { profileId, profileName: profile.name, database: targetDb },
+                                });
+                            }}>
+                                <TableProperties className="w-3.5 h-3.5 text-muted-foreground" /> Show Tables
+                            </button>
+                            <div className="h-px bg-border my-1 mx-1" />
+                            <button className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2" onClick={() => {
+                                setContextMenu(null);
+                                useLayoutStore.getState().openTab({
+                                    title: targetTable,
+                                    type: "table-designer",
+                                    meta: { profileId, database: targetDb, tableName: targetTable },
+                                });
+                            }}>
+                                <Pencil className="w-3.5 h-3.5 text-muted-foreground" /> Edit Table
+                            </button>
                         </div>
                     );
                 }
@@ -525,6 +591,7 @@ function ProfileNode({
     toggle,
     onContextMenuServer,
     onContextMenuDatabase,
+    onContextMenuTable,
     onSelectDatabase,
     selectedDatabases,
     dbFilter,
@@ -538,6 +605,7 @@ function ProfileNode({
     toggle: (key: string) => void;
     onContextMenuServer: (e: React.MouseEvent) => void;
     onContextMenuDatabase: (e: React.MouseEvent, database: string) => void;
+    onContextMenuTable: (e: React.MouseEvent, database: string, table: string) => void;
     onSelectDatabase: (cacheKey: string, multi: boolean) => void;
     selectedDatabases: Set<string>;
     dbFilter: string;
@@ -637,6 +705,7 @@ function ProfileNode({
                             onSelectDatabase={onSelectDatabase}
                             selectedDatabases={selectedDatabases}
                             onContextMenuDatabase={onContextMenuDatabase}
+                            onContextMenuTable={onContextMenuTable}
                         />
                     ))}
                 </>
@@ -657,6 +726,7 @@ function DatabaseNode({
     onSelectDatabase,
     selectedDatabases,
     onContextMenuDatabase,
+    onContextMenuTable,
 }: {
     profileId: string;
     profileName: string;
@@ -667,6 +737,7 @@ function DatabaseNode({
     onSelectDatabase: (cacheKey: string, multi: boolean) => void;
     selectedDatabases: Set<string>;
     onContextMenuDatabase: (e: React.MouseEvent, database: string) => void;
+    onContextMenuTable: (e: React.MouseEvent, database: string, table: string) => void;
 }) {
     const cacheKey = `${profileId}::${database}`;
     const tables = useSchemaStore((s) => s.tables[cacheKey]);
@@ -762,6 +833,7 @@ function DatabaseNode({
                             table={table}
                             expanded={expanded}
                             toggle={toggle}
+                            onContextMenu={(e) => onContextMenuTable(e, database, table)}
                         />
                     ))}
                 </>
@@ -778,12 +850,14 @@ function TableNode({
     table,
     expanded,
     toggle,
+    onContextMenu,
 }: {
     profileId: string;
     database: string;
     table: string;
     expanded: ExpandedSet;
     toggle: (key: string) => void;
+    onContextMenu: (e: React.MouseEvent) => void;
 }) {
     const cacheKey = `${profileId}::${database}::${table}`;
     const columns = useSchemaStore((s) => s.columns[cacheKey]);
@@ -819,6 +893,7 @@ function TableNode({
                 isOpen={isOpen}
                 onChevronClick={handleToggle}
                 onLabelClick={handleToggle}
+                onContextMenu={onContextMenu}
                 icon={<Table2 className="w-3.5 h-3.5 text-blue-400/80" />}
                 label={table}
                 badge={columns ? String(columns.length) : undefined}

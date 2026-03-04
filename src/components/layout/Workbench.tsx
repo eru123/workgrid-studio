@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useLayoutStore, ActivityView } from "@/state/layoutStore";
 import { useProfilesStore } from "@/state/profilesStore";
+import { useSchemaStore } from "@/state/schemaStore";
 import { useAppVersion } from "@/hooks/useAppVersion";
 import { Sash } from "./Sash";
 import { EditorNode } from "./EditorNode";
@@ -28,6 +29,8 @@ const activityItems: { id: ActivityView; icon: any; label: string }[] = [
 
 export function Workbench() {
     const appVersion = useAppVersion();
+    const connectedProfiles = useSchemaStore((s) => s.connectedProfiles);
+    const connectedCount = Object.keys(connectedProfiles).length;
     const {
         activityBarWidth,
         primarySidebarWidth,
@@ -72,6 +75,7 @@ export function Workbench() {
                     {activityItems.map((item) => {
                         const Icon = item.icon;
                         const isActive = activeView === item.id && isPrimarySidebarVisible;
+                        const badge = item.id === "explorer" && connectedCount > 0 ? connectedCount : null;
                         return (
                             <button
                                 key={item.id}
@@ -88,6 +92,11 @@ export function Workbench() {
                                     <div className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-5 bg-foreground rounded-r" />
                                 )}
                                 <Icon className="w-5 h-5" />
+                                {badge !== null && (
+                                    <span className="absolute top-1 right-1 min-w-[14px] h-[14px] rounded-full bg-primary text-primary-foreground text-[9px] font-bold flex items-center justify-center px-0.5 leading-none">
+                                        {badge}
+                                    </span>
+                                )}
                             </button>
                         );
                     })}
