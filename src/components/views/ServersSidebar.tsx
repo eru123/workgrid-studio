@@ -11,7 +11,7 @@ import {
 } from "@/state/profilesStore";
 import { useSchemaStore } from "@/state/schemaStore";
 import { useLayoutStore } from "@/state/layoutStore";
-import { dbConnect, dbDisconnect } from "@/lib/db";
+import { dbConnect, dbDisconnect, dbListDatabases } from "@/lib/db";
 import { cn } from "@/lib/utils/cn";
 import {
     Plus,
@@ -53,7 +53,7 @@ export function ServersSidebar() {
     const [viewMode, setViewMode] = useState<ViewMode>("list");
     const [editingId, setEditingId] = useState<string | null>(null);
     const [formData, setFormData] = useState<ProfileFormData>(createDefaultFormData());
-    const [connectError, setConnectError] = useState<string | null>(null);
+    const [connectErrors, setConnectErrors] = useState<Record<string, string>>({});
     const [contextMenu, setContextMenu] = useState<{ id: string; x: number; y: number } | null>(null);
 
     useEffect(() => {
@@ -108,10 +108,13 @@ export function ServersSidebar() {
         setContextMenu(null);
     };
 
+    const clearConnectError = (id: string) =>
+        setConnectErrors((prev) => { const n = { ...prev }; delete n[id]; return n; });
+
     const handleConnect = async (id: string) => {
         const profile = profiles.find((p) => p.id === id);
         if (!profile) return;
-        setConnectError(null);
+        clearConnectError(id);
 
         if (profile.connectionStatus === "connected") {
             try { await dbDisconnect(id); } catch { /* ignore */ }
@@ -131,10 +134,19 @@ export function ServersSidebar() {
                 });
                 setConnectionStatus(id, "connected");
                 addConnection(id, profile.name, profile.color);
+                // Pre-load database list so Explorer is ready on arrival
+                const schemaStore = useSchemaStore.getState();
+                schemaStore.setLoading(id, "databases", true);
+                try {
+                    const dbs = await dbListDatabases(id);
+                    schemaStore.setDatabases(id, dbs);
+                } catch { /* non-fatal */ } finally {
+                    schemaStore.setLoading(id, "databases", false);
+                }
                 setActiveView("explorer");
             } catch (e) {
                 setConnectionStatus(id, "error");
-                setConnectError(String(e));
+                setConnectErrors((prev) => ({ ...prev, [id]: String(e) }));
             }
         }
     };
@@ -142,7 +154,7 @@ export function ServersSidebar() {
     const handleDoubleClick = async (id: string) => {
         const profile = profiles.find((p) => p.id === id);
         if (!profile) return;
-        setConnectError(null);
+        clearConnectError(id);
 
         if (profile.connectionStatus === "connected") {
             setActiveView("explorer");
@@ -276,11 +288,11 @@ export function ServersSidebar() {
                                     </div>
                                 </div>
 
-                                {connectError && profile.connectionStatus === "error" && (
+                                {connectErrors[profile.id] && profile.connectionStatus === "error" && (
                                     <div className="px-3 pb-2 pt-1">
                                         <div className="text-[10px] text-red-500/90 font-mono break-all overflow-hidden relative pr-4 bg-red-500/10 border border-red-500/20 rounded-md p-1.5">
-                                            {connectError}
-                                            <button onClick={() => setConnectError(null)} className="absolute top-1 right-1 p-0.5 rounded text-red-400 hover:text-red-300 transition-colors">
+                                            {connectErrors[profile.id]}
+                                            <button onClick={() => clearConnectError(profile.id)} className="absolute top-1 right-1 p-0.5 rounded text-red-400 hover:text-red-300 transition-colors">
                                                 <X className="w-3 h-3" />
                                             </button>
                                         </div>
