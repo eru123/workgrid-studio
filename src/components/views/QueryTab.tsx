@@ -27,7 +27,6 @@ import { cn } from "@/lib/utils/cn";
 interface Props {
   tabId: string;
   profileId: string;
-  // profileName?: string;
   database?: string;
 }
 
@@ -35,20 +34,21 @@ interface Props {
 //  Component
 // ═══════════════════════════════════════════════════════════════════════
 
-export function QueryTab({
-  tabId: _tabId,
-  profileId,
-  // profileName,
-  database: initialDatabase,
-}: Props) {
+export function QueryTab({ tabId, profileId, database: initialDatabase }: Props) {
   // ── State ──────────────────────────────────────────────────
   const [sql, setSql] = useState("");
   const [results, setResults] = useState<QueryResultSet[]>([]);
+  const [hasRun, setHasRun] = useState(false);
   const [activeResultIdx, setActiveResultIdx] = useState(0);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [executionTime, setExecutionTime] = useState<number | null>(null);
   const [wordWrap, setWordWrap] = useState(false);
+
+  // ── Cancellation token ────────────────────────────────────
+  // Incrementing counter: if the token when a query starts differs from the
+  // current one by the time it resolves, the result is discarded (soft-cancel).
+  const runTokenRef = useRef(0);
 
   // ── Resizable split ───────────────────────────────────────
   const [splitPercent, setSplitPercent] = useState(40);
@@ -99,8 +99,8 @@ export function QueryTab({
 
   // Sync state to layout tab metadata
   useEffect(() => {
-    if (_tabId && selectedProfileId) {
-      updateTab(_tabId, {
+    if (tabId && selectedProfileId) {
+      updateTab(tabId, {
         meta: {
           profileId: selectedProfileId,
           profileName: connectedProfiles[selectedProfileId]?.name || "Server",
@@ -108,40 +108,68 @@ export function QueryTab({
         },
       });
     }
-  }, [selectedProfileId, selectedDb, _tabId, updateTab, connectedProfiles]);
+  }, [selectedProfileId, selectedDb, tabId, updateTab, connectedProfiles]);
 
   const handleRun = useCallback(async () => {
     if (!sql.trim() || running || !selectedProfileId) return;
+
+    // Mint a new token for this execution
+    const token = ++runTokenRef.current;
+
     setRunning(true);
     setError(null);
     setResults([]);
+    setHasRun(false);
     setExecutionTime(null);
 
     const startTime = performance.now();
 
     try {
-      // If a database is selected, prefix with USE statement
+      // Escape backticks in the database name to avoid malformed USE statements
+      // (e.g. a db named: test`db  →  USE `test``db`)
       let fullQuery = sql;
       if (selectedDb) {
-        fullQuery = `USE \`${selectedDb}\`;\n${sql}`;
+        const escapedDb = selectedDb.replace(/`/g, "``");
+        fullQuery = `USE \`${escapedDb}\`;\n${sql}`;
       }
+
       const res = await dbQuery(selectedProfileId, fullQuery);
+
+      // Discard stale results if the user cancelled (soft-stop) and re-ran
+      if (token !== runTokenRef.current) return;
+
       const elapsed = performance.now() - startTime;
       setExecutionTime(elapsed);
 
-      // Filter out USE statement results
-      const filteredResults = selectedDb ? res.filter((_, i) => i > 0) : res;
+      // Drop the USE result (index 0) so callers only see their query results
+      const filteredResults = selectedDb ? res.slice(1) : res;
 
-      setResults(filteredResults.length > 0 ? filteredResults : res);
+      setResults(filteredResults);
+      setHasRun(true);
       setActiveResultIdx(0);
     } catch (e) {
+      if (token !== runTokenRef.current) return;
       const elapsed = performance.now() - startTime;
       setExecutionTime(elapsed);
       setError(String(e));
+      setHasRun(true);
     } finally {
-      setRunning(false);
+      if (token === runTokenRef.current) {
+        setRunning(false);
+      }
     }
   }, [sql, selectedProfileId, selectedDb, running]);
+
+  // ── Stop (soft-cancel) ────────────────────────────────────
+  // Advances the token so the in-flight result is discarded when it arrives.
+  // The underlying DB query still runs to completion on the server side.
+  const handleStop = useCallback(() => {
+    if (!running) return;
+    runTokenRef.current++;
+    setRunning(false);
+    setError("Query cancelled by user.");
+    setHasRun(true);
+  }, [running]);
 
   // ── Clear ─────────────────────────────────────────────────
   const handleClear = useCallback(() => {
@@ -149,10 +177,11 @@ export function QueryTab({
     setResults([]);
     setError(null);
     setExecutionTime(null);
+    setHasRun(false);
   }, []);
 
   // ── Copy results ──────────────────────────────────────────
-  const handleCopyResults = useCallback(() => {
+  const handleCopyResults = useCallback(async () => {
     const active = results[activeResultIdx];
     if (!active || active.rows.length === 0) return;
 
@@ -160,7 +189,12 @@ export function QueryTab({
     const rows = active.rows
       .map((r) => r.map((v) => (v === null ? "NULL" : String(v))).join("\t"))
       .join("\n");
-    navigator.clipboard.writeText(`${header}\n${rows}`);
+
+    try {
+      await navigator.clipboard.writeText(`${header}\n${rows}`);
+    } catch {
+      // Clipboard access denied — silently ignore (Tauri desktop context should allow it)
+    }
   }, [results, activeResultIdx]);
 
   // ── Export CSV ─────────────────────────────────────────────
@@ -182,13 +216,18 @@ export function QueryTab({
       .map((r) => r.map((v) => escapeCSV(v)).join(","))
       .join("\n");
 
-    const blob = new Blob([`${header}\n${rows}`], { type: "text/csv" });
+    // UTF-8 BOM ensures Excel renders the file correctly
+    const bom = "\uFEFF";
+    const blob = new Blob([`${bom}${header}\n${rows}`], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
     a.download = `query_result_${Date.now()}.csv`;
+    document.body.appendChild(a);
     a.click();
-    URL.revokeObjectURL(url);
+    document.body.removeChild(a);
+    // Defer revocation to give the browser time to initiate the download
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   }, [results, activeResultIdx]);
 
   // ── Drag handle ───────────────────────────────────────────
@@ -231,21 +270,24 @@ export function QueryTab({
   const statusText = useMemo(() => {
     if (running) return "Executing...";
     if (error) return "Error";
-    if (results.length === 0) return "Ready";
+    if (results.length === 0) return hasRun ? "Done" : "Ready";
     const total = results.reduce((a, r) => a + r.rows.length, 0);
     return `${results.length} result set(s), ${total} total row(s)`;
-  }, [running, error, results]);
+  }, [running, error, results, hasRun]);
 
   // ── Keyboard shortcut ─────────────────────────────────────
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
-      // Ctrl+Enter or F5 to run
       if ((e.ctrlKey && e.key === "Enter") || e.key === "F5") {
         e.preventDefault();
         handleRun();
       }
+      if (e.key === "Escape" && running) {
+        e.preventDefault();
+        handleStop();
+      }
     },
-    [handleRun],
+    [handleRun, handleStop, running],
   );
 
   // ═══════════════════════════════════════════════════════════
@@ -277,8 +319,8 @@ export function QueryTab({
         {/* Stop */}
         <ToolBtn
           icon={<Square className="w-4 h-4" />}
-          title="Stop"
-          onClick={() => {}}
+          title="Stop (Escape)"
+          onClick={handleStop}
           disabled={!running}
           active={false}
         />
@@ -423,8 +465,18 @@ export function QueryTab({
           </div>
         )}
 
+        {/* Loading state */}
+        {running && (
+          <div className="flex-1 flex items-center justify-center text-muted-foreground/50">
+            <div className="text-center">
+              <Loader2 className="w-6 h-6 mx-auto mb-2 animate-spin opacity-50" />
+              <div>Executing query…</div>
+            </div>
+          </div>
+        )}
+
         {/* Error display */}
-        {error && (
+        {!running && error && (
           <div className="flex items-start gap-2 px-3 py-2 bg-red-500/10 text-red-400 border-b shrink-0">
             <XCircle className="w-4 h-4 mt-0.5 shrink-0" />
             <pre className="text-xs font-mono whitespace-pre-wrap flex-1 select-text">
@@ -434,7 +486,7 @@ export function QueryTab({
         )}
 
         {/* Results grid */}
-        {activeResult && activeResult.columns.length > 0 ? (
+        {!running && activeResult && activeResult.columns.length > 0 ? (
           <div className="flex-1 overflow-auto">
             <table className="w-full text-xs border-collapse">
               <thead>
@@ -481,14 +533,29 @@ export function QueryTab({
               </tbody>
             </table>
           </div>
-        ) : !error && results.length > 0 ? (
+        ) : !running && !error && hasRun && results.length > 0 ? (
+          /* DML/DDL success: no column data but query ran */
           <div className="flex-1 flex items-center justify-center text-muted-foreground/50">
             <div className="text-center">
               <CheckCircle2 className="w-6 h-6 mx-auto mb-2 text-green-400/50" />
               <div>{activeResult?.info || "Query executed successfully"}</div>
+              {activeResult && activeResult.affected_rows > 0 && (
+                <div className="text-[10px] mt-1 text-muted-foreground/40">
+                  {activeResult.affected_rows} row(s) affected
+                </div>
+              )}
             </div>
           </div>
-        ) : !error ? (
+        ) : !running && !error && hasRun ? (
+          /* Ran successfully, no result sets returned (e.g. SET, pure DDL) */
+          <div className="flex-1 flex items-center justify-center text-muted-foreground/50">
+            <div className="text-center">
+              <CheckCircle2 className="w-6 h-6 mx-auto mb-2 text-green-400/50" />
+              <div>Query executed successfully</div>
+            </div>
+          </div>
+        ) : !running && !error ? (
+          /* Never run yet */
           <div className="flex-1 flex items-center justify-center text-muted-foreground/30">
             <div className="text-center">
               <AlertCircle className="w-6 h-6 mx-auto mb-2 opacity-30" />
@@ -574,6 +641,7 @@ function ToolBtn({
       onClick={onClick}
       disabled={disabled}
       title={title}
+      aria-label={title}
     >
       {icon}
     </button>

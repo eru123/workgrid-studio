@@ -39,7 +39,6 @@ function TabContent({ tab }: { tab: EditorTab }) {
                 <QueryTab
                     tabId={tab.id}
                     profileId={tab.meta?.profileId ?? ""}
-                    profileName={tab.meta?.profileName ?? "Server"}
                     database={tab.meta?.database}
                 />
             );
