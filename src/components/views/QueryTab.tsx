@@ -245,6 +245,7 @@ export function QueryTab({
   const [hasDbSelectionHistory, setHasDbSelectionHistory] = useState(
     initialDatabase !== undefined,
   );
+  const [textareaContentWidth, setTextareaContentWidth] = useState(0);
 
   useEffect(() => {
     setEditorFontSize((prev) =>
@@ -611,6 +612,22 @@ export function QueryTab({
     }
   }, [editorFontSize, splitPercent, syncEditorMetrics, wordWrap]);
 
+  // Track textarea content width for word-wrap line number sync
+  useEffect(() => {
+    const textarea = editorRef.current;
+    if (!textarea) return;
+
+    const updateWidth = () => {
+      // clientWidth excludes scrollbar; subtract horizontal padding (p-3 = 12px each side)
+      setTextareaContentWidth(textarea.clientWidth - 24);
+    };
+
+    updateWidth();
+    const observer = new ResizeObserver(updateWidth);
+    observer.observe(textarea);
+    return () => observer.disconnect();
+  }, [wordWrap]);
+
   useEffect(() => {
     const minimapEl = minimapRef.current;
     if (!minimapEl) return;
@@ -850,6 +867,13 @@ export function QueryTab({
         return;
       }
 
+      // Alt+Z: toggle word wrap
+      if (e.altKey && !e.shiftKey && !modKey && lowered === "z") {
+        e.preventDefault();
+        setWordWrap((p) => !p);
+        return;
+      }
+
       if ((modKey && e.key === "Enter") || e.key === "F5") {
         e.preventDefault();
         handleRun();
@@ -1010,7 +1034,7 @@ export function QueryTab({
         {/* Wrap Text */}
         <button
           type="button"
-          title="Wrap text"
+          title="Wrap text (Alt+Z)"
           aria-label="Wrap text"
           onClick={() => setWordWrap((p) => !p)}
           className={cn(
@@ -1107,15 +1131,43 @@ export function QueryTab({
             className="w-12 shrink-0 border-r bg-muted/25 overflow-hidden"
             aria-hidden="true"
           >
-            <pre
-              className="m-0 px-2 py-3 text-right font-mono text-muted-foreground/70 select-none"
-              style={{
-                fontSize: `${editorFontSize}px`,
-                lineHeight: `${editorLineHeight}px`,
-              }}
-            >
-              {lineNumbersText}
-            </pre>
+            {wordWrap && textareaContentWidth > 0 ? (
+              <div className="py-3">
+                {sql.split("\n").map((lineText, idx) => (
+                  <div key={idx} className="relative overflow-hidden">
+                    <div
+                      className="px-2 text-right font-mono text-muted-foreground/70 select-none absolute top-0 inset-x-0"
+                      style={{
+                        fontSize: `${editorFontSize}px`,
+                        lineHeight: `${editorLineHeight}px`,
+                      }}
+                    >
+                      {idx + 1}
+                    </div>
+                    <div
+                      className="invisible whitespace-pre-wrap break-all font-mono"
+                      style={{
+                        width: textareaContentWidth,
+                        fontSize: `${editorFontSize}px`,
+                        lineHeight: `${editorLineHeight}px`,
+                      }}
+                    >
+                      {lineText || "\u200B"}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <pre
+                className="m-0 px-2 py-3 text-right font-mono text-muted-foreground/70 select-none"
+                style={{
+                  fontSize: `${editorFontSize}px`,
+                  lineHeight: `${editorLineHeight}px`,
+                }}
+              >
+                {lineNumbersText}
+              </pre>
+            )}
           </div>
           <div className="relative flex-1 min-w-0">
             <textarea
