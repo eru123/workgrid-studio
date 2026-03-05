@@ -12,6 +12,8 @@ interface AutocompleteInputProps {
   selectOnEnter?: boolean;
   selectOnTab?: boolean;
   onEnter?: () => void;
+  highlightHtml?: string;
+  highlightClassName?: string;
   inputClassName?: string;
   dropdownClassName?: string;
 }
@@ -27,6 +29,8 @@ export function AutocompleteInput({
   selectOnEnter = true,
   selectOnTab = false,
   onEnter,
+  highlightHtml,
+  highlightClassName,
   inputClassName,
   dropdownClassName,
 }: AutocompleteInputProps) {
@@ -48,9 +52,21 @@ export function AutocompleteInput({
     onChange(nextValue);
     setOpen(false);
   };
+  const hasVisibleSuggestions = open && visibleSuggestions.length > 0;
+  const showHighlight = Boolean(highlightHtml && value);
 
   return (
     <div className="relative w-full">
+      {showHighlight && (
+        <pre
+          aria-hidden
+          className={cn(
+            "pointer-events-none absolute inset-0 m-0 overflow-hidden whitespace-pre text-foreground",
+            highlightClassName,
+          )}
+          dangerouslySetInnerHTML={{ __html: highlightHtml ?? "" }}
+        />
+      )}
       <input
         value={value}
         onChange={(e) => {
@@ -63,14 +79,14 @@ export function AutocompleteInput({
           window.setTimeout(() => setOpen(false), 100);
         }}
         onKeyDown={(e) => {
-          if (!open || visibleSuggestions.length === 0) return;
-
           if (e.key === "ArrowDown") {
+            if (!hasVisibleSuggestions) return;
             e.preventDefault();
             setActiveIdx((prev) => (prev + 1) % visibleSuggestions.length);
             return;
           }
           if (e.key === "ArrowUp") {
+            if (!hasVisibleSuggestions) return;
             e.preventDefault();
             setActiveIdx((prev) =>
               prev === 0 ? visibleSuggestions.length - 1 : prev - 1,
@@ -78,7 +94,11 @@ export function AutocompleteInput({
             return;
           }
           if (e.key === "Enter") {
-            if (selectOnEnter && visibleSuggestions[activeIdx]) {
+            if (
+              hasVisibleSuggestions &&
+              selectOnEnter &&
+              visibleSuggestions[activeIdx]
+            ) {
               e.preventDefault();
               applySuggestion(visibleSuggestions[activeIdx]);
               return;
@@ -90,20 +110,29 @@ export function AutocompleteInput({
             return;
           }
           if (e.key === "Tab") {
-            if (selectOnTab && visibleSuggestions[activeIdx]) {
+            if (
+              hasVisibleSuggestions &&
+              selectOnTab &&
+              visibleSuggestions[activeIdx]
+            ) {
               e.preventDefault();
               applySuggestion(visibleSuggestions[activeIdx]);
             }
             return;
           }
           if (e.key === "Escape") {
+            if (!open) return;
             e.preventDefault();
             setOpen(false);
           }
         }}
         disabled={disabled}
         spellCheck={spellCheck}
-        className={inputClassName}
+        className={cn(
+          "relative z-10",
+          showHighlight && "text-transparent caret-foreground",
+          inputClassName,
+        )}
         placeholder={placeholder}
       />
 

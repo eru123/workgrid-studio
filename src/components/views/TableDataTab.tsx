@@ -3,6 +3,7 @@ import { dbQuery, dbListColumns } from "@/lib/db";
 import type { ColumnInfo, QueryResultSet } from "@/lib/db";
 import { cn } from "@/lib/utils/cn";
 import { AutocompleteInput } from "@/components/ui/AutocompleteInput";
+import { highlightSQL } from "@/lib/sqlHighlight";
 import {
   Loader2,
   ChevronUp,
@@ -466,6 +467,16 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
     () => buildWhereSuggestions(whereClause, columns, columnInfos),
     [whereClause, columns, columnInfos],
   );
+  const whereHighlightHtml = useMemo(() => {
+    if (!whereClause) return "";
+    const html = highlightSQL(
+      whereClause,
+      whereClause.length,
+      whereClause.length,
+      null,
+    );
+    return html.endsWith("\n") ? html.slice(0, -1) : html;
+  }, [whereClause]);
 
   // ── Close column picker on outside click ────────────────
   useEffect(() => {
@@ -615,38 +626,42 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
 
       {/* ─── Filter Bar ────────────────────────────── */}
       {showFilter && (
-        <div className="flex items-center gap-2 px-3 py-1.5 border-b bg-muted/10 shrink-0">
-          <span className="text-[10px] text-muted-foreground shrink-0 font-medium uppercase tracking-wide">
-            WHERE
-          </span>
-          <AutocompleteInput
-            value={whereClause}
-            onChange={setWhereClause}
-            suggestions={whereSuggestions}
-            selectOnEnter={false}
-            selectOnTab
-            onEnter={applyFilter}
-            inputClassName="flex-1 h-6 rounded bg-secondary/50 border px-2 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-primary"
-            dropdownClassName="max-h-56 overflow-y-auto border-border/70"
-            placeholder="e.g. status = 'active' AND created_at > '2024-01-01'"
-            spellCheck={false}
-          />
-          <button
-            className="px-2 py-1 text-xs rounded bg-primary text-primary-foreground hover:bg-primary/90 transition-colors flex items-center gap-1"
-            onClick={applyFilter}
-          >
-            <Check className="w-3 h-3" />
-            Apply
-          </button>
-          {appliedWhere && (
+        <div className="px-3 py-1.5 border-b bg-muted/10 shrink-0">
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] text-muted-foreground shrink-0 font-medium uppercase tracking-wide">
+              WHERE
+            </span>
+            <AutocompleteInput
+              value={whereClause}
+              onChange={setWhereClause}
+              suggestions={whereSuggestions}
+              selectOnEnter={false}
+              selectOnTab
+              onEnter={applyFilter}
+              highlightHtml={whereHighlightHtml}
+              highlightClassName="h-6 rounded px-2 py-[4px] text-xs leading-4 font-mono"
+              inputClassName="flex-1 h-6 rounded bg-secondary/50 border px-2 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-primary"
+              dropdownClassName="max-h-56 overflow-y-auto border-border/70"
+              placeholder="e.g. status = 'active' AND created_at > '2024-01-01'"
+              spellCheck={false}
+            />
             <button
-              className="px-2 py-1 text-xs rounded border hover:bg-accent transition-colors flex items-center gap-1"
-              onClick={clearFilter}
+              className="px-2 py-1 text-xs rounded bg-primary text-primary-foreground hover:bg-primary/90 transition-colors flex items-center gap-1"
+              onClick={applyFilter}
             >
-              <X className="w-3 h-3" />
-              Clear
+              <Check className="w-3 h-3" />
+              Apply
             </button>
-          )}
+            {appliedWhere && (
+              <button
+                className="px-2 py-1 text-xs rounded border hover:bg-accent transition-colors flex items-center gap-1"
+                onClick={clearFilter}
+              >
+                <X className="w-3 h-3" />
+                Clear
+              </button>
+            )}
+          </div>
         </div>
       )}
 
