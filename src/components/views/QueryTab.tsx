@@ -17,6 +17,7 @@ import {
   AlertCircle,
   FileText,
   WrapText,
+  RotateCcw,
 } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 
@@ -36,6 +37,9 @@ interface EditorEdit {
   selectionEnd: number;
 }
 
+const DEFAULT_QUERY_FONT_SIZE_PX = 12;
+const MIN_QUERY_FONT_SIZE_PX = 10;
+const MAX_QUERY_FONT_SIZE_PX = 72;
 const MINIMAP_SELECTOR_MIN_HEIGHT_PX = 28;
 
 function clamp(value: number, min: number, max: number): number {
@@ -213,6 +217,7 @@ export function QueryTab({ tabId, profileId, database: initialDatabase }: Props)
   const [error, setError] = useState<string | null>(null);
   const [executionTime, setExecutionTime] = useState<number | null>(null);
   const [wordWrap, setWordWrap] = useState(false);
+  const [editorFontSize, setEditorFontSize] = useState(DEFAULT_QUERY_FONT_SIZE_PX);
   const [cursorPos, setCursorPos] = useState(0);
   const [selectedCharCount, setSelectedCharCount] = useState(0);
   const [editorViewport, setEditorViewport] = useState({
@@ -473,6 +478,11 @@ export function QueryTab({ tabId, profileId, database: initialDatabase }: Props)
     return `${results.length} result set(s), ${total} total row(s)`;
   }, [running, error, results, hasRun]);
 
+  const editorLineHeight = useMemo(
+    () => Math.round(editorFontSize * 1.6 * 100) / 100,
+    [editorFontSize],
+  );
+  const isDefaultEditorFontSize = editorFontSize === DEFAULT_QUERY_FONT_SIZE_PX;
   const lineCount = useMemo(() => Math.max(1, sql.split("\n").length), [sql]);
   const lineNumbersText = useMemo(
     () => Array.from({ length: lineCount }, (_, i) => String(i + 1)).join("\n"),
@@ -564,7 +574,7 @@ export function QueryTab({ tabId, profileId, database: initialDatabase }: Props)
     if (lineNumberRef.current) {
       lineNumberRef.current.scrollTop = textarea.scrollTop;
     }
-  }, [splitPercent, syncEditorMetrics, wordWrap]);
+  }, [editorFontSize, splitPercent, syncEditorMetrics, wordWrap]);
 
   useEffect(() => {
     const minimapEl = minimapRef.current;
@@ -618,6 +628,15 @@ export function QueryTab({ tabId, profileId, database: initialDatabase }: Props)
       syncEditorMetrics(e.currentTarget);
     },
     [syncEditorMetrics],
+  );
+
+  const handleResetEditorFontSize = useCallback(
+    (e: React.MouseEvent<HTMLButtonElement>) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setEditorFontSize(DEFAULT_QUERY_FONT_SIZE_PX);
+    },
+    [],
   );
 
   const animateMinimapScroll = useCallback(() => {
@@ -753,6 +772,32 @@ export function QueryTab({ tabId, profileId, database: initialDatabase }: Props)
       const { selectionStart, selectionEnd } = e.currentTarget;
       const modKey = e.ctrlKey || e.metaKey;
       const lowered = e.key.toLowerCase();
+      const isIncreaseFontShortcut =
+        modKey &&
+        e.shiftKey &&
+        (e.key === "+" ||
+          e.key === "=" ||
+          e.code === "Equal" ||
+          e.code === "NumpadAdd");
+      const isDecreaseFontShortcut =
+        modKey &&
+        e.shiftKey &&
+        (e.key === "-" ||
+          e.key === "_" ||
+          e.code === "Minus" ||
+          e.code === "NumpadSubtract");
+
+      if (isIncreaseFontShortcut || isDecreaseFontShortcut) {
+        e.preventDefault();
+        setEditorFontSize((prev) =>
+          clamp(
+            prev + (isIncreaseFontShortcut ? 1 : -1),
+            MIN_QUERY_FONT_SIZE_PX,
+            MAX_QUERY_FONT_SIZE_PX,
+          ),
+        );
+        return;
+      }
 
       if ((modKey && e.key === "Enter") || e.key === "F5") {
         e.preventDefault();
@@ -986,7 +1031,10 @@ export function QueryTab({ tabId, profileId, database: initialDatabase }: Props)
             className="w-12 shrink-0 border-r bg-muted/25 overflow-hidden"
             aria-hidden="true"
           >
-            <pre className="m-0 px-2 py-3 text-right font-mono text-xs leading-relaxed text-muted-foreground/70 select-none">
+            <pre
+              className="m-0 px-2 py-3 text-right font-mono text-muted-foreground/70 select-none"
+              style={{ fontSize: `${editorFontSize}px`, lineHeight: `${editorLineHeight}px` }}
+            >
               {lineNumbersText}
             </pre>
           </div>
@@ -1004,15 +1052,33 @@ export function QueryTab({ tabId, profileId, database: initialDatabase }: Props)
               onClick={handleEditorSelectionChange}
               onKeyDown={handleKeyDown}
               className={cn(
-                "w-full h-full bg-background resize-none outline-none text-foreground font-mono text-xs p-3 leading-relaxed",
+                "w-full h-full bg-background resize-none outline-none text-foreground font-mono p-3",
                 wordWrap
                   ? "whitespace-pre-wrap break-all overflow-auto"
                   : "whitespace-pre overflow-auto",
               )}
+              style={{ fontSize: `${editorFontSize}px`, lineHeight: `${editorLineHeight}px` }}
               spellCheck={false}
               placeholder="Enter SQL query here... (Ctrl+Enter to execute)"
             />
-            <div className="absolute top-2 right-2 text-[10px] text-muted-foreground/40 select-none uppercase tracking-wider pointer-events-none">
+            {!isDefaultEditorFontSize && (
+              <button
+                type="button"
+                className="absolute top-1 right-8 z-10 inline-flex items-center gap-1 rounded border bg-background/95 px-2 py-1 text-[10px] text-muted-foreground hover:text-foreground hover:bg-accent/70 transition-colors"
+                onClick={handleResetEditorFontSize}
+                title="Reset editor font size"
+                aria-label="Reset editor font size"
+              >
+                <RotateCcw className="w-3 h-3" />
+                Reset Font-Size
+              </button>
+            )}
+            <div
+              className={cn(
+                "absolute top-2 text-[10px] text-muted-foreground/40 select-none uppercase tracking-wider pointer-events-none",
+                "right-2",
+              )}
+            >
               SQL
             </div>
           </div>
