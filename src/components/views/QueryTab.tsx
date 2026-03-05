@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useMemo, useEffect } from "react";
 import { dbQuery, QueryResultSet } from "@/lib/db";
+import { highlightSQL } from "@/lib/sqlHighlight";
 import { useSchemaStore } from "@/state/schemaStore";
 import { useLayoutStore } from "@/state/layoutStore";
 import {
@@ -255,6 +256,7 @@ export function QueryTab({
 
   const editorRef = useRef<HTMLTextAreaElement>(null);
   const lineNumberRef = useRef<HTMLDivElement>(null);
+  const highlightRef = useRef<HTMLDivElement>(null);
   const pendingEditorSelectionRef = useRef<{
     start: number;
     end: number;
@@ -264,6 +266,9 @@ export function QueryTab({
   const minimapTargetScrollRef = useRef(0);
   const minimapDraggingRef = useRef(false);
   const minimapDragOffsetRef = useRef(0);
+
+  // Memoised highlighted HTML for the overlay
+  const highlightedHTML = useMemo(() => highlightSQL(sql), [sql]);
 
   // ── Cancellation token ────────────────────────────────────
   // Incrementing counter: if the token when a query starts differs from the
@@ -613,6 +618,10 @@ export function QueryTab({
     if (lineNumberRef.current) {
       lineNumberRef.current.scrollTop = textarea.scrollTop;
     }
+    if (highlightRef.current) {
+      highlightRef.current.scrollTop = textarea.scrollTop;
+      highlightRef.current.scrollLeft = textarea.scrollLeft;
+    }
   }, [editorFontSize, splitPercent, syncEditorMetrics, wordWrap]);
 
   // Track textarea content width for word-wrap line number sync
@@ -680,6 +689,10 @@ export function QueryTab({
       if (lineNumberRef.current) {
         lineNumberRef.current.scrollTop = e.currentTarget.scrollTop;
       }
+      if (highlightRef.current) {
+        highlightRef.current.scrollTop = e.currentTarget.scrollTop;
+        highlightRef.current.scrollLeft = e.currentTarget.scrollLeft;
+      }
       syncEditorMetrics(e.currentTarget);
     },
     [syncEditorMetrics],
@@ -714,7 +727,6 @@ export function QueryTab({
       const targetScrollTop = minimapTargetScrollRef.current;
       const delta = targetScrollTop - textarea.scrollTop;
       const isCloseEnough = Math.abs(delta) < 0.5;
-
       const nextTop = isCloseEnough
         ? targetScrollTop
         : textarea.scrollTop + delta * 0.28;
@@ -722,6 +734,9 @@ export function QueryTab({
       textarea.scrollTop = nextTop;
       if (lineNumberRef.current) {
         lineNumberRef.current.scrollTop = nextTop;
+      }
+      if (highlightRef.current) {
+        highlightRef.current.scrollTop = nextTop;
       }
       syncEditorMetrics(textarea);
 
@@ -1189,7 +1204,7 @@ export function QueryTab({
               </div>
             )}
           </div>
-          {/* ── Textarea + active line highlight ── */}
+          {/* ── Textarea + syntax highlight overlay ── */}
           <div className="relative flex-1 min-w-0 bg-background">
             {/* Active line highlight */}
             {!wordWrap && (
@@ -1202,6 +1217,24 @@ export function QueryTab({
                 }}
               />
             )}
+            {/* Syntax highlight overlay (behind the textarea) */}
+            <div
+              ref={highlightRef}
+              className="absolute inset-0 overflow-hidden pointer-events-none z-0 p-3 font-mono"
+              aria-hidden="true"
+            >
+              <pre
+                className={cn(
+                  "m-0",
+                  wordWrap ? "whitespace-pre-wrap break-all" : "whitespace-pre",
+                )}
+                style={{
+                  fontSize: `${editorFontSize}px`,
+                  lineHeight: `${editorLineHeight}px`,
+                }}
+                dangerouslySetInnerHTML={{ __html: highlightedHTML }}
+              />
+            </div>
             <textarea
               ref={editorRef}
               value={sql}
@@ -1215,7 +1248,7 @@ export function QueryTab({
               onClick={handleEditorSelectionChange}
               onKeyDown={handleKeyDown}
               className={cn(
-                "w-full h-full bg-transparent resize-none outline-none text-foreground font-mono p-3 relative z-1 caret-white",
+                "w-full h-full bg-transparent resize-none outline-none text-transparent font-mono p-3 relative z-1 caret-white placeholder:text-muted-foreground/30",
                 wordWrap
                   ? "whitespace-pre-wrap break-all overflow-auto"
                   : "whitespace-pre overflow-auto",
