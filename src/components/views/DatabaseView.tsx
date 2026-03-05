@@ -15,6 +15,7 @@ import {
 } from "@/lib/db";
 import { useLayoutStore } from "@/state/layoutStore";
 import { cn } from "@/lib/utils/cn";
+import { AutocompleteInput } from "@/components/ui/AutocompleteInput";
 import {
   Database,
   Loader2,
@@ -52,6 +53,102 @@ function formatBytes(bytes: number): string {
   const units = ["B", "KiB", "MiB", "GiB", "TiB"];
   const i = Math.floor(Math.log(bytes) / Math.log(1024));
   return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`;
+}
+
+function normalizeTableText(value: string | null | undefined): string {
+  return (value ?? "").toLowerCase();
+}
+
+function matchesTableFilterToken(table: TableInfo, token: string): boolean {
+  const t = token.trim().toLowerCase();
+  if (!t) return true;
+
+  const name = normalizeTableText(table.name);
+  const engine = normalizeTableText(table.engine);
+  const type = normalizeTableText(table.type_);
+  const comment = normalizeTableText(table.comment);
+  const rows = typeof table.rows === "number" ? table.rows : null;
+
+  if (t.startsWith("name:")) return name.includes(t.slice(5));
+  if (t.startsWith("engine:")) return engine.includes(t.slice(7));
+  if (t.startsWith("type:")) return type.includes(t.slice(5));
+  if (t.startsWith("comment:")) return comment.includes(t.slice(8));
+  if (t.startsWith("rows>")) {
+    const limit = Number(t.slice(5));
+    return Number.isFinite(limit) && rows !== null ? rows > limit : false;
+  }
+  if (t.startsWith("rows<")) {
+    const limit = Number(t.slice(5));
+    return Number.isFinite(limit) && rows !== null ? rows < limit : false;
+  }
+
+  return (
+    name.includes(t) ||
+    engine.includes(t) ||
+    type.includes(t) ||
+    comment.includes(t)
+  );
+}
+
+function buildTableFilterSuggestions(
+  value: string,
+  tableInfos: TableInfo[],
+): string[] {
+  const idx = value.lastIndexOf(" ");
+  const prefix = idx >= 0 ? value.slice(0, idx + 1) : "";
+  const token = value.slice(idx + 1);
+  const tokenLower = token.trim().toLowerCase();
+
+  const names = Array.from(new Set(tableInfos.map((t) => t.name)));
+  const engines = Array.from(
+    new Set(tableInfos.map((t) => t.engine).filter((e): e is string => !!e)),
+  );
+  const types = Array.from(
+    new Set(tableInfos.map((t) => t.type_).filter((x): x is string => !!x)),
+  );
+  const hints = ["name:", "engine:", "type:", "comment:", "rows>", "rows<"];
+
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const add = (candidate: string) => {
+    if (!candidate || seen.has(candidate)) return;
+    seen.add(candidate);
+    out.push(candidate);
+  };
+
+  if (tokenLower.startsWith("name:")) {
+    const q = tokenLower.slice(5);
+    names
+      .filter((n) => n.toLowerCase().includes(q))
+      .forEach((n) => add(`${prefix}name:${n}`));
+  } else if (tokenLower.startsWith("engine:")) {
+    const q = tokenLower.slice(7);
+    engines
+      .filter((e) => e.toLowerCase().includes(q))
+      .forEach((e) => add(`${prefix}engine:${e}`));
+  } else if (tokenLower.startsWith("type:")) {
+    const q = tokenLower.slice(5);
+    types
+      .filter((t) => t.toLowerCase().includes(q))
+      .forEach((t) => add(`${prefix}type:${t}`));
+  } else if (tokenLower.startsWith("rows>") || tokenLower.startsWith("rows<")) {
+    const op = tokenLower.startsWith("rows>") ? "rows>" : "rows<";
+    ["0", "100", "1000", "10000"].forEach((n) => add(`${prefix}${op}${n}`));
+  } else {
+    hints
+      .filter((h) => !tokenLower || h.startsWith(tokenLower))
+      .forEach((h) => add(`${prefix}${h}`));
+    names
+      .filter((n) => !tokenLower || n.toLowerCase().includes(tokenLower))
+      .slice(0, 4)
+      .forEach((n) => add(`${prefix}name:${n}`));
+    engines
+      .filter((e) => !tokenLower || e.toLowerCase().includes(tokenLower))
+      .slice(0, 2)
+      .forEach((e) => add(`${prefix}engine:${e}`));
+  }
+
+  return out.slice(0, 8);
 }
 
 export function DatabaseView({
@@ -459,6 +556,7 @@ function TablesTable({
     y: number;
     table: string;
   } | null>(null);
+  const [tableFilter, setTableFilter] = useState("");
 
   // Close context menu on click
   useEffect(() => {
@@ -486,100 +584,155 @@ function TablesTable({
   }
 
   // Default sorting
-  const sorted = [...tableInfos].sort((a, b) => a.name.localeCompare(b.name));
+  const sorted = useMemo(
+    () => [...tableInfos].sort((a, b) => a.name.localeCompare(b.name)),
+    [tableInfos],
+  );
+  const filteredTables = useMemo(() => {
+    const tokens = tableFilter.trim().split(/\s+/).filter(Boolean);
+    if (tokens.length === 0) return sorted;
+    return sorted.filter((t) =>
+      tokens.every((token) => matchesTableFilterToken(t, token)),
+    );
+  }, [sorted, tableFilter]);
+  const filterSuggestions = useMemo(
+    () => buildTableFilterSuggestions(tableFilter, sorted),
+    [tableFilter, sorted],
+  );
 
   return (
-    <div className="flex-1 overflow-auto relative">
-      <table className="w-full text-left border-collapse text-xs select-none">
-        <thead className="sticky top-0 bg-muted/80 backdrop-blur-sm z-10 shadow-sm">
-          <tr>
-            <th className="px-3 py-1.5 font-medium text-muted-foreground border-b first:border-l-0">
-              Name
-            </th>
-            <th className="px-3 py-1.5 font-medium text-muted-foreground border-b border-l min-w-15">
-              Rows
-            </th>
-            <th className="px-3 py-1.5 font-medium text-muted-foreground border-b border-l min-w-20">
-              Size
-            </th>
-            <th className="px-3 py-1.5 font-medium text-muted-foreground border-b border-l min-w-35">
-              Created
-            </th>
-            <th className="px-3 py-1.5 font-medium text-muted-foreground border-b border-l min-w-35">
-              Updated
-            </th>
-            <th className="px-3 py-1.5 font-medium text-muted-foreground border-b border-l">
-              Engine
-            </th>
-            <th className="px-3 py-1.5 font-medium text-muted-foreground border-b border-l">
-              Comment
-            </th>
-            <th className="px-3 py-1.5 font-medium text-muted-foreground border-b border-l">
-              Type
-            </th>
-          </tr>
-        </thead>
-        <tbody className="divide-y">
-          {sorted.map((t) => (
-            <tr
-              key={t.name}
-              className="hover:bg-accent/50 group whitespace-nowrap cursor-pointer"
-              onDoubleClick={() => {
-                openTab({
-                  title: `Data: ${t.name}`,
-                  type: "table-data",
-                  meta: { profileId, database, tableName: t.name },
-                });
-              }}
-              onContextMenu={(e) => {
-                e.preventDefault();
-                setCtxMenu({
-                  x: Math.min(e.clientX, window.innerWidth - 200),
-                  y: Math.min(e.clientY, window.innerHeight - 120),
-                  table: t.name,
-                });
-              }}
-            >
-              <td className="px-3 py-1.5 flex items-center gap-2">
-                <Table2 className="w-3.5 h-3.5 shrink-0 text-blue-400 group-hover:text-blue-500 transition-colors" />
-                {t.name}
-              </td>
-              <td className="px-3 py-1.5 border-l tabular-nums">
-                {t.rows != null ? t.rows.toLocaleString() : "—"}
-              </td>
-              <td className="px-3 py-1.5 border-l tabular-nums text-muted-foreground">
-                {t.size_bytes != null ? formatBytes(t.size_bytes) : "—"}
-              </td>
-              <td className="px-3 py-1.5 border-l text-muted-foreground tabular-nums">
-                {t.created || "—"}
-              </td>
-              <td className="px-3 py-1.5 border-l text-muted-foreground tabular-nums">
-                {t.updated || "—"}
-              </td>
-              <td className="px-3 py-1.5 border-l">{t.engine || "—"}</td>
-              <td
-                className="px-3 py-1.5 border-l text-muted-foreground truncate max-w-50"
-                title={t.comment || ""}
-              >
-                {t.comment || ""}
-              </td>
-              <td className="px-3 py-1.5 border-l text-muted-foreground">
-                {t.type_ || "Table"}
-              </td>
-            </tr>
-          ))}
-          {sorted.length === 0 && (
-            <tr>
-              <td
-                colSpan={8}
-                className="px-3 py-8 text-center text-muted-foreground bg-muted/5"
-              >
-                No tables found in this database.
-              </td>
-            </tr>
+    <div className="flex-1 min-h-0 flex flex-col relative">
+      <div className="h-8 border-b border-border/40 flex items-center gap-2 px-2.5 bg-muted/10 shrink-0">
+        <Filter className="w-3.5 h-3.5 text-cyan-500/80 shrink-0" />
+        <AutocompleteInput
+          value={tableFilter}
+          onChange={setTableFilter}
+          suggestions={filterSuggestions}
+          placeholder="Filter tables (name:, engine:, type:, comment:, rows>, rows<)"
+          inputClassName="w-full h-6 rounded-[3px] border border-border/50 bg-background px-2 text-xs font-mono text-foreground outline-none focus:border-primary/60"
+          dropdownClassName="max-h-50 overflow-y-auto border-border/60"
+        />
+        <button
+          type="button"
+          onClick={() => setTableFilter("")}
+          disabled={!tableFilter}
+          className={cn(
+            "h-6 w-6 rounded border border-border/40 inline-flex items-center justify-center transition-colors",
+            tableFilter
+              ? "hover:bg-accent text-muted-foreground hover:text-foreground"
+              : "text-muted-foreground/35 cursor-default",
           )}
-        </tbody>
-      </table>
+          aria-label="Clear table filter"
+        >
+          <X className="w-3.5 h-3.5" />
+        </button>
+        <span className="ml-auto text-[10px] font-mono text-muted-foreground/80">
+          {filteredTables.length}/{sorted.length}
+        </span>
+      </div>
+
+      <div className="flex-1 overflow-auto">
+        <table className="w-full text-left border-collapse text-xs select-none">
+          <thead className="sticky top-0 bg-muted/80 backdrop-blur-sm z-10 shadow-sm">
+            <tr>
+              <th className="px-3 py-1.5 font-medium text-muted-foreground border-b first:border-l-0">
+                Name
+              </th>
+              <th className="px-3 py-1.5 font-medium text-muted-foreground border-b border-l min-w-15">
+                Rows
+              </th>
+              <th className="px-3 py-1.5 font-medium text-muted-foreground border-b border-l min-w-20">
+                Size
+              </th>
+              <th className="px-3 py-1.5 font-medium text-muted-foreground border-b border-l min-w-35">
+                Created
+              </th>
+              <th className="px-3 py-1.5 font-medium text-muted-foreground border-b border-l min-w-35">
+                Updated
+              </th>
+              <th className="px-3 py-1.5 font-medium text-muted-foreground border-b border-l">
+                Engine
+              </th>
+              <th className="px-3 py-1.5 font-medium text-muted-foreground border-b border-l">
+                Comment
+              </th>
+              <th className="px-3 py-1.5 font-medium text-muted-foreground border-b border-l">
+                Type
+              </th>
+            </tr>
+          </thead>
+          <tbody className="divide-y">
+            {filteredTables.map((t) => (
+              <tr
+                key={t.name}
+                className="hover:bg-accent/50 group whitespace-nowrap cursor-pointer"
+                onDoubleClick={() => {
+                  openTab({
+                    title: `Data: ${t.name}`,
+                    type: "table-data",
+                    meta: { profileId, database, tableName: t.name },
+                  });
+                }}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  setCtxMenu({
+                    x: Math.min(e.clientX, window.innerWidth - 200),
+                    y: Math.min(e.clientY, window.innerHeight - 120),
+                    table: t.name,
+                  });
+                }}
+              >
+                <td className="px-3 py-1.5 flex items-center gap-2">
+                  <Table2 className="w-3.5 h-3.5 shrink-0 text-blue-400 group-hover:text-blue-500 transition-colors" />
+                  {t.name}
+                </td>
+                <td className="px-3 py-1.5 border-l tabular-nums">
+                  {t.rows != null ? t.rows.toLocaleString() : "-"}
+                </td>
+                <td className="px-3 py-1.5 border-l tabular-nums text-muted-foreground">
+                  {t.size_bytes != null ? formatBytes(t.size_bytes) : "-"}
+                </td>
+                <td className="px-3 py-1.5 border-l text-muted-foreground tabular-nums">
+                  {t.created || "-"}
+                </td>
+                <td className="px-3 py-1.5 border-l text-muted-foreground tabular-nums">
+                  {t.updated || "-"}
+                </td>
+                <td className="px-3 py-1.5 border-l">{t.engine || "-"}</td>
+                <td
+                  className="px-3 py-1.5 border-l text-muted-foreground truncate max-w-50"
+                  title={t.comment || ""}
+                >
+                  {t.comment || ""}
+                </td>
+                <td className="px-3 py-1.5 border-l text-muted-foreground">
+                  {t.type_ || "Table"}
+                </td>
+              </tr>
+            ))}
+            {sorted.length === 0 && (
+              <tr>
+                <td
+                  colSpan={8}
+                  className="px-3 py-8 text-center text-muted-foreground bg-muted/5"
+                >
+                  No tables found in this database.
+                </td>
+              </tr>
+            )}
+            {sorted.length > 0 && filteredTables.length === 0 && (
+              <tr>
+                <td
+                  colSpan={8}
+                  className="px-3 py-8 text-center text-muted-foreground bg-muted/5"
+                >
+                  No tables match the current filter.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
 
       {/* Context Menu */}
       {ctxMenu && (
@@ -1708,3 +1861,4 @@ function CommandStatisticsTable({
     </div>
   );
 }
+

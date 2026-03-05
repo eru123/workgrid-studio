@@ -20,6 +20,7 @@ import {
   Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
+import { AutocompleteInput } from "@/components/ui/AutocompleteInput";
 
 // ═══════════════════════════════════════════════════════════════════════
 //  Types
@@ -252,10 +253,29 @@ function isNumericLiteral(value: string): boolean {
 function formatDefaultValue(value: string): string {
   const trimmed = value.trim();
   const upper = trimmed.toUpperCase();
+  if (/^'.*'$/.test(trimmed)) return trimmed;
+  if (/^".*"$/.test(trimmed)) {
+    return `'${escapeSqlString(trimmed.slice(1, -1))}'`;
+  }
   if (
     upper === "NULL" ||
     upper === "CURRENT_TIMESTAMP" ||
     upper === "CURRENT_TIMESTAMP()" ||
+    upper === "CURRENT_DATE" ||
+    upper === "CURRENT_DATE()" ||
+    upper === "CURDATE()" ||
+    upper === "CURRENT_TIME" ||
+    upper === "CURRENT_TIME()" ||
+    upper === "CURTIME()" ||
+    upper === "NOW()" ||
+    upper === "LOCALTIME" ||
+    upper === "LOCALTIME()" ||
+    upper === "LOCALTIMESTAMP" ||
+    upper === "LOCALTIMESTAMP()" ||
+    upper === "TRUE" ||
+    upper === "FALSE" ||
+    /^b'[01]+'$/i.test(trimmed) ||
+    /^[A-Za-z_][A-Za-z0-9_]*\(.*\)$/.test(trimmed) ||
     trimmed.startsWith("(") ||
     isNumericLiteral(trimmed)
   ) {
@@ -266,6 +286,92 @@ function formatDefaultValue(value: string): string {
 
 function normalizeDatatype(raw: string): string {
   return raw.trim().toUpperCase();
+}
+
+function buildDefaultValueSuggestions(col: ColumnDef): string[] {
+  const datatype = normalizeDatatype(col.datatype);
+  const length = col.length.trim();
+  const query = col.defaultVal.trim().toLowerCase();
+
+  const numericTypes = new Set([
+    "TINYINT",
+    "SMALLINT",
+    "MEDIUMINT",
+    "INT",
+    "INTEGER",
+    "BIGINT",
+    "DECIMAL",
+    "NUMERIC",
+    "FLOAT",
+    "DOUBLE",
+    "REAL",
+  ]);
+  const stringTypes = new Set([
+    "CHAR",
+    "VARCHAR",
+    "TINYTEXT",
+    "TEXT",
+    "MEDIUMTEXT",
+    "LONGTEXT",
+    "ENUM",
+    "SET",
+  ]);
+  const temporalTypes = new Set(["DATE", "DATETIME", "TIMESTAMP", "TIME"]);
+  const isBoolean =
+    datatype === "BOOL" ||
+    datatype === "BOOLEAN" ||
+    (datatype === "TINYINT" && length === "1");
+
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const add = (candidate: string) => {
+    if (!candidate || seen.has(candidate)) return;
+    if (query && !candidate.toLowerCase().includes(query)) return;
+    seen.add(candidate);
+    out.push(candidate);
+  };
+
+  if (col.allowNull) add("NULL");
+  if (isBoolean) {
+    add("0");
+    add("1");
+  } else if (numericTypes.has(datatype)) {
+    add("0");
+    add("1");
+    add("-1");
+  }
+
+  if (temporalTypes.has(datatype)) {
+    if (datatype === "DATE") {
+      add("CURRENT_DATE");
+      add("CURDATE()");
+    } else if (datatype === "TIME") {
+      add("CURRENT_TIME");
+      add("CURTIME()");
+    } else {
+      add("CURRENT_TIMESTAMP");
+      add("CURRENT_TIMESTAMP()");
+      add("NOW()");
+    }
+  }
+
+  if (stringTypes.has(datatype)) {
+    add("''");
+    if (datatype === "CHAR" || datatype === "VARCHAR") {
+      add("(UUID())");
+    }
+  }
+
+  if (datatype === "JSON") {
+    add("(JSON_OBJECT())");
+    add("(JSON_ARRAY())");
+  }
+  if (datatype === "BIT") {
+    add("b'0'");
+    add("b'1'");
+  }
+
+  return out.slice(0, 10);
 }
 
 function effectiveComment(tableComment: string, options: TableOptions): string {
@@ -2422,6 +2528,10 @@ const ColumnRow = memo(function ColumnRow({
     (v: string) => onUpdate(col.id, "defaultVal", v),
     [onUpdate, col.id],
   );
+  const defaultSuggestions = useMemo(
+    () => buildDefaultValueSuggestions(col),
+    [col.datatype, col.length, col.allowNull, col.defaultVal],
+  );
   const handleComment = useCallback(
     (v: string) => onUpdate(col.id, "comment", v),
     [onUpdate, col.id],
@@ -2475,10 +2585,14 @@ const ColumnRow = memo(function ColumnRow({
         <CellCheckbox checked={col.zerofill} onChange={handleZerofill} />
       </Td>
       <Td>
-        <CellInput
+        <AutocompleteInput
           value={col.defaultVal}
           onChange={handleDefault}
+          suggestions={defaultSuggestions}
           placeholder="No default"
+          maxSuggestions={7}
+          inputClassName="w-full h-6.5 bg-transparent border-0 outline-none text-xs font-mono px-1 focus:bg-secondary/50"
+          dropdownClassName="max-h-50 overflow-y-auto border-border/70 rounded-sm"
         />
       </Td>
       <Td>
