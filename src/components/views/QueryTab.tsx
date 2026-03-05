@@ -440,7 +440,7 @@ export function QueryTab({ tabId, profileId, database: initialDatabase }: Props)
       </div>
 
       {/* ─── Results area ─────────────────────────────── */}
-      <div className="flex-1 flex flex-col overflow-hidden">
+      <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
         {/* Results tab bar (when multiple result sets) */}
         {results.length > 1 && (
           <div className="flex items-center border-b bg-muted/20 px-1 gap-0 shrink-0 overflow-x-auto">
@@ -487,8 +487,8 @@ export function QueryTab({ tabId, profileId, database: initialDatabase }: Props)
 
         {/* Results grid */}
         {!running && activeResult && activeResult.columns.length > 0 ? (
-          <div className="flex-1 overflow-auto">
-            <table className="w-full text-xs border-collapse">
+          <div className="flex-1 min-h-0 overflow-auto">
+            <table className="min-w-max text-xs border-collapse">
               <thead>
                 <tr className="bg-muted/50 sticky top-0 z-10">
                   <th className="text-center px-2 py-1.5 text-[10px] font-medium text-muted-foreground/70 uppercase tracking-wider border-b border-r bg-muted/80 w-[50px]">

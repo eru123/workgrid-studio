@@ -82,8 +82,6 @@ export function EditorNode({ tree }: { tree: SplitTree }) {
     }, [tree, closeTab]);
 
     if (tree.type === "leaf") {
-        const activeTab = tree.tabs.find((t) => t.id === tree.activeTabId) ?? null;
-
         return (
             <div className="flex-1 w-full h-full bg-background border rounded-sm overflow-hidden flex flex-col">
                 {/* Tab bar */}
@@ -184,9 +182,19 @@ export function EditorNode({ tree }: { tree: SplitTree }) {
                 </div>
 
                 {/* Tab content */}
-                <div className="flex-1 overflow-auto relative">
-                    {activeTab ? (
-                        <TabContent tab={activeTab} />
+                <div className="flex-1 overflow-hidden relative">
+                    {tree.activeTabId ? (
+                        tree.tabs.map((tab) => (
+                            <div
+                                key={tab.id}
+                                className={cn(
+                                    "w-full h-full",
+                                    tab.id === tree.activeTabId ? "block" : "hidden"
+                                )}
+                            >
+                                <TabContent tab={tab} />
+                            </div>
+                        ))
                     ) : (
                         <WelcomeTab />
                     )}
