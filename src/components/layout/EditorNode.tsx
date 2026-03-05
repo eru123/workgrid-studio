@@ -129,7 +129,7 @@ export function EditorNode({ tree }: { tree: SplitTree }) {
         {/* Tab bar */}
         <div
           className="shrink-0 relative border-b bg-muted/30"
-          style={{ height: 33 }}
+          style={{ height: 29 }}
         >
           <div className="absolute inset-0 flex items-end overflow-x-auto overflow-y-hidden">
             {tree.tabs.map((tab) => {
@@ -138,7 +138,7 @@ export function EditorNode({ tree }: { tree: SplitTree }) {
                 <div
                   key={tab.id}
                   className={cn(
-                    "group flex items-center gap-1.5 h-full px-3 text-xs cursor-pointer select-none shrink-0 transition-all border-b-2",
+                    "group flex items-center gap-1 h-full px-2 text-xs cursor-pointer select-none shrink-0 transition-all border-b-2",
                     isActive
                       ? "border-primary bg-background text-foreground font-medium"
                       : "border-transparent text-muted-foreground hover:text-foreground hover:bg-accent/40",
