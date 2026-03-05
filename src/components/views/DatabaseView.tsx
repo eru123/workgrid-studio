@@ -566,22 +566,16 @@ function TablesTable({
     return () => window.removeEventListener("click", close);
   }, [ctxMenu]);
 
-  // Default sorting
-  const sorted = useMemo(
-    () => [...tableInfos].sort((a, b) => a.name.localeCompare(b.name)),
-    [tableInfos],
-  );
-  const filteredTables = useMemo(() => {
-    const tokens = tableFilter.trim().split(/\s+/).filter(Boolean);
-    if (tokens.length === 0) return sorted;
-    return sorted.filter((t) =>
-      tokens.every((token) => matchesTableFilterToken(t, token)),
-    );
-  }, [sorted, tableFilter]);
-  const filterSuggestions = useMemo(
-    () => buildTableFilterSuggestions(tableFilter, sorted),
-    [tableFilter, sorted],
-  );
+  // Keep these as plain values to avoid any hook-order sensitivity here.
+  const sorted = [...tableInfos].sort((a, b) => a.name.localeCompare(b.name));
+  const tokens = tableFilter.trim().split(/\s+/).filter(Boolean);
+  const filteredTables =
+    tokens.length === 0
+      ? sorted
+      : sorted.filter((t) =>
+          tokens.every((token) => matchesTableFilterToken(t, token)),
+        );
+  const filterSuggestions = buildTableFilterSuggestions(tableFilter, sorted);
 
   if (loading) {
     return (
