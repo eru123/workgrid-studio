@@ -1230,7 +1230,7 @@ export function QueryTab({
             {!isDefaultEditorFontSize && (
               <button
                 type="button"
-                className="absolute top-1 right-8 z-10 inline-flex items-center gap-1 rounded border bg-background/95 px-2 py-1 text-[10px] text-muted-foreground hover:text-foreground hover:bg-accent/70 transition-colors"
+                className="absolute top-1 right-10 z-10 inline-flex items-center gap-1 rounded border bg-background/95 px-2 py-1 text-[10px] text-muted-foreground hover:text-foreground hover:bg-accent/70 transition-colors"
                 onClick={handleResetEditorFontSize}
                 title="Reset editor font size"
                 aria-label="Reset editor font size"
@@ -1239,7 +1239,7 @@ export function QueryTab({
                 Reset Font-Size
               </button>
             )}
-            <div className="absolute top-2 right-2 text-[10px] text-muted-foreground/40 select-none uppercase tracking-wider pointer-events-none z-2">
+            <div className="absolute top-2 right-4 text-[10px] text-muted-foreground/40 select-none uppercase tracking-wider pointer-events-none z-2">
               SQL
             </div>
           </div>
@@ -1293,25 +1293,30 @@ export function QueryTab({
       <div className="flex-1 min-h-0 min-w-0 flex flex-col overflow-hidden">
         {/* Results tab bar (when multiple result sets) */}
         {results.length > 1 && (
-          <div className="flex items-center border-b bg-muted/20 px-1 gap-0 shrink-0 min-w-0 max-w-full overflow-x-auto">
-            {results.map((r, i) => (
-              <button
-                key={i}
-                className={cn(
-                  "flex items-center gap-1 px-3 py-1.5 text-xs transition-colors border-b-2 whitespace-nowrap",
-                  activeResultIdx === i
-                    ? "border-primary text-foreground font-medium"
-                    : "border-transparent text-muted-foreground hover:text-foreground hover:bg-accent/30",
-                )}
-                onClick={() => setActiveResultIdx(i)}
-              >
-                <FileText className="w-3 h-3" />
-                Result {i + 1}
-                <span className="text-muted-foreground/60 ml-1">
-                  ({r.rows.length}r × {r.columns.length}c)
-                </span>
-              </button>
-            ))}
+          <div
+            className="shrink-0 relative border-b bg-muted/20"
+            style={{ height: 30 }}
+          >
+            <div className="absolute inset-0 flex items-center px-1 gap-0 overflow-x-auto overflow-y-hidden">
+              {results.map((r, i) => (
+                <button
+                  key={i}
+                  className={cn(
+                    "flex items-center gap-1 px-3 py-1.5 text-xs transition-colors border-b-2 whitespace-nowrap shrink-0",
+                    activeResultIdx === i
+                      ? "border-primary text-foreground font-medium"
+                      : "border-transparent text-muted-foreground hover:text-foreground hover:bg-accent/30",
+                  )}
+                  onClick={() => setActiveResultIdx(i)}
+                >
+                  <FileText className="w-3 h-3" />
+                  Result {i + 1}
+                  <span className="text-muted-foreground/60 ml-1">
+                    ({r.rows.length}r × {r.columns.length}c)
+                  </span>
+                </button>
+              ))}
+            </div>
           </div>
         )}
 
