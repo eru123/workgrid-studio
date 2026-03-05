@@ -663,7 +663,9 @@ export function QueryTab({
   );
 
   // ── Autocomplete helpers ──────────────────────────────────
-  const updateAutocomplete = useCallback(
+  const acTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const updateAutocompleteImmediate = useCallback(
     (text: string, pos: number, force = false) => {
       const textarea = editorRef.current;
       if (!textarea) {
@@ -712,6 +714,21 @@ export function QueryTab({
       acDismissedForPrefix.current = null;
     },
     [acSchemaInfo],
+  );
+
+  // Debounced wrapper — avoids blocking every keystroke with DOM measurement
+  const updateAutocomplete = useCallback(
+    (text: string, pos: number, force = false) => {
+      if (acTimerRef.current) clearTimeout(acTimerRef.current);
+      if (force) {
+        updateAutocompleteImmediate(text, pos, true);
+        return;
+      }
+      acTimerRef.current = setTimeout(() => {
+        updateAutocompleteImmediate(text, pos, false);
+      }, 120);
+    },
+    [updateAutocompleteImmediate],
   );
 
   const dismissAutocomplete = useCallback(() => {

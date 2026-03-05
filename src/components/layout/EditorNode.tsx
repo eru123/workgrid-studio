@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, Suspense, lazy, memo } from "react";
 import { useLayoutStore, SplitTree, EditorTab } from "@/state/layoutStore";
 import { Sash } from "./Sash";
 import { cn } from "@/lib/utils/cn";
@@ -11,54 +11,94 @@ import {
   Boxes,
   ListChecks,
   FileText,
+  Loader2,
 } from "lucide-react";
 import { useSchemaStore } from "@/state/schemaStore";
 import { WelcomeTab } from "@/components/views/WelcomeTab";
-import { ModelsPage } from "@/components/views/ModelsPage";
-import { TasksView } from "@/components/views/TasksView";
-import { DatabaseView } from "@/components/views/DatabaseView";
-import { TableDesigner } from "@/components/views/TableDesigner";
-import { QueryTab } from "@/components/views/QueryTab";
 
-function TabContent({ tab }: { tab: EditorTab }) {
-  switch (tab.type) {
-    case "models":
-      return <ModelsPage />;
-    case "tasks":
-      return <TasksView />;
-    case "database-view":
-      return (
-        <DatabaseView
-          tabId={tab.id}
-          profileId={tab.meta?.profileId ?? ""}
-          profileName={tab.meta?.profileName ?? "Database"}
-          database={tab.meta?.database}
-        />
-      );
-    case "table-designer":
-      return (
-        <TableDesigner
-          profileId={tab.meta?.profileId ?? ""}
-          database={tab.meta?.database ?? ""}
-          tableName={tab.meta?.tableName}
-        />
-      );
-    case "sql":
-      return (
-        <QueryTab
-          tabId={tab.id}
-          profileId={tab.meta?.profileId ?? ""}
-          database={tab.meta?.database}
-        />
-      );
-    default:
-      return (
-        <div className="w-full h-full flex items-center justify-center text-muted-foreground text-sm">
-          {tab.title}
-        </div>
-      );
-  }
+// Lazy-load heavy view components — they are only loaded when first rendered,
+// which eliminates upfront bundle cost and speeds up tab switching.
+const ModelsPage = lazy(() =>
+  import("@/components/views/ModelsPage").then((m) => ({
+    default: m.ModelsPage,
+  })),
+);
+const TasksView = lazy(() =>
+  import("@/components/views/TasksView").then((m) => ({
+    default: m.TasksView,
+  })),
+);
+const DatabaseView = lazy(() =>
+  import("@/components/views/DatabaseView").then((m) => ({
+    default: m.DatabaseView,
+  })),
+);
+const TableDesigner = lazy(() =>
+  import("@/components/views/TableDesigner").then((m) => ({
+    default: m.TableDesigner,
+  })),
+);
+const QueryTab = lazy(() =>
+  import("@/components/views/QueryTab").then((m) => ({
+    default: m.QueryTab,
+  })),
+);
+
+// Loading skeleton shown while a lazy component is being resolved
+function TabLoadingFallback() {
+  return (
+    <div className="w-full h-full flex flex-col items-center justify-center gap-3 text-muted-foreground/60">
+      <Loader2 className="w-6 h-6 animate-spin" />
+      <span className="text-xs">Loading…</span>
+    </div>
+  );
 }
+
+// Memoised tab content — prevents hidden tabs from re-rendering when
+// only the parent tree (e.g. activeTabId) changes.
+const TabContent = memo(function TabContent({ tab }: { tab: EditorTab }) {
+  const content = (() => {
+    switch (tab.type) {
+      case "models":
+        return <ModelsPage />;
+      case "tasks":
+        return <TasksView />;
+      case "database-view":
+        return (
+          <DatabaseView
+            tabId={tab.id}
+            profileId={tab.meta?.profileId ?? ""}
+            profileName={tab.meta?.profileName ?? "Database"}
+            database={tab.meta?.database}
+          />
+        );
+      case "table-designer":
+        return (
+          <TableDesigner
+            profileId={tab.meta?.profileId ?? ""}
+            database={tab.meta?.database ?? ""}
+            tableName={tab.meta?.tableName}
+          />
+        );
+      case "sql":
+        return (
+          <QueryTab
+            tabId={tab.id}
+            profileId={tab.meta?.profileId ?? ""}
+            database={tab.meta?.database}
+          />
+        );
+      default:
+        return (
+          <div className="w-full h-full flex items-center justify-center text-muted-foreground text-sm">
+            {tab.title}
+          </div>
+        );
+    }
+  })();
+
+  return <Suspense fallback={<TabLoadingFallback />}>{content}</Suspense>;
+});
 
 function tabIcon(type: EditorTab["type"], isActive: boolean) {
   const cls = cn(
@@ -82,15 +122,13 @@ function tabIcon(type: EditorTab["type"], isActive: boolean) {
 }
 
 export function EditorNode({ tree }: { tree: SplitTree }) {
-  const {
-    resizeNode,
-    openTab,
-    closeTab,
-    closeOtherTabs,
-    closeTabsToRight,
-    closeAllTabs,
-    setActiveTab,
-  } = useLayoutStore();
+  const resizeNode = useLayoutStore((s) => s.resizeNode);
+  const openTab = useLayoutStore((s) => s.openTab);
+  const closeTab = useLayoutStore((s) => s.closeTab);
+  const closeOtherTabs = useLayoutStore((s) => s.closeOtherTabs);
+  const closeTabsToRight = useLayoutStore((s) => s.closeTabsToRight);
+  const closeAllTabs = useLayoutStore((s) => s.closeAllTabs);
+  const setActiveTab = useLayoutStore((s) => s.setActiveTab);
   const connectedProfiles = useSchemaStore((s) => s.connectedProfiles);
 
   const [contextMenu, setContextMenu] = useState<{
