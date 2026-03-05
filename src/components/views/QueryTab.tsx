@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useMemo, useEffect } from "react";
 import { dbQuery, QueryResultSet } from "@/lib/db";
-import { highlightSQL } from "@/lib/sqlHighlight";
+import { highlightSQL, getActiveQueryRange } from "@/lib/sqlHighlight";
 import {
   detectContext,
   getSuggestions,
@@ -263,6 +263,11 @@ export function QueryTab({
   const [acPrefix, setAcPrefix] = useState("");
   const acDismissedForPrefix = useRef<string | null>(null);
 
+  // ── Active query range ────────────────────────────────────
+  const activeQueryRange = useMemo(() => {
+    return getActiveQueryRange(sql, cursorPos, cursorPos + selectedCharCount);
+  }, [sql, cursorPos, selectedCharCount]);
+
   useEffect(() => {
     setEditorFontSize((prev) =>
       clamp(prev, MIN_QUERY_FONT_SIZE_PX, MAX_QUERY_FONT_SIZE_PX),
@@ -283,7 +288,12 @@ export function QueryTab({
   const minimapDragOffsetRef = useRef(0);
 
   // Memoised highlighted HTML for the overlay
-  const highlightedHTML = useMemo(() => highlightSQL(sql), [sql]);
+  const highlightedHTML = useMemo(() => {
+    if (activeQueryRange) {
+      return highlightSQL(sql, activeQueryRange.start, activeQueryRange.end);
+    }
+    return highlightSQL(sql);
+  }, [sql, activeQueryRange]);
 
   // ── Cancellation token ────────────────────────────────────
   // Incrementing counter: if the token when a query starts differs from the
@@ -400,55 +410,65 @@ export function QueryTab({
     }
   }, [selectedProfileId, selectedDb, tabId, updateTab, connectedProfiles]);
 
-  const handleRun = useCallback(async () => {
-    if (!sql.trim() || running || !selectedProfileId) return;
+  const executeQuery = useCallback(
+    async (queryText: string) => {
+      if (!queryText.trim() || running || !selectedProfileId) return;
 
-    // Mint a new token for this execution
-    const token = ++runTokenRef.current;
+      // Mint a new token for this execution
+      const token = ++runTokenRef.current;
 
-    setRunning(true);
-    setError(null);
-    setResults([]);
-    setHasRun(false);
-    setExecutionTime(null);
+      setRunning(true);
+      setError(null);
+      setResults([]);
+      setHasRun(false);
+      setExecutionTime(null);
 
-    const startTime = performance.now();
+      const startTime = performance.now();
 
-    try {
-      // Escape backticks in the database name to avoid malformed USE statements
-      // (e.g. a db named: test`db  →  USE `test``db`)
-      let fullQuery = sql;
-      if (selectedDb) {
-        const escapedDb = selectedDb.replace(/`/g, "``");
-        fullQuery = `USE \`${escapedDb}\`;\n${sql}`;
+      try {
+        // Escape backticks in the database name to avoid malformed USE statements
+        // (e.g. a db named: test`db  →  USE `test``db`)
+        let fullQuery = queryText;
+        if (selectedDb) {
+          const escapedDb = selectedDb.replace(/`/g, "``");
+          fullQuery = `USE \`${escapedDb}\`;\n${queryText}`;
+        }
+
+        const res = await dbQuery(selectedProfileId, fullQuery);
+
+        // Discard stale results if the user cancelled (soft-stop) and re-ran
+        if (token !== runTokenRef.current) return;
+
+        const elapsed = performance.now() - startTime;
+        setExecutionTime(elapsed);
+
+        // Drop the USE result (index 0) so callers only see their query results
+        const filteredResults = selectedDb ? res.slice(1) : res;
+
+        setResults(filteredResults);
+        setHasRun(true);
+        setActiveResultIdx(0);
+      } catch (e) {
+        if (token !== runTokenRef.current) return;
+        const elapsed = performance.now() - startTime;
+        setExecutionTime(elapsed);
+        setError(String(e));
+        setHasRun(true);
+      } finally {
+        if (token === runTokenRef.current) {
+          setRunning(false);
+        }
       }
+    },
+    [selectedProfileId, selectedDb, running],
+  );
 
-      const res = await dbQuery(selectedProfileId, fullQuery);
-
-      // Discard stale results if the user cancelled (soft-stop) and re-ran
-      if (token !== runTokenRef.current) return;
-
-      const elapsed = performance.now() - startTime;
-      setExecutionTime(elapsed);
-
-      // Drop the USE result (index 0) so callers only see their query results
-      const filteredResults = selectedDb ? res.slice(1) : res;
-
-      setResults(filteredResults);
-      setHasRun(true);
-      setActiveResultIdx(0);
-    } catch (e) {
-      if (token !== runTokenRef.current) return;
-      const elapsed = performance.now() - startTime;
-      setExecutionTime(elapsed);
-      setError(String(e));
-      setHasRun(true);
-    } finally {
-      if (token === runTokenRef.current) {
-        setRunning(false);
-      }
+  const handleRun = useCallback(() => executeQuery(sql), [executeQuery, sql]);
+  const handleRunSelected = useCallback(() => {
+    if (activeQueryRange) {
+      executeQuery(activeQueryRange.text);
     }
-  }, [sql, selectedProfileId, selectedDb, running]);
+  }, [executeQuery, activeQueryRange]);
 
   // ── Stop (soft-cancel) ────────────────────────────────────
   // Advances the token so the in-flight result is discarded when it arrives.
@@ -1101,6 +1121,12 @@ export function QueryTab({
         return;
       }
 
+      if (modKey && e.shiftKey && e.key === "Enter") {
+        e.preventDefault();
+        handleRunSelected();
+        return;
+      }
+
       if ((modKey && e.key === "Enter") || e.key === "F5") {
         e.preventDefault();
         handleRun();
@@ -1212,6 +1238,7 @@ export function QueryTab({
       dismissAutocomplete,
       handleAcceptSuggestion,
       handleRun,
+      handleRunSelected,
       handleStop,
       running,
       setEditorSelection,
@@ -1239,12 +1266,31 @@ export function QueryTab({
               <Play className="w-4 h-4" />
             )
           }
-          title="Execute (Ctrl+Enter / F5)"
+          title="Execute All (Ctrl+Enter / F5)"
           onClick={handleRun}
           disabled={running || !sql.trim()}
           active={false}
           accent="text-green-500"
+          label={
+            activeQueryRange && activeQueryRange.text.trim() !== sql.trim()
+              ? "Run All"
+              : "Run"
+          }
         />
+        {/* Run Selected */}
+        {activeQueryRange &&
+          activeQueryRange.text.trim().length > 0 &&
+          activeQueryRange.text.trim() !== sql.trim() && (
+            <ToolBtn
+              icon={<Play className="w-4 h-4" />}
+              title="Execute Selected Query (Ctrl+Shift+Enter)"
+              onClick={handleRunSelected}
+              disabled={running}
+              active={false}
+              accent="text-blue-500"
+              label="Run Selected"
+            />
+          )}
         {/* Stop */}
         <ToolBtn
           icon={<Square className="w-4 h-4" />}
@@ -1765,6 +1811,7 @@ function ToolBtn({
   disabled,
   active,
   accent,
+  label,
 }: {
   icon: React.ReactNode;
   title: string;
@@ -1772,11 +1819,12 @@ function ToolBtn({
   disabled: boolean;
   active: boolean;
   accent?: string;
+  label?: string;
 }) {
   return (
     <button
       className={cn(
-        "p-1.5 rounded transition-colors",
+        "p-1.5 rounded transition-colors flex items-center gap-1.5",
         disabled ? "opacity-30 pointer-events-none" : "hover:bg-accent",
         active && "bg-accent/60",
         accent && !disabled && accent,
@@ -1787,6 +1835,11 @@ function ToolBtn({
       aria-label={title}
     >
       {icon}
+      {label && (
+        <span className="text-[11px] font-medium leading-none tracking-wide pr-1 pt-0.5">
+          {label}
+        </span>
+      )}
     </button>
   );
 }

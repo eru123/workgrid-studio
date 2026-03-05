@@ -321,7 +321,7 @@ const SQL_TYPES = new Set([
 
 // ── Tokeniser ────────────────────────────────────────────────────────
 
-function tokeniseSQL(sql: string): Token[] {
+export function tokeniseSQL(sql: string): Token[] {
   const tokens: Token[] = [];
   let i = 0;
   const len = sql.length;
@@ -505,6 +505,76 @@ function tokeniseSQL(sql: string): Token[] {
   return tokens;
 }
 
+export function getActiveQueryRange(
+  sql: string,
+  startPos: number,
+  endPos: number,
+): { start: number; end: number; text: string } | null {
+  const tokens = tokeniseSQL(sql);
+  let currentIndex = 0;
+
+  let currentStmtStart = 0;
+  let stmts: { start: number; end: number; text: string }[] = [];
+
+  for (const token of tokens) {
+    const tokenLen = token.value.length;
+
+    if (token.type === "punctuation" && token.value === ";") {
+      stmts.push({
+        start: currentStmtStart,
+        end: currentIndex + tokenLen,
+        text: sql.slice(currentStmtStart, currentIndex + tokenLen),
+      });
+      currentStmtStart = currentIndex + tokenLen;
+    }
+
+    currentIndex += tokenLen;
+  }
+
+  if (currentStmtStart < sql.length) {
+    const text = sql.slice(currentStmtStart);
+    stmts.push({
+      start: currentStmtStart,
+      end: sql.length,
+      text,
+    });
+  }
+
+  // Find statements overlapping selection
+  let activeStmts = stmts.filter((s) => {
+    // Treat purely whitespace remainder as not important if selection isn't explicitly in it
+    if (s.text.trim().length === 0 && startPos < s.start && endPos < s.start)
+      return false;
+
+    if (startPos === endPos) {
+      return startPos >= s.start && startPos <= s.end;
+    }
+    // For range selection, if it intersects
+    return Math.max(startPos, s.start) < Math.min(endPos, s.end);
+  });
+
+  // If we couldn't find an intersection (e.g. trailing empty space), fallback to last stmt
+  if (activeStmts.length === 0 && stmts.length > 0) {
+    activeStmts = [stmts[stmts.length - 1]];
+  }
+
+  // Filter out any purely whitespace statements unless it's the only one
+  const nonEmptyStmts = activeStmts.filter((s) => s.text.trim().length > 0);
+  if (nonEmptyStmts.length > 0) {
+    activeStmts = nonEmptyStmts;
+  }
+
+  if (activeStmts.length === 0) return null;
+
+  const start = activeStmts[0].start;
+  const end = activeStmts[activeStmts.length - 1].end;
+  return {
+    start,
+    end,
+    text: sql.slice(start, end),
+  };
+}
+
 // ── HTML escaping ────────────────────────────────────────────────────
 
 function escapeHtml(text: string): string {
@@ -521,13 +591,42 @@ function escapeHtml(text: string): string {
  * `dangerouslySetInnerHTML`.  The output preserves all whitespace
  * and newlines so it can be rendered inside a `<pre>`.
  */
-export function highlightSQL(sql: string): string {
+export function highlightSQL(
+  sql: string,
+  activeStart: number = 0,
+  activeEnd: number = sql.length,
+): string {
   if (!sql) return "\n";
 
   const tokens = tokeniseSQL(sql);
   let html = "";
+  let currentIndex = 0;
+  let inActiveRegion = false;
 
   for (const token of tokens) {
+    const tokenLen = token.value.length;
+
+    // Check if token overlaps with the active query range
+    const tokenStart = currentIndex;
+    const tokenEnd = currentIndex + tokenLen;
+    const isActive =
+      Math.max(tokenStart, activeStart) < Math.min(tokenEnd, activeEnd) ||
+      (activeStart === activeEnd &&
+        activeStart >= tokenStart &&
+        activeStart <= tokenEnd &&
+        activeStart !== sql.length);
+
+    // If we transition into active region, open span
+    if (isActive && !inActiveRegion) {
+      // Provide a distinct block-like background for the active query text
+      html += `<span class="bg-primary/10 rounded-sm">`;
+      inActiveRegion = true;
+    } else if (!isActive && inActiveRegion) {
+      // If we transition out, close span
+      html += `</span>`;
+      inActiveRegion = false;
+    }
+
     const escaped = escapeHtml(token.value);
     const color = TOKEN_COLORS[token.type];
 
@@ -536,6 +635,12 @@ export function highlightSQL(sql: string): string {
     } else {
       html += escaped;
     }
+
+    currentIndex += tokenLen;
+  }
+
+  if (inActiveRegion) {
+    html += `</span>`;
   }
 
   // Extra newline ensures the overlay height matches the textarea
