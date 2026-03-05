@@ -12,6 +12,7 @@ import {
   ListChecks,
   FileText,
   Loader2,
+  Rows3,
 } from "lucide-react";
 import { useSchemaStore } from "@/state/schemaStore";
 import { WelcomeTab } from "@/components/views/WelcomeTab";
@@ -41,6 +42,11 @@ const TableDesigner = lazy(() =>
 const QueryTab = lazy(() =>
   import("@/components/views/QueryTab").then((m) => ({
     default: m.QueryTab,
+  })),
+);
+const TableDataTab = lazy(() =>
+  import("@/components/views/TableDataTab").then((m) => ({
+    default: m.TableDataTab,
   })),
 );
 
@@ -80,6 +86,14 @@ const TabContent = memo(function TabContent({ tab }: { tab: EditorTab }) {
             tableName={tab.meta?.tableName}
           />
         );
+      case "table-data":
+        return (
+          <TableDataTab
+            profileId={tab.meta?.profileId ?? ""}
+            database={tab.meta?.database ?? ""}
+            tableName={tab.meta?.tableName ?? ""}
+          />
+        );
       case "sql":
         return (
           <QueryTab
@@ -112,6 +126,8 @@ function tabIcon(type: EditorTab["type"], isActive: boolean) {
       return <Database className={cls} />;
     case "table-designer":
       return <Table2 className={cls} />;
+    case "table-data":
+      return <Rows3 className={cls} />;
     case "models":
       return <Boxes className={cls} />;
     case "tasks":

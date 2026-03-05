@@ -39,6 +39,7 @@ import {
   Server,
   Plus,
   TableProperties,
+  Rows3,
 } from "lucide-react";
 import { SiPostgresql, SiMysql, SiSqlite, SiMariadb } from "react-icons/si";
 
@@ -652,6 +653,24 @@ export function ExplorerTree() {
                   onClick={() => {
                     setContextMenu(null);
                     useLayoutStore.getState().openTab({
+                      title: `Data: ${targetTable}`,
+                      type: "table-data",
+                      meta: {
+                        profileId,
+                        database: targetDb,
+                        tableName: targetTable,
+                      },
+                    });
+                  }}
+                >
+                  <Rows3 className="w-3.5 h-3.5 text-muted-foreground" /> View
+                  Data
+                </button>
+                <button
+                  className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2"
+                  onClick={() => {
+                    setContextMenu(null);
+                    useLayoutStore.getState().openTab({
                       title: `Query: ${targetDb}`,
                       type: "sql",
                       meta: { profileId, database: targetDb },
@@ -1106,6 +1125,8 @@ function TableNode({
   const setError = useSchemaStore((s) => s.setError);
   const clearError = useSchemaStore((s) => s.clearError);
 
+  const openTab = useLayoutStore((s) => s.openTab);
+
   const nodeKey = `tbl-${cacheKey}`;
   const isOpen = expanded[nodeKey] ?? false;
 
@@ -1127,6 +1148,14 @@ function TableNode({
     }
   };
 
+  const handleDoubleClick = () => {
+    openTab({
+      title: `Data: ${table}`,
+      type: "table-data",
+      meta: { profileId, database, tableName: table },
+    });
+  };
+
   return (
     <>
       <TreeRow
@@ -1134,6 +1163,7 @@ function TableNode({
         isOpen={isOpen}
         onChevronClick={handleToggle}
         onLabelClick={handleToggle}
+        onDoubleClick={handleDoubleClick}
         onContextMenu={onContextMenu}
         icon={<Table2 className="w-3.5 h-3.5 text-blue-400/80" />}
         label={table}
