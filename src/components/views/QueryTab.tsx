@@ -1132,7 +1132,7 @@ export function QueryTab({
           {/* ── Line number gutter ── */}
           <div
             ref={lineNumberRef}
-            className="w-12 shrink-0 border-r border-border/40 overflow-hidden"
+            className="w-12 shrink-0 overflow-hidden"
             style={{ backgroundColor: "rgba(30,30,30,0.6)" }}
             aria-hidden="true"
           >
