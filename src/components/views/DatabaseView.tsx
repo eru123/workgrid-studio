@@ -566,23 +566,6 @@ function TablesTable({
     return () => window.removeEventListener("click", close);
   }, [ctxMenu]);
 
-  if (loading) {
-    return (
-      <div className="flex-1 flex items-center justify-center">
-        <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
-      </div>
-    );
-  }
-  if (error) {
-    return (
-      <div className="flex-1 flex items-center justify-center flex-col gap-2 text-red-500">
-        <AlertCircle className="w-8 h-8" />
-        <p className="text-sm font-medium">Failed to load tables</p>
-        <p className="text-xs max-w-md text-center opacity-80">{error}</p>
-      </div>
-    );
-  }
-
   // Default sorting
   const sorted = useMemo(
     () => [...tableInfos].sort((a, b) => a.name.localeCompare(b.name)),
@@ -599,6 +582,23 @@ function TablesTable({
     () => buildTableFilterSuggestions(tableFilter, sorted),
     [tableFilter, sorted],
   );
+
+  if (loading) {
+    return (
+      <div className="flex-1 flex items-center justify-center">
+        <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+  if (error) {
+    return (
+      <div className="flex-1 flex items-center justify-center flex-col gap-2 text-red-500">
+        <AlertCircle className="w-8 h-8" />
+        <p className="text-sm font-medium">Failed to load tables</p>
+        <p className="text-xs max-w-md text-center opacity-80">{error}</p>
+      </div>
+    );
+  }
 
   return (
     <div className="flex-1 min-h-0 flex flex-col relative">
