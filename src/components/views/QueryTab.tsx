@@ -39,7 +39,7 @@ interface EditorEdit {
 
 const DEFAULT_QUERY_FONT_SIZE_PX = 12;
 const MIN_QUERY_FONT_SIZE_PX = 10;
-const MAX_QUERY_FONT_SIZE_PX = 72;
+const MAX_QUERY_FONT_SIZE_PX = 24;
 const MINIMAP_SELECTOR_MIN_HEIGHT_PX = 28;
 
 function clamp(value: number, min: number, max: number): number {
@@ -58,7 +58,8 @@ function getSelectedLineRange(
   const lineStart = value.lastIndexOf("\n", start - 1) + 1;
   const lineBreakIndex = value.indexOf("\n", effectiveEnd);
   const lineEnd = lineBreakIndex === -1 ? value.length : lineBreakIndex;
-  const lineEndWithBreak = lineBreakIndex === -1 ? value.length : lineBreakIndex + 1;
+  const lineEndWithBreak =
+    lineBreakIndex === -1 ? value.length : lineBreakIndex + 1;
 
   return {
     start,
@@ -103,7 +104,8 @@ function moveSelectedLines(
 
   const nextLineStart = lineEnd + 1;
   const nextLineBreakIndex = value.indexOf("\n", nextLineStart);
-  const nextLineEnd = nextLineBreakIndex === -1 ? value.length : nextLineBreakIndex;
+  const nextLineEnd =
+    nextLineBreakIndex === -1 ? value.length : nextLineBreakIndex;
   const nextLine = value.slice(nextLineStart, nextLineEnd);
   const beforeSelection = value.slice(0, lineStart);
   const afterNextLine = value.slice(nextLineEnd);
@@ -154,7 +156,11 @@ function toggleSqlComments(
   selectionStart: number,
   selectionEnd: number,
 ): EditorEdit {
-  const { lineStart, lineEnd } = getSelectedLineRange(value, selectionStart, selectionEnd);
+  const { lineStart, lineEnd } = getSelectedLineRange(
+    value,
+    selectionStart,
+    selectionEnd,
+  );
   const selectedBlock = value.slice(lineStart, lineEnd);
   const lines = selectedBlock.split("\n");
   const shouldUncomment = lines.every(
@@ -184,7 +190,11 @@ function deleteSelectedLines(
   selectionStart: number,
   selectionEnd: number,
 ): EditorEdit {
-  const { lineStart, lineEndWithBreak } = getSelectedLineRange(value, selectionStart, selectionEnd);
+  const { lineStart, lineEndWithBreak } = getSelectedLineRange(
+    value,
+    selectionStart,
+    selectionEnd,
+  );
   let removeStart = lineStart;
   const removeEnd = lineEndWithBreak;
 
@@ -207,7 +217,11 @@ function deleteSelectedLines(
 //  Component
 // ═══════════════════════════════════════════════════════════════════════
 
-export function QueryTab({ tabId, profileId, database: initialDatabase }: Props) {
+export function QueryTab({
+  tabId,
+  profileId,
+  database: initialDatabase,
+}: Props) {
   // ── State ──────────────────────────────────────────────────
   const [sql, setSql] = useState("");
   const [results, setResults] = useState<QueryResultSet[]>([]);
@@ -217,7 +231,9 @@ export function QueryTab({ tabId, profileId, database: initialDatabase }: Props)
   const [error, setError] = useState<string | null>(null);
   const [executionTime, setExecutionTime] = useState<number | null>(null);
   const [wordWrap, setWordWrap] = useState(false);
-  const [editorFontSize, setEditorFontSize] = useState(DEFAULT_QUERY_FONT_SIZE_PX);
+  const [editorFontSize, setEditorFontSize] = useState(
+    DEFAULT_QUERY_FONT_SIZE_PX,
+  );
   const [cursorPos, setCursorPos] = useState(0);
   const [selectedCharCount, setSelectedCharCount] = useState(0);
   const [editorViewport, setEditorViewport] = useState({
@@ -230,11 +246,18 @@ export function QueryTab({ tabId, profileId, database: initialDatabase }: Props)
     initialDatabase !== undefined,
   );
 
+  useEffect(() => {
+    setEditorFontSize((prev) =>
+      clamp(prev, MIN_QUERY_FONT_SIZE_PX, MAX_QUERY_FONT_SIZE_PX),
+    );
+  }, []);
+
   const editorRef = useRef<HTMLTextAreaElement>(null);
   const lineNumberRef = useRef<HTMLDivElement>(null);
-  const pendingEditorSelectionRef = useRef<{ start: number; end: number } | null>(
-    null,
-  );
+  const pendingEditorSelectionRef = useRef<{
+    start: number;
+    end: number;
+  } | null>(null);
   const minimapRef = useRef<HTMLButtonElement>(null);
   const minimapRafRef = useRef<number | null>(null);
   const minimapTargetScrollRef = useRef(0);
@@ -421,7 +444,9 @@ export function QueryTab({ tabId, profileId, database: initialDatabase }: Props)
 
     // UTF-8 BOM ensures Excel renders the file correctly
     const bom = "\uFEFF";
-    const blob = new Blob([`${bom}${header}\n${rows}`], { type: "text/csv;charset=utf-8;" });
+    const blob = new Blob([`${bom}${header}\n${rows}`], {
+      type: "text/csv;charset=utf-8;",
+    });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -493,7 +518,12 @@ export function QueryTab({ tabId, profileId, database: initialDatabase }: Props)
     const totalLines = Math.max(1, lines.length);
     const maxSegments = 220;
     const step = Math.max(1, Math.ceil(totalLines / maxSegments));
-    const segments: Array<{ top: number; height: number; width: number; opacity: number }> = [];
+    const segments: Array<{
+      top: number;
+      height: number;
+      width: number;
+      opacity: number;
+    }> = [];
 
     for (let i = 0; i < totalLines; i += step) {
       const chunk = lines.slice(i, i + step);
@@ -528,7 +558,9 @@ export function QueryTab({ tabId, profileId, database: initialDatabase }: Props)
 
   const syncEditorMetrics = useCallback((textarea: HTMLTextAreaElement) => {
     setCursorPos(textarea.selectionStart);
-    setSelectedCharCount(Math.abs(textarea.selectionEnd - textarea.selectionStart));
+    setSelectedCharCount(
+      Math.abs(textarea.selectionEnd - textarea.selectionStart),
+    );
     setEditorViewport({
       scrollTop: textarea.scrollTop,
       scrollHeight: Math.max(1, textarea.scrollHeight),
@@ -536,13 +568,16 @@ export function QueryTab({ tabId, profileId, database: initialDatabase }: Props)
     });
   }, []);
 
-  const setEditorSelection = useCallback((start: number, end: number = start) => {
-    const textarea = editorRef.current;
-    if (!textarea) return;
-    textarea.focus();
-    textarea.setSelectionRange(start, end);
-    syncEditorMetrics(textarea);
-  }, [syncEditorMetrics]);
+  const setEditorSelection = useCallback(
+    (start: number, end: number = start) => {
+      const textarea = editorRef.current;
+      if (!textarea) return;
+      textarea.focus();
+      textarea.setSelectionRange(start, end);
+      syncEditorMetrics(textarea);
+    },
+    [syncEditorMetrics],
+  );
 
   const applyEditorEdit = useCallback(
     (edit: EditorEdit, currentValue: string) => {
@@ -598,10 +633,17 @@ export function QueryTab({ tabId, profileId, database: initialDatabase }: Props)
       MINIMAP_SELECTOR_MIN_HEIGHT_PX,
       minimapTrackHeight,
     );
-  }, [editorViewport.clientHeight, editorViewport.scrollHeight, minimapTrackHeight]);
+  }, [
+    editorViewport.clientHeight,
+    editorViewport.scrollHeight,
+    minimapTrackHeight,
+  ]);
   const minimapViewportTopPx = useMemo(() => {
     if (editorViewport.scrollHeight <= editorViewport.clientHeight) return 0;
-    const maxScroll = Math.max(0, editorViewport.scrollHeight - editorViewport.clientHeight);
+    const maxScroll = Math.max(
+      0,
+      editorViewport.scrollHeight - editorViewport.clientHeight,
+    );
     const maxTop = Math.max(0, minimapTrackHeight - minimapViewportHeightPx);
     const ratio = maxScroll === 0 ? 0 : editorViewport.scrollTop / maxScroll;
     return clamp(ratio * maxTop, 0, maxTop);
@@ -688,9 +730,17 @@ export function QueryTab({ tabId, profileId, database: initialDatabase }: Props)
         rect.height,
       );
       const maxSelectorTop = Math.max(0, rect.height - selectorHeight);
-      const selectorTop = clamp(clientY - rect.top - dragOffset, 0, maxSelectorTop);
-      const scrollRatio = maxSelectorTop === 0 ? 0 : selectorTop / maxSelectorTop;
-      const maxScroll = Math.max(0, textarea.scrollHeight - textarea.clientHeight);
+      const selectorTop = clamp(
+        clientY - rect.top - dragOffset,
+        0,
+        maxSelectorTop,
+      );
+      const scrollRatio =
+        maxSelectorTop === 0 ? 0 : selectorTop / maxSelectorTop;
+      const maxScroll = Math.max(
+        0,
+        textarea.scrollHeight - textarea.clientHeight,
+      );
 
       minimapTargetScrollRef.current = scrollRatio * maxScroll;
       animateMinimapScroll();
@@ -729,7 +779,8 @@ export function QueryTab({ tabId, profileId, database: initialDatabase }: Props)
       const viewportTopPx = minimapViewportTopPx;
       const viewportHeightPx = minimapViewportHeightPx;
       const pointerInsideViewport =
-        pointerY >= viewportTopPx && pointerY <= viewportTopPx + viewportHeightPx;
+        pointerY >= viewportTopPx &&
+        pointerY <= viewportTopPx + viewportHeightPx;
 
       minimapDragOffsetRef.current = pointerInsideViewport
         ? pointerY - viewportTopPx
@@ -812,7 +863,10 @@ export function QueryTab({ tabId, profileId, database: initialDatabase }: Props)
 
       if (modKey && lowered === "g") {
         e.preventDefault();
-        const rawInput = window.prompt("Go to line[:column]", `${activeLine}:${activeColumn}`);
+        const rawInput = window.prompt(
+          "Go to line[:column]",
+          `${activeLine}:${activeColumn}`,
+        );
         if (rawInput === null) return;
 
         const match = rawInput.trim().match(/^(\d+)(?::(\d+))?$/);
@@ -831,7 +885,11 @@ export function QueryTab({ tabId, profileId, database: initialDatabase }: Props)
           lineIndex + 1 < lineStarts.length
             ? lineStarts[lineIndex + 1] - 1
             : editorValue.length;
-        const colIndex = clamp(requestedCol - 1, 0, Math.max(0, lineEnd - lineStart));
+        const colIndex = clamp(
+          requestedCol - 1,
+          0,
+          Math.max(0, lineEnd - lineStart),
+        );
         const nextPos = lineStart + colIndex;
         setEditorSelection(nextPos, nextPos);
         return;
@@ -839,14 +897,22 @@ export function QueryTab({ tabId, profileId, database: initialDatabase }: Props)
 
       if (modKey && lowered === "/") {
         e.preventDefault();
-        const edit = toggleSqlComments(editorValue, selectionStart, selectionEnd);
+        const edit = toggleSqlComments(
+          editorValue,
+          selectionStart,
+          selectionEnd,
+        );
         applyEditorEdit(edit, editorValue);
         return;
       }
 
       if (modKey && e.shiftKey && lowered === "k") {
         e.preventDefault();
-        const edit = deleteSelectedLines(editorValue, selectionStart, selectionEnd);
+        const edit = deleteSelectedLines(
+          editorValue,
+          selectionStart,
+          selectionEnd,
+        );
         applyEditorEdit(edit, editorValue);
         return;
       }
@@ -980,7 +1046,7 @@ export function QueryTab({ tabId, profileId, database: initialDatabase }: Props)
               value={
                 selectedProfileId && connectedProfiles[selectedProfileId]
                   ? selectedProfileId
-                  : profileIds[0] ?? ""
+                  : (profileIds[0] ?? "")
               }
               onChange={(e) => {
                 setSelectedProfileId(e.target.value);
@@ -1006,7 +1072,9 @@ export function QueryTab({ tabId, profileId, database: initialDatabase }: Props)
                 setSelectedDb(e.target.value);
                 setHasDbSelectionHistory(true);
               }}
-              disabled={!selectedProfileId || !connectedProfiles[selectedProfileId]}
+              disabled={
+                !selectedProfileId || !connectedProfiles[selectedProfileId]
+              }
               className="h-6 text-xs bg-secondary/50 border rounded px-1.5 focus:outline-none focus:ring-1 focus:ring-primary min-w-30 max-w-37.5 truncate"
             >
               <option value="">(no database)</option>
@@ -1033,7 +1101,10 @@ export function QueryTab({ tabId, profileId, database: initialDatabase }: Props)
           >
             <pre
               className="m-0 px-2 py-3 text-right font-mono text-muted-foreground/70 select-none"
-              style={{ fontSize: `${editorFontSize}px`, lineHeight: `${editorLineHeight}px` }}
+              style={{
+                fontSize: `${editorFontSize}px`,
+                lineHeight: `${editorLineHeight}px`,
+              }}
             >
               {lineNumbersText}
             </pre>
@@ -1057,7 +1128,10 @@ export function QueryTab({ tabId, profileId, database: initialDatabase }: Props)
                   ? "whitespace-pre-wrap break-all overflow-auto"
                   : "whitespace-pre overflow-auto",
               )}
-              style={{ fontSize: `${editorFontSize}px`, lineHeight: `${editorLineHeight}px` }}
+              style={{
+                fontSize: `${editorFontSize}px`,
+                lineHeight: `${editorLineHeight}px`,
+              }}
               spellCheck={false}
               placeholder="Enter SQL query here... (Ctrl+Enter to execute)"
             />
@@ -1129,7 +1203,7 @@ export function QueryTab({ tabId, profileId, database: initialDatabase }: Props)
       </div>
 
       {/* ─── Results area ─────────────────────────────── */}
-      <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+      <div className="flex-1 min-h-0 min-w-0 flex flex-col overflow-hidden">
         {/* Results tab bar (when multiple result sets) */}
         {results.length > 1 && (
           <div className="flex items-center border-b bg-muted/20 px-1 gap-0 shrink-0 overflow-x-auto">
@@ -1176,51 +1250,55 @@ export function QueryTab({ tabId, profileId, database: initialDatabase }: Props)
 
         {/* Results grid */}
         {!running && activeResult && activeResult.columns.length > 0 ? (
-          <div className="flex-1 min-h-0 overflow-auto">
-            <table className="min-w-max text-xs border-collapse">
-              <thead>
-                <tr className="bg-muted/50 sticky top-0 z-10">
-                  <th className="text-center px-2 py-1.5 text-[10px] font-medium text-muted-foreground/70 uppercase tracking-wider border-b border-r bg-muted/80 w-12.5">
-                    #
-                  </th>
-                  {activeResult.columns.map((col, ci) => (
-                    <th
-                      key={ci}
-                      className="text-left px-2 py-1.5 text-[10px] font-medium text-muted-foreground/70 uppercase tracking-wider border-b border-r bg-muted/80 whitespace-nowrap"
-                    >
-                      {col}
+          <div className="flex-1 min-h-0 relative">
+            <div className="absolute inset-0 overflow-auto">
+              <table className="min-w-max text-xs border-collapse">
+                <thead>
+                  <tr className="bg-muted sticky top-0 z-10">
+                    <th className="text-center px-2 py-1.5 text-[10px] font-medium text-muted-foreground/70 uppercase tracking-wider border-b border-r bg-muted w-12.5">
+                      #
                     </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {activeResult.rows.map((row, ri) => (
-                  <tr
-                    key={ri}
-                    className="border-b hover:bg-accent/20 transition-colors"
-                  >
-                    <td className="text-center px-2 py-1 border-r text-muted-foreground/40 select-none">
-                      {ri + 1}
-                    </td>
-                    {row.map((val, ci) => (
-                      <td
+                    {activeResult.columns.map((col, ci) => (
+                      <th
                         key={ci}
-                        className={cn(
-                          "px-2 py-1 border-r font-mono max-w-75",
-                          val === null ? "text-muted-foreground/40 italic" : "",
-                          wordWrap
-                            ? "whitespace-pre-wrap break-all"
-                            : "whitespace-nowrap truncate",
-                        )}
-                        title={val === null ? "NULL" : String(val)}
+                        className="text-left px-2 py-1.5 text-[10px] font-medium text-muted-foreground/70 uppercase tracking-wider border-b border-r bg-muted whitespace-nowrap"
                       >
-                        {val === null ? "NULL" : String(val)}
-                      </td>
+                        {col}
+                      </th>
                     ))}
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {activeResult.rows.map((row, ri) => (
+                    <tr
+                      key={ri}
+                      className="border-b hover:bg-accent/20 transition-colors"
+                    >
+                      <td className="text-center px-2 py-1 border-r text-muted-foreground/40 select-none">
+                        {ri + 1}
+                      </td>
+                      {row.map((val, ci) => (
+                        <td
+                          key={ci}
+                          className={cn(
+                            "px-2 py-1 border-r font-mono max-w-75",
+                            val === null
+                              ? "text-muted-foreground/40 italic"
+                              : "",
+                            wordWrap
+                              ? "whitespace-pre-wrap break-all"
+                              : "whitespace-nowrap truncate",
+                          )}
+                          title={val === null ? "NULL" : String(val)}
+                        >
+                          {val === null ? "NULL" : String(val)}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         ) : !running && !error && hasRun && results.length > 0 ? (
           /* DML/DDL success: no column data but query ran */
