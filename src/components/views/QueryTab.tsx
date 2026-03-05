@@ -30,6 +30,173 @@ interface Props {
   database?: string;
 }
 
+interface EditorEdit {
+  value: string;
+  selectionStart: number;
+  selectionEnd: number;
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function getSelectedLineRange(
+  value: string,
+  selectionStart: number,
+  selectionEnd: number,
+) {
+  const start = Math.min(selectionStart, selectionEnd);
+  const end = Math.max(selectionStart, selectionEnd);
+  const effectiveEnd = end > start && value[end - 1] === "\n" ? end - 1 : end;
+
+  const lineStart = value.lastIndexOf("\n", start - 1) + 1;
+  const lineBreakIndex = value.indexOf("\n", effectiveEnd);
+  const lineEnd = lineBreakIndex === -1 ? value.length : lineBreakIndex;
+  const lineEndWithBreak = lineBreakIndex === -1 ? value.length : lineBreakIndex + 1;
+
+  return {
+    start,
+    end,
+    lineStart,
+    lineEnd,
+    lineEndWithBreak,
+  };
+}
+
+function moveSelectedLines(
+  value: string,
+  selectionStart: number,
+  selectionEnd: number,
+  direction: "up" | "down",
+): EditorEdit | null {
+  const { start, end, lineStart, lineEnd } = getSelectedLineRange(
+    value,
+    selectionStart,
+    selectionEnd,
+  );
+  const selectedBlock = value.slice(lineStart, lineEnd);
+
+  if (direction === "up") {
+    if (lineStart === 0) return null;
+
+    const aboveLineStart = value.lastIndexOf("\n", lineStart - 2) + 1;
+    const aboveLine = value.slice(aboveLineStart, lineStart - 1);
+    const beforeAbove = value.slice(0, aboveLineStart);
+    const afterSelection = value.slice(lineEnd);
+
+    const nextValue = `${beforeAbove}${selectedBlock}\n${aboveLine}${afterSelection}`;
+    const delta = aboveLine.length + 1;
+    return {
+      value: nextValue,
+      selectionStart: start - delta,
+      selectionEnd: end - delta,
+    };
+  }
+
+  if (lineEnd === value.length) return null;
+
+  const nextLineStart = lineEnd + 1;
+  const nextLineBreakIndex = value.indexOf("\n", nextLineStart);
+  const nextLineEnd = nextLineBreakIndex === -1 ? value.length : nextLineBreakIndex;
+  const nextLine = value.slice(nextLineStart, nextLineEnd);
+  const beforeSelection = value.slice(0, lineStart);
+  const afterNextLine = value.slice(nextLineEnd);
+  const trailingBreak = nextLineBreakIndex === -1 ? "" : "\n";
+
+  const nextValue = `${beforeSelection}${nextLine}\n${selectedBlock}${trailingBreak}${afterNextLine}`;
+  const delta = nextLine.length + 1;
+  return {
+    value: nextValue,
+    selectionStart: start + delta,
+    selectionEnd: end + delta,
+  };
+}
+
+function duplicateSelectedLines(
+  value: string,
+  selectionStart: number,
+  selectionEnd: number,
+  direction: "up" | "down",
+): EditorEdit {
+  const { start, end, lineStart, lineEndWithBreak } = getSelectedLineRange(
+    value,
+    selectionStart,
+    selectionEnd,
+  );
+  const selectedBlock = value.slice(lineStart, lineEndWithBreak);
+
+  if (direction === "up") {
+    const nextValue = `${value.slice(0, lineStart)}${selectedBlock}${value.slice(lineStart)}`;
+    const delta = selectedBlock.length;
+    return {
+      value: nextValue,
+      selectionStart: start + delta,
+      selectionEnd: end + delta,
+    };
+  }
+
+  const nextValue = `${value.slice(0, lineEndWithBreak)}${selectedBlock}${value.slice(lineEndWithBreak)}`;
+  return {
+    value: nextValue,
+    selectionStart: start,
+    selectionEnd: end,
+  };
+}
+
+function toggleSqlComments(
+  value: string,
+  selectionStart: number,
+  selectionEnd: number,
+): EditorEdit {
+  const { lineStart, lineEnd } = getSelectedLineRange(value, selectionStart, selectionEnd);
+  const selectedBlock = value.slice(lineStart, lineEnd);
+  const lines = selectedBlock.split("\n");
+  const shouldUncomment = lines.every(
+    (line) => line.trim() === "" || line.trimStart().startsWith("--"),
+  );
+
+  const nextLines = lines.map((line) => {
+    if (line.trim() === "") return line;
+    if (shouldUncomment) {
+      return line.replace(/^(\s*)--\s?/, "$1");
+    }
+    return line.replace(/^(\s*)/, "$1-- ");
+  });
+
+  const nextBlock = nextLines.join("\n");
+  const nextValue = `${value.slice(0, lineStart)}${nextBlock}${value.slice(lineEnd)}`;
+
+  return {
+    value: nextValue,
+    selectionStart: lineStart,
+    selectionEnd: lineStart + nextBlock.length,
+  };
+}
+
+function deleteSelectedLines(
+  value: string,
+  selectionStart: number,
+  selectionEnd: number,
+): EditorEdit {
+  const { lineStart, lineEndWithBreak } = getSelectedLineRange(value, selectionStart, selectionEnd);
+  let removeStart = lineStart;
+  const removeEnd = lineEndWithBreak;
+
+  // Preserve valid line structure when deleting the final line.
+  if (removeEnd === value.length && removeStart > 0) {
+    removeStart -= 1;
+  }
+
+  const nextValue = `${value.slice(0, removeStart)}${value.slice(removeEnd)}`;
+  const nextCursor = Math.min(removeStart, nextValue.length);
+
+  return {
+    value: nextValue,
+    selectionStart: nextCursor,
+    selectionEnd: nextCursor,
+  };
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 //  Component
 // ═══════════════════════════════════════════════════════════════════════
@@ -44,6 +211,16 @@ export function QueryTab({ tabId, profileId, database: initialDatabase }: Props)
   const [error, setError] = useState<string | null>(null);
   const [executionTime, setExecutionTime] = useState<number | null>(null);
   const [wordWrap, setWordWrap] = useState(false);
+  const [cursorPos, setCursorPos] = useState(0);
+  const [hasDbSelectionHistory, setHasDbSelectionHistory] = useState(
+    initialDatabase !== undefined,
+  );
+
+  const editorRef = useRef<HTMLTextAreaElement>(null);
+  const lineNumberRef = useRef<HTMLDivElement>(null);
+  const pendingEditorSelectionRef = useRef<{ start: number; end: number } | null>(
+    null,
+  );
 
   // ── Cancellation token ────────────────────────────────────
   // Incrementing counter: if the token when a query starts differs from the
@@ -86,16 +263,23 @@ export function QueryTab({ tabId, profileId, database: initialDatabase }: Props)
   );
   const databases = storeDatabases ?? [];
 
-  // Auto-select database if unselected or old one disappeared
+  // Auto-select database only for brand-new tabs with no DB selection history.
   useEffect(() => {
-    if (databases.length > 0) {
-      if (!selectedDb) {
-        setSelectedDb(databases[0]);
-      } else if (!databases.includes(selectedDb)) {
-        setSelectedDb(databases[0]);
-      }
+    if (databases.length === 0) {
+      if (selectedDb) setSelectedDb("");
+      return;
     }
-  }, [databases, selectedDb]);
+
+    if (selectedDb && !databases.includes(selectedDb)) {
+      setSelectedDb("");
+      return;
+    }
+
+    if (!selectedDb && !hasDbSelectionHistory) {
+      setSelectedDb(databases[0]);
+      setHasDbSelectionHistory(true);
+    }
+  }, [databases, selectedDb, hasDbSelectionHistory]);
 
   // Sync state to layout tab metadata
   useEffect(() => {
@@ -275,19 +459,170 @@ export function QueryTab({ tabId, profileId, database: initialDatabase }: Props)
     return `${results.length} result set(s), ${total} total row(s)`;
   }, [running, error, results, hasRun]);
 
+  const lineCount = useMemo(() => Math.max(1, sql.split("\n").length), [sql]);
+  const lineNumbersText = useMemo(
+    () => Array.from({ length: lineCount }, (_, i) => String(i + 1)).join("\n"),
+    [lineCount],
+  );
+  const activeLine = useMemo(() => {
+    const safePos = clamp(cursorPos, 0, sql.length);
+    return sql.slice(0, safePos).split("\n").length;
+  }, [cursorPos, sql]);
+  const activeColumn = useMemo(() => {
+    const safePos = clamp(cursorPos, 0, sql.length);
+    const lineStart = sql.lastIndexOf("\n", safePos - 1) + 1;
+    return safePos - lineStart + 1;
+  }, [cursorPos, sql]);
+
+  const setEditorSelection = useCallback((start: number, end: number = start) => {
+    const textarea = editorRef.current;
+    if (!textarea) return;
+    textarea.focus();
+    textarea.setSelectionRange(start, end);
+    setCursorPos(start);
+  }, []);
+
+  const applyEditorEdit = useCallback(
+    (edit: EditorEdit, currentValue: string) => {
+      if (edit.value === currentValue) {
+        setEditorSelection(edit.selectionStart, edit.selectionEnd);
+        return;
+      }
+
+      pendingEditorSelectionRef.current = {
+        start: edit.selectionStart,
+        end: edit.selectionEnd,
+      };
+      setSql(edit.value);
+    },
+    [setEditorSelection],
+  );
+
+  useEffect(() => {
+    const pending = pendingEditorSelectionRef.current;
+    if (!pending) return;
+    setEditorSelection(pending.start, pending.end);
+    pendingEditorSelectionRef.current = null;
+  }, [sql, setEditorSelection]);
+
+  const handleEditorScroll = useCallback(
+    (e: React.UIEvent<HTMLTextAreaElement>) => {
+      if (!lineNumberRef.current) return;
+      lineNumberRef.current.scrollTop = e.currentTarget.scrollTop;
+    },
+    [],
+  );
+
+  const handleEditorSelectionChange = useCallback(
+    (e: React.SyntheticEvent<HTMLTextAreaElement>) => {
+      setCursorPos(e.currentTarget.selectionStart);
+    },
+    [],
+  );
+
   // ── Keyboard shortcut ─────────────────────────────────────
   const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      if ((e.ctrlKey && e.key === "Enter") || e.key === "F5") {
+    (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      const editorValue = e.currentTarget.value;
+      const { selectionStart, selectionEnd } = e.currentTarget;
+      const modKey = e.ctrlKey || e.metaKey;
+      const lowered = e.key.toLowerCase();
+
+      if ((modKey && e.key === "Enter") || e.key === "F5") {
         e.preventDefault();
         handleRun();
+        return;
       }
       if (e.key === "Escape" && running) {
         e.preventDefault();
         handleStop();
+        return;
+      }
+
+      if (modKey && lowered === "g") {
+        e.preventDefault();
+        const rawInput = window.prompt("Go to line[:column]", `${activeLine}:${activeColumn}`);
+        if (rawInput === null) return;
+
+        const match = rawInput.trim().match(/^(\d+)(?::(\d+))?$/);
+        if (!match) return;
+
+        const requestedLine = Number(match[1]);
+        const requestedCol = match[2] ? Number(match[2]) : 1;
+        const lineStarts = [0];
+        for (let i = 0; i < editorValue.length; i++) {
+          if (editorValue[i] === "\n") lineStarts.push(i + 1);
+        }
+
+        const lineIndex = clamp(requestedLine - 1, 0, lineStarts.length - 1);
+        const lineStart = lineStarts[lineIndex];
+        const lineEnd =
+          lineIndex + 1 < lineStarts.length
+            ? lineStarts[lineIndex + 1] - 1
+            : editorValue.length;
+        const colIndex = clamp(requestedCol - 1, 0, Math.max(0, lineEnd - lineStart));
+        const nextPos = lineStart + colIndex;
+        setEditorSelection(nextPos, nextPos);
+        return;
+      }
+
+      if (modKey && lowered === "/") {
+        e.preventDefault();
+        const edit = toggleSqlComments(editorValue, selectionStart, selectionEnd);
+        applyEditorEdit(edit, editorValue);
+        return;
+      }
+
+      if (modKey && e.shiftKey && lowered === "k") {
+        e.preventDefault();
+        const edit = deleteSelectedLines(editorValue, selectionStart, selectionEnd);
+        applyEditorEdit(edit, editorValue);
+        return;
+      }
+
+      if (modKey && lowered === "l") {
+        e.preventDefault();
+        const { lineStart, lineEnd } = getSelectedLineRange(
+          editorValue,
+          selectionStart,
+          selectionEnd,
+        );
+        setEditorSelection(lineStart, lineEnd);
+        return;
+      }
+
+      if (e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+        e.preventDefault();
+
+        if (e.shiftKey) {
+          const edit = duplicateSelectedLines(
+            editorValue,
+            selectionStart,
+            selectionEnd,
+            e.key === "ArrowUp" ? "up" : "down",
+          );
+          applyEditorEdit(edit, editorValue);
+          return;
+        }
+
+        const edit = moveSelectedLines(
+          editorValue,
+          selectionStart,
+          selectionEnd,
+          e.key === "ArrowUp" ? "up" : "down",
+        );
+        if (edit) applyEditorEdit(edit, editorValue);
       }
     },
-    [handleRun, handleStop, running],
+    [
+      activeColumn,
+      activeLine,
+      applyEditorEdit,
+      handleRun,
+      handleStop,
+      running,
+      setEditorSelection,
+    ],
   );
 
   // ═══════════════════════════════════════════════════════════
@@ -371,14 +706,19 @@ export function QueryTab({ tabId, profileId, database: initialDatabase }: Props)
           <div className="flex items-center gap-1">
             <Server className="w-3 h-3 text-muted-foreground" />
             <select
-              value={selectedProfileId}
+              value={
+                selectedProfileId && connectedProfiles[selectedProfileId]
+                  ? selectedProfileId
+                  : profileIds[0] ?? ""
+              }
               onChange={(e) => {
                 setSelectedProfileId(e.target.value);
                 setSelectedDb("");
               }}
-              className="h-6 text-xs bg-secondary/50 border rounded px-1.5 focus:outline-none focus:ring-1 focus:ring-primary min-w-[120px] max-w-[150px] truncate"
+              disabled={profileIds.length === 0}
+              className="h-6 text-xs bg-secondary/50 border rounded px-1.5 focus:outline-none focus:ring-1 focus:ring-primary min-w-30 max-w-37.5 truncate"
             >
-              <option value="">(no server)</option>
+              {profileIds.length === 0 && <option value="">(no server)</option>}
               {Object.entries(connectedProfiles).map(([id, p]) => (
                 <option key={id} value={id}>
                   {p.name}
@@ -391,8 +731,12 @@ export function QueryTab({ tabId, profileId, database: initialDatabase }: Props)
             <Database className="w-3 h-3 text-muted-foreground" />
             <select
               value={selectedDb}
-              onChange={(e) => setSelectedDb(e.target.value)}
-              className="h-6 text-xs bg-secondary/50 border rounded px-1.5 focus:outline-none focus:ring-1 focus:ring-primary min-w-[120px] max-w-[150px] truncate"
+              onChange={(e) => {
+                setSelectedDb(e.target.value);
+                setHasDbSelectionHistory(true);
+              }}
+              disabled={!selectedProfileId || !connectedProfiles[selectedProfileId]}
+              className="h-6 text-xs bg-secondary/50 border rounded px-1.5 focus:outline-none focus:ring-1 focus:ring-primary min-w-30 max-w-37.5 truncate"
             >
               <option value="">(no database)</option>
               {databases.map((db) => (
@@ -410,15 +754,32 @@ export function QueryTab({ tabId, profileId, database: initialDatabase }: Props)
         className="shrink-0 flex flex-col overflow-hidden"
         style={{ height: `${splitPercent}%` }}
       >
-        <div className="flex-1 relative overflow-hidden">
+        <div className="flex-1 relative overflow-hidden flex">
+          <div
+            ref={lineNumberRef}
+            className="w-12 shrink-0 border-r bg-muted/25 overflow-hidden"
+            aria-hidden="true"
+          >
+            <pre className="m-0 px-2 py-3 text-right font-mono text-xs leading-relaxed text-muted-foreground/70 select-none">
+              {lineNumbersText}
+            </pre>
+          </div>
           <textarea
+            ref={editorRef}
             value={sql}
-            onChange={(e) => setSql(e.target.value)}
+            onChange={(e) => {
+              setSql(e.target.value);
+              setCursorPos(e.target.selectionStart);
+            }}
+            onScroll={handleEditorScroll}
+            onSelect={handleEditorSelectionChange}
+            onKeyUp={handleEditorSelectionChange}
+            onClick={handleEditorSelectionChange}
             onKeyDown={handleKeyDown}
             className={cn(
-              "w-full h-full bg-background resize-none outline-none text-foreground font-mono text-xs p-3 leading-relaxed",
+              "flex-1 h-full bg-background resize-none outline-none text-foreground font-mono text-xs p-3 leading-relaxed",
               wordWrap
-                ? "whitespace-pre-wrap break-all"
+                ? "whitespace-pre-wrap break-all overflow-auto"
                 : "whitespace-pre overflow-auto",
             )}
             spellCheck={false}
@@ -436,7 +797,7 @@ export function QueryTab({ tabId, profileId, database: initialDatabase }: Props)
         style={{ height: 5 }}
         onMouseDown={handleDragStart}
       >
-        <div className="w-8 h-[2px] rounded bg-muted-foreground/20 group-hover:bg-primary/50 transition-colors" />
+        <div className="w-8 h-0.5 rounded bg-muted-foreground/20 group-hover:bg-primary/50 transition-colors" />
       </div>
 
       {/* ─── Results area ─────────────────────────────── */}
@@ -491,7 +852,7 @@ export function QueryTab({ tabId, profileId, database: initialDatabase }: Props)
             <table className="min-w-max text-xs border-collapse">
               <thead>
                 <tr className="bg-muted/50 sticky top-0 z-10">
-                  <th className="text-center px-2 py-1.5 text-[10px] font-medium text-muted-foreground/70 uppercase tracking-wider border-b border-r bg-muted/80 w-[50px]">
+                  <th className="text-center px-2 py-1.5 text-[10px] font-medium text-muted-foreground/70 uppercase tracking-wider border-b border-r bg-muted/80 w-12.5">
                     #
                   </th>
                   {activeResult.columns.map((col, ci) => (
@@ -517,7 +878,7 @@ export function QueryTab({ tabId, profileId, database: initialDatabase }: Props)
                       <td
                         key={ci}
                         className={cn(
-                          "px-2 py-1 border-r font-mono max-w-[300px]",
+                          "px-2 py-1 border-r font-mono max-w-75",
                           val === null ? "text-muted-foreground/40 italic" : "",
                           wordWrap
                             ? "whitespace-pre-wrap break-all"
@@ -599,6 +960,9 @@ export function QueryTab({ tabId, profileId, database: initialDatabase }: Props)
               : `${(executionTime / 1000).toFixed(2)}s`}
           </div>
         )}
+        <div className="text-muted-foreground">
+          Ln {activeLine}, Col {activeColumn}
+        </div>
         <div className="flex-1" />
         {activeResult && activeResult.rows.length > 0 && (
           <div className="text-muted-foreground">

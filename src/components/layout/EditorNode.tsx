@@ -101,7 +101,7 @@ export function EditorNode({ tree }: { tree: SplitTree }) {
                                 setContextMenu({ x: e.clientX, y: e.clientY, tabId: tab.id });
                             }}
                         >
-                            <span className="truncate max-w-[120px]">{tab.title}</span>
+                            <span className="truncate max-w-30">{tab.title}</span>
                             <button
                                 onClick={(e) => {
                                     e.stopPropagation();
@@ -133,7 +133,7 @@ export function EditorNode({ tree }: { tree: SplitTree }) {
                     {/* Context Menu Dropdown */}
                     {contextMenu && (
                         <div
-                            className="fixed z-50 min-w-[160px] bg-popover text-popover-foreground border rounded-md shadow-md p-1 text-xs"
+                            className="fixed z-50 min-w-40 bg-popover text-popover-foreground border rounded-md shadow-md p-1 text-xs"
                             style={{
                                 top: contextMenu.y,
                                 left: contextMenu.x,
@@ -220,7 +220,7 @@ export function EditorNode({ tree }: { tree: SplitTree }) {
             </div>
 
             <Sash
-                className={isVert ? "h-2 w-full left-0 cursor-row-resize z-[60]" : "w-2 h-full top-0 cursor-col-resize z-[60]"}
+                className={isVert ? "h-2 w-full left-0 cursor-row-resize z-60" : "w-2 h-full top-0 cursor-col-resize z-60"}
                 direction={tree.direction}
                 onDrag={(delta) => {
                     const container = window.document.getElementById(`editor-node-${tree.id}`);

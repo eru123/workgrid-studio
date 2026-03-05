@@ -105,7 +105,7 @@ export function ExplorerTree() {
     return (
         <div className="flex flex-col h-full bg-background select-none text-[12px]">
             {/* Filter Bar */}
-            <div className="shrink-0 flex items-center h-[26px] border-b bg-muted/20 text-[11px]">
+            <div className="shrink-0 flex items-center h-6.5 border-b bg-muted/20 text-[11px]">
                 <div className="flex-1 flex items-center h-full px-2 border-r focus-within:bg-muted/30 transition-colors">
                     <Database className="w-3 h-3 text-muted-foreground mr-1.5 shrink-0" />
                     <input
@@ -291,7 +291,7 @@ export function ExplorerTree() {
                     };
 
                     return (
-                        <div className="fixed z-[100] min-w-[180px] bg-popover text-popover-foreground border rounded-md shadow-md p-1 text-xs" style={menuStyle}>
+                        <div className="fixed z-100 min-w-45 bg-popover text-popover-foreground border rounded-md shadow-md p-1 text-xs" style={menuStyle}>
                             <button className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2" onClick={handleDisconnect}>
                                 <PlugZap className="w-3.5 h-3.5 text-red-500" /> Disconnect
                             </button>
@@ -384,7 +384,7 @@ export function ExplorerTree() {
                     };
 
                     return (
-                        <div className="fixed z-[100] min-w-[200px] bg-popover text-popover-foreground border rounded-md shadow-md p-1 text-xs" style={menuStyle}>
+                        <div className="fixed z-100 min-w-50 bg-popover text-popover-foreground border rounded-md shadow-md p-1 text-xs" style={menuStyle}>
                             {isMulti ? (
                                 <>
                                     <button className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2" onClick={handleSelectAll}>
@@ -473,7 +473,7 @@ export function ExplorerTree() {
                 if (target.type === "table") {
                     const { database: targetDb, table: targetTable } = target;
                     return (
-                        <div className="fixed z-[100] min-w-[180px] bg-popover text-popover-foreground border rounded-md shadow-md p-1 text-xs" style={menuStyle}>
+                        <div className="fixed z-100 min-w-45 bg-popover text-popover-foreground border rounded-md shadow-md p-1 text-xs" style={menuStyle}>
                             <button className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2" onClick={() => {
                                 setContextMenu(null);
                                 useLayoutStore.getState().openTab({
@@ -974,7 +974,7 @@ function TreeRow({
     return (
         <div
             className={cn(
-                "flex items-center h-[22px] cursor-pointer hover:bg-accent/50 transition-colors",
+                "flex items-center h-5.5 cursor-pointer hover:bg-accent/50 transition-colors",
                 bold && "font-medium",
                 muted && "opacity-60",
                 selected && "bg-accent/80 text-accent-foreground"
