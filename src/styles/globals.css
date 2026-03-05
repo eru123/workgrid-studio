@@ -35,6 +35,10 @@
   --radius-sm: 0.125rem;
 }
 
+:root {
+  color-scheme: dark;
+}
+
 @layer base {
   * {
     border-color: var(--color-border);
@@ -48,6 +52,28 @@
     line-height: 1.4;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Keep native dropdown menus aligned with the dark theme. */
+  select {
+    color-scheme: dark;
+  }
+
+  select,
+  option,
+  optgroup {
+    color: var(--color-foreground);
+    background-color: var(--color-popover);
+  }
+
+  option:checked,
+  option:hover {
+    color: var(--color-foreground);
+    background-color: var(--color-accent);
+  }
+
+  option:disabled {
+    color: var(--color-muted-foreground);
   }
 
   /* Scrollbar styling (VS Code style) */

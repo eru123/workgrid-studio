@@ -481,7 +481,7 @@ export function QueryTab({
   );
 
   const handleFormat = useCallback(
-    async (choice: "internal" | "heidisql" | "sqlformat") => {
+    async (choice: "internal" | "sqlformat") => {
       const textToFormat = sql;
       if (!textToFormat.trim()) return;
 
@@ -493,28 +493,6 @@ export function QueryTab({
 
         if (choice === "internal") {
           formatted = formatSqlInternal(textToFormat, { language: "mysql" });
-        } else if (choice === "heidisql") {
-          const res = await fetch(
-            "https://www.heidisql.com/ajax.php?action=formatSql",
-            {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/x-www-form-urlencoded",
-              },
-              body: new URLSearchParams({ sql: textToFormat }),
-            },
-          );
-          if (!res.ok)
-            throw new Error(
-              `HeidiSQL formatting API failed with status: ${res.status}`,
-            );
-          const htmlText = await res.text();
-          if (htmlText.trim() === "File not found." || !htmlText) {
-            throw new Error(
-              "HeidiSQL API returned invalid response or is temporarily unavailable.",
-            );
-          }
-          formatted = htmlText;
         } else if (choice === "sqlformat") {
           const res = await fetch("https://sqlformat.org/api/v1/format", {
             method: "POST",
@@ -1270,7 +1248,7 @@ export function QueryTab({
         if (!match) return;
 
         const requestedLine = Number(match[1]);
-        const requestedCol = match[2] ? Number(match[2]) : 1;
+        const requestedCol = Number(match[2] || 1);
         const lineStarts = [0];
         for (let i = 0; i < editorValue.length; i++) {
           if (editorValue[i] === "\n") lineStarts.push(i + 1);
@@ -1471,7 +1449,6 @@ export function QueryTab({
               Format SQL
             </option>
             <option value="internal">Internal (offline)</option>
-            <option value="heidisql">heidisql.com (online)</option>
             <option value="sqlformat">sqlformat.org (online)</option>
           </select>
         </div>
