@@ -1605,13 +1605,13 @@ export function QueryTab({
               <table className="min-w-max text-xs border-collapse">
                 <thead>
                   <tr className="bg-muted sticky top-0 z-10">
-                    <th className="text-center px-2 py-1.5 text-[10px] font-medium text-muted-foreground/70 uppercase tracking-wider border-b border-r bg-muted w-12.5">
+                    <th className="text-center px-2 py-1.5 text-[10px] font-medium text-muted-foreground/70 border-b border-r bg-muted w-12.5">
                       #
                     </th>
                     {activeResult.columns.map((col, ci) => (
                       <th
                         key={ci}
-                        className="text-left px-2 py-1.5 text-[10px] font-medium text-muted-foreground/70 uppercase tracking-wider border-b border-r bg-muted whitespace-nowrap"
+                        className="text-left px-2 py-1.5 text-[10px] font-medium text-muted-foreground/70 border-b border-r bg-muted whitespace-nowrap"
                       >
                         {col}
                       </th>
