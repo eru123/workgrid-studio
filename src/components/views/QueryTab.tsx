@@ -1007,14 +1007,22 @@ export function QueryTab({
           disabled={running}
           active={false}
         />
-        {/* Word Wrap */}
-        <ToolBtn
-          icon={<WrapText className="w-4 h-4" />}
-          title="Toggle word wrap"
+        {/* Wrap Text */}
+        <button
+          type="button"
+          title="Wrap text"
+          aria-label="Wrap text"
           onClick={() => setWordWrap((p) => !p)}
-          disabled={false}
-          active={wordWrap}
-        />
+          className={cn(
+            "h-7 inline-flex items-center gap-1 px-2 rounded transition-colors text-[11px]",
+            wordWrap
+              ? "bg-accent/70 text-foreground"
+              : "text-muted-foreground hover:bg-accent hover:text-foreground",
+          )}
+        >
+          <WrapText className="w-3.5 h-3.5" />
+          <span>Wrap Text</span>
+        </button>
 
         <div className="w-px h-5 bg-border mx-1" />
 
