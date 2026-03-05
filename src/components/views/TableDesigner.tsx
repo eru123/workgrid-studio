@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef, memo } from "react";
 import {
   dbGetCollations,
   dbExecuteQuery,
@@ -1489,46 +1489,53 @@ export function TableDesigner({ profileId, database, tableName }: Props) {
   //  Render sub-tabs
   // ═══════════════════════════════════════════════════════════
 
-  const subTabs: {
-    key: SubTab;
-    label: string;
-    icon: React.ReactNode;
-    badge?: string;
-  }[] = [
-    { key: "basic", label: "Basic", icon: <Table2 className="w-3.5 h-3.5" /> },
-    {
-      key: "options",
-      label: "Options",
-      icon: <Settings className="w-3.5 h-3.5" />,
-    },
-    {
-      key: "indexes",
-      label: `Indexes (${indexes.length})`,
-      icon: <Zap className="w-3.5 h-3.5" />,
-    },
-    {
-      key: "foreign-keys",
-      label: `Foreign keys (${foreignKeys.length})`,
-      icon: <Link2 className="w-3.5 h-3.5" />,
-    },
-    {
-      key: "check-constraints",
-      label: `Check constraints (${checkConstraints.length})`,
-      icon: <CheckCircle className="w-3.5 h-3.5" />,
-    },
-    {
-      key: "partitions",
-      label: "Partitions",
-      icon: <Circle className="w-3.5 h-3.5" />,
-    },
-    {
-      key: "create-code",
-      label: isEditMode ? "ALTER preview" : "CREATE code",
-      icon: <Code className="w-3.5 h-3.5" />,
-    },
-  ];
+  const subTabs = useMemo<
+    { key: SubTab; label: string; icon: React.ReactNode; badge?: string }[]
+  >(
+    () => [
+      {
+        key: "basic",
+        label: "Basic",
+        icon: <Table2 className="w-3.5 h-3.5" />,
+      },
+      {
+        key: "options",
+        label: "Options",
+        icon: <Settings className="w-3.5 h-3.5" />,
+      },
+      {
+        key: "indexes",
+        label: `Indexes (${indexes.length})`,
+        icon: <Zap className="w-3.5 h-3.5" />,
+      },
+      {
+        key: "foreign-keys",
+        label: `Foreign keys (${foreignKeys.length})`,
+        icon: <Link2 className="w-3.5 h-3.5" />,
+      },
+      {
+        key: "check-constraints",
+        label: `Check constraints (${checkConstraints.length})`,
+        icon: <CheckCircle className="w-3.5 h-3.5" />,
+      },
+      {
+        key: "partitions",
+        label: "Partitions",
+        icon: <Circle className="w-3.5 h-3.5" />,
+      },
+      {
+        key: "create-code",
+        label: isEditMode ? "ALTER preview" : "CREATE code",
+        icon: <Code className="w-3.5 h-3.5" />,
+      },
+    ],
+    [indexes.length, foreignKeys.length, checkConstraints.length, isEditMode],
+  );
 
-  const colNames = columns.filter((c) => c.name.trim()).map((c) => c.name);
+  const colNames = useMemo(
+    () => columns.filter((c) => c.name.trim()).map((c) => c.name),
+    [columns],
+  );
   const saveDisabled =
     saving ||
     loadingSchema ||
@@ -2195,92 +2202,15 @@ export function TableDesigner({ profileId, database, tableName }: Props) {
                 </tr>
               )}
               {columns.map((col, i) => (
-                <tr
+                <ColumnRow
                   key={col.id}
-                  className={cn(
-                    "border-b cursor-pointer transition-colors",
-                    selectedColumn === col.id
-                      ? "bg-accent/60"
-                      : "hover:bg-accent/20",
-                  )}
-                  onClick={() => setSelectedColumn(col.id)}
-                >
-                  <Td className="text-center text-muted-foreground/50">
-                    {i + 1}
-                  </Td>
-                  <Td>
-                    <CellInput
-                      value={col.name}
-                      onChange={(v) => updateColumn(col.id, "name", v)}
-                      placeholder="Column name"
-                    />
-                  </Td>
-                  <Td>
-                    <CellSelect
-                      value={col.datatype}
-                      onChange={(v) => updateColumn(col.id, "datatype", v)}
-                      options={MYSQL_DATA_TYPES}
-                    />
-                  </Td>
-                  <Td>
-                    <CellInput
-                      value={col.length}
-                      onChange={(v) => updateColumn(col.id, "length", v)}
-                      placeholder=""
-                    />
-                  </Td>
-                  <Td className="text-center">
-                    <CellCheckbox
-                      checked={col.unsigned}
-                      onChange={(v) => updateColumn(col.id, "unsigned", v)}
-                    />
-                  </Td>
-                  <Td className="text-center">
-                    <CellCheckbox
-                      checked={col.allowNull}
-                      onChange={(v) => updateColumn(col.id, "allowNull", v)}
-                    />
-                  </Td>
-                  <Td className="text-center">
-                    <CellCheckbox
-                      checked={col.zerofill}
-                      onChange={(v) => updateColumn(col.id, "zerofill", v)}
-                    />
-                  </Td>
-                  <Td>
-                    <CellInput
-                      value={col.defaultVal}
-                      onChange={(v) => updateColumn(col.id, "defaultVal", v)}
-                      placeholder="No default"
-                    />
-                  </Td>
-                  <Td>
-                    <CellInput
-                      value={col.comment}
-                      onChange={(v) => updateColumn(col.id, "comment", v)}
-                    />
-                  </Td>
-                  <Td>
-                    <CellSelect
-                      value={col.collation}
-                      onChange={(v) => updateColumn(col.id, "collation", v)}
-                      options={["", ...collations]}
-                    />
-                  </Td>
-                  <Td>
-                    <CellInput
-                      value={col.expression}
-                      onChange={(v) => updateColumn(col.id, "expression", v)}
-                    />
-                  </Td>
-                  <Td>
-                    <CellSelect
-                      value={col.virtuality}
-                      onChange={(v) => updateColumn(col.id, "virtuality", v)}
-                      options={VIRTUALITY_OPTIONS}
-                    />
-                  </Td>
-                </tr>
+                  col={col}
+                  index={i}
+                  isSelected={selectedColumn === col.id}
+                  onSelect={setSelectedColumn}
+                  onUpdate={updateColumn}
+                  collations={collations}
+                />
               ))}
             </tbody>
           </table>
@@ -2385,7 +2315,7 @@ function Td({
   );
 }
 
-function CellInput({
+const CellInput = memo(function CellInput({
   value,
   onChange,
   placeholder,
@@ -2402,9 +2332,9 @@ function CellInput({
       placeholder={placeholder}
     />
   );
-}
+});
 
-function CellSelect({
+const CellSelect = memo(function CellSelect({
   value,
   onChange,
   options,
@@ -2426,9 +2356,9 @@ function CellSelect({
       ))}
     </select>
   );
-}
+});
 
-function CellCheckbox({
+const CellCheckbox = memo(function CellCheckbox({
   checked,
   onChange,
 }: {
@@ -2443,7 +2373,137 @@ function CellCheckbox({
       className="cursor-pointer"
     />
   );
-}
+});
+
+const ColumnRow = memo(function ColumnRow({
+  col,
+  index,
+  isSelected,
+  onSelect,
+  onUpdate,
+  collations,
+}: {
+  col: ColumnDef;
+  index: number;
+  isSelected: boolean;
+  onSelect: (id: string) => void;
+  onUpdate: (id: string, field: keyof ColumnDef, value: unknown) => void;
+  collations: string[];
+}) {
+  const collationOptions = useMemo(() => ["", ...collations], [collations]);
+
+  const handleClick = useCallback(() => onSelect(col.id), [onSelect, col.id]);
+
+  const handleName = useCallback(
+    (v: string) => onUpdate(col.id, "name", v),
+    [onUpdate, col.id],
+  );
+  const handleDatatype = useCallback(
+    (v: string) => onUpdate(col.id, "datatype", v),
+    [onUpdate, col.id],
+  );
+  const handleLength = useCallback(
+    (v: string) => onUpdate(col.id, "length", v),
+    [onUpdate, col.id],
+  );
+  const handleUnsigned = useCallback(
+    (v: boolean) => onUpdate(col.id, "unsigned", v),
+    [onUpdate, col.id],
+  );
+  const handleAllowNull = useCallback(
+    (v: boolean) => onUpdate(col.id, "allowNull", v),
+    [onUpdate, col.id],
+  );
+  const handleZerofill = useCallback(
+    (v: boolean) => onUpdate(col.id, "zerofill", v),
+    [onUpdate, col.id],
+  );
+  const handleDefault = useCallback(
+    (v: string) => onUpdate(col.id, "defaultVal", v),
+    [onUpdate, col.id],
+  );
+  const handleComment = useCallback(
+    (v: string) => onUpdate(col.id, "comment", v),
+    [onUpdate, col.id],
+  );
+  const handleCollation = useCallback(
+    (v: string) => onUpdate(col.id, "collation", v),
+    [onUpdate, col.id],
+  );
+  const handleExpression = useCallback(
+    (v: string) => onUpdate(col.id, "expression", v),
+    [onUpdate, col.id],
+  );
+  const handleVirtuality = useCallback(
+    (v: string) => onUpdate(col.id, "virtuality", v),
+    [onUpdate, col.id],
+  );
+
+  return (
+    <tr
+      className={cn(
+        "border-b cursor-pointer transition-colors",
+        isSelected ? "bg-accent/60" : "hover:bg-accent/20",
+      )}
+      onClick={handleClick}
+    >
+      <Td className="text-center text-muted-foreground/50">{index + 1}</Td>
+      <Td>
+        <CellInput
+          value={col.name}
+          onChange={handleName}
+          placeholder="Column name"
+        />
+      </Td>
+      <Td>
+        <CellSelect
+          value={col.datatype}
+          onChange={handleDatatype}
+          options={MYSQL_DATA_TYPES}
+        />
+      </Td>
+      <Td>
+        <CellInput value={col.length} onChange={handleLength} placeholder="" />
+      </Td>
+      <Td className="text-center">
+        <CellCheckbox checked={col.unsigned} onChange={handleUnsigned} />
+      </Td>
+      <Td className="text-center">
+        <CellCheckbox checked={col.allowNull} onChange={handleAllowNull} />
+      </Td>
+      <Td className="text-center">
+        <CellCheckbox checked={col.zerofill} onChange={handleZerofill} />
+      </Td>
+      <Td>
+        <CellInput
+          value={col.defaultVal}
+          onChange={handleDefault}
+          placeholder="No default"
+        />
+      </Td>
+      <Td>
+        <CellInput value={col.comment} onChange={handleComment} />
+      </Td>
+      <Td>
+        <CellSelect
+          value={col.collation}
+          onChange={handleCollation}
+          options={collationOptions}
+        />
+      </Td>
+      <Td>
+        <CellInput value={col.expression} onChange={handleExpression} />
+      </Td>
+      <Td>
+        <CellSelect
+          value={col.virtuality}
+          onChange={handleVirtuality}
+          options={VIRTUALITY_OPTIONS}
+        />
+      </Td>
+    </tr>
+  );
+});
 
 function OptRow({
   label,
