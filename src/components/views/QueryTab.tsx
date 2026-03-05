@@ -1302,16 +1302,30 @@ export function QueryTab({
                 <button
                   key={i}
                   className={cn(
-                    "flex items-center gap-1 px-3 py-1.5 text-xs transition-colors border-b-2 whitespace-nowrap shrink-0",
+                    "flex items-center gap-1.5 px-3 h-full text-xs transition-all whitespace-nowrap shrink-0 border-b-2",
                     activeResultIdx === i
-                      ? "border-primary text-foreground font-medium"
-                      : "border-transparent text-muted-foreground hover:text-foreground hover:bg-accent/30",
+                      ? "border-primary bg-background text-foreground font-medium"
+                      : "border-transparent text-muted-foreground hover:text-foreground hover:bg-accent/40",
                   )}
                   onClick={() => setActiveResultIdx(i)}
                 >
-                  <FileText className="w-3 h-3" />
+                  <FileText
+                    className={cn(
+                      "w-3 h-3",
+                      activeResultIdx === i
+                        ? "text-primary"
+                        : "text-muted-foreground/60",
+                    )}
+                  />
                   Result {i + 1}
-                  <span className="text-muted-foreground/60 ml-1">
+                  <span
+                    className={cn(
+                      "text-[10px] ml-0.5",
+                      activeResultIdx === i
+                        ? "text-muted-foreground"
+                        : "text-muted-foreground/40",
+                    )}
+                  >
                     ({r.rows.length}r × {r.columns.length}c)
                   </span>
                 </button>
