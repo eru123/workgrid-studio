@@ -482,7 +482,7 @@ export function tokeniseSQL(sql: string): Token[] {
     }
 
     // ── Punctuation / single-char operator ──
-    if ("(),;.*+-/%&|^~:".includes(ch)) {
+    if ("(),;.*+-/%&|^~:[]{}".includes(ch)) {
       tokens.push({ type: "punctuation", value: ch });
       i++;
       continue;
@@ -575,6 +575,114 @@ export function getActiveQueryRange(
   };
 }
 
+export function findMatchingBrackets(
+  sql: string,
+  cursorPos: number,
+): [number, number] | null {
+  const tokens = tokeniseSQL(sql);
+
+  let currentIndex = 0;
+  const tokenPositions: {
+    token: Token;
+    start: number;
+    end: number;
+    index: number;
+  }[] = [];
+
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i];
+    const len = token.value.length;
+    tokenPositions.push({
+      token,
+      start: currentIndex,
+      end: currentIndex + len,
+      index: i,
+    });
+    currentIndex += len;
+  }
+
+  const OPEN_BRACKETS = "{[(";
+  const CLOSE_BRACKETS = "}])";
+  const BRACKET_PAIRS: Record<string, string> = {
+    "{": "}",
+    "[": "]",
+    "(": ")",
+    "}": "{",
+    "]": "[",
+    ")": "(",
+  };
+
+  let target: {
+    token: Token;
+    start: number;
+    end: number;
+    index: number;
+  } | null = null;
+
+  for (const pos of tokenPositions) {
+    if (
+      pos.token.type === "punctuation" &&
+      pos.token.value.length === 1 &&
+      (OPEN_BRACKETS.includes(pos.token.value) ||
+        CLOSE_BRACKETS.includes(pos.token.value))
+    ) {
+      if (pos.end === cursorPos) {
+        target = pos;
+        break;
+      }
+    }
+  }
+
+  if (!target) {
+    for (const pos of tokenPositions) {
+      if (
+        pos.token.type === "punctuation" &&
+        pos.token.value.length === 1 &&
+        (OPEN_BRACKETS.includes(pos.token.value) ||
+          CLOSE_BRACKETS.includes(pos.token.value))
+      ) {
+        if (pos.start === cursorPos) {
+          target = pos;
+          break;
+        }
+      }
+    }
+  }
+
+  if (!target) return null;
+
+  const isForward = OPEN_BRACKETS.includes(target.token.value);
+  const targetBracket = target.token.value;
+  const matchBracket = BRACKET_PAIRS[targetBracket];
+
+  let depth = 0;
+  if (isForward) {
+    for (let i = target.index + 1; i < tokenPositions.length; i++) {
+      const p = tokenPositions[i];
+      if (p.token.type === "punctuation") {
+        if (p.token.value === targetBracket) depth++;
+        else if (p.token.value === matchBracket) {
+          if (depth === 0) return [target.start, p.start];
+          depth--;
+        }
+      }
+    }
+  } else {
+    for (let i = target.index - 1; i >= 0; i--) {
+      const p = tokenPositions[i];
+      if (p.token.type === "punctuation") {
+        if (p.token.value === targetBracket) depth++;
+        else if (p.token.value === matchBracket) {
+          if (depth === 0) return [p.start, target.start];
+          depth--;
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
 // ── HTML escaping ────────────────────────────────────────────────────
 
 function escapeHtml(text: string): string {
@@ -595,6 +703,7 @@ export function highlightSQL(
   sql: string,
   activeStart: number = 0,
   activeEnd: number = sql.length,
+  matchBrackets: [number, number] | null = null,
 ): string {
   if (!sql) return "\n";
 
@@ -630,10 +739,23 @@ export function highlightSQL(
     const escaped = escapeHtml(token.value);
     const color = TOKEN_COLORS[token.type];
 
+    let isMatchBracket = false;
+    if (
+      matchBrackets &&
+      (tokenStart === matchBrackets[0] || tokenStart === matchBrackets[1])
+    ) {
+      isMatchBracket = true;
+    }
+
+    let innerHtml = escaped;
     if (color) {
-      html += `<span style="color:${color}">${escaped}</span>`;
+      innerHtml = `<span style="color:${color}">${escaped}</span>`;
+    }
+
+    if (isMatchBracket) {
+      html += `<span class="bg-primary/30 outline outline-primary/50 font-bold rounded-[2px]">${innerHtml}</span>`;
     } else {
-      html += escaped;
+      html += innerHtml;
     }
 
     currentIndex += tokenLen;

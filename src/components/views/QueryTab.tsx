@@ -1,6 +1,10 @@
 import { useState, useCallback, useRef, useMemo, useEffect } from "react";
 import { dbQuery, QueryResultSet } from "@/lib/db";
-import { highlightSQL, getActiveQueryRange } from "@/lib/sqlHighlight";
+import {
+  highlightSQL,
+  getActiveQueryRange,
+  findMatchingBrackets,
+} from "@/lib/sqlHighlight";
 import {
   detectContext,
   getSuggestions,
@@ -287,13 +291,23 @@ export function QueryTab({
   const minimapDraggingRef = useRef(false);
   const minimapDragOffsetRef = useRef(0);
 
+  // ── Matching brackets ─────────────────────────────────────
+  const matchBrackets = useMemo(() => {
+    return findMatchingBrackets(sql, cursorPos);
+  }, [sql, cursorPos]);
+
   // Memoised highlighted HTML for the overlay
   const highlightedHTML = useMemo(() => {
     if (activeQueryRange) {
-      return highlightSQL(sql, activeQueryRange.start, activeQueryRange.end);
+      return highlightSQL(
+        sql,
+        activeQueryRange.start,
+        activeQueryRange.end,
+        matchBrackets,
+      );
     }
-    return highlightSQL(sql);
-  }, [sql, activeQueryRange]);
+    return highlightSQL(sql, 0, sql.length, matchBrackets);
+  }, [sql, activeQueryRange, matchBrackets]);
 
   // ── Cancellation token ────────────────────────────────────
   // Incrementing counter: if the token when a query starts differs from the
