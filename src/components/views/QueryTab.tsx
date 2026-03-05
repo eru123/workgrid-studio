@@ -1069,6 +1069,41 @@ export function QueryTab({
       const modKey = e.ctrlKey || e.metaKey;
       const lowered = e.key.toLowerCase();
 
+      // ── Bracket / Quote wrapping ──
+      const wrapPairs: Record<string, string> = {
+        "(": ")",
+        "[": "]",
+        "{": "}",
+        "'": "'",
+        '"': '"',
+        "`": "`",
+      };
+
+      if (
+        selectionStart !== selectionEnd &&
+        wrapPairs[e.key] &&
+        !modKey &&
+        !e.altKey &&
+        !e.ctrlKey &&
+        !e.metaKey
+      ) {
+        e.preventDefault();
+        const start = Math.min(selectionStart, selectionEnd);
+        const end = Math.max(selectionStart, selectionEnd);
+        const selectedText = editorValue.slice(start, end);
+        const nextValue = `${editorValue.slice(0, start)}${e.key}${selectedText}${wrapPairs[e.key]}${editorValue.slice(end)}`;
+
+        applyEditorEdit(
+          {
+            value: nextValue,
+            selectionStart: start + 1,
+            selectionEnd: end + 1, // keep selection inside brackets
+          },
+          editorValue,
+        );
+        return;
+      }
+
       // ── Autocomplete keyboard handling ──────────────────────
       if (acVisible && acSuggestions.length > 0) {
         if (e.key === "ArrowDown") {
