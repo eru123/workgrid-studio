@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef, useMemo, useEffect } from "react";
+import { format as formatSqlInternal } from "sql-formatter";
 import { dbQuery, QueryResultSet } from "@/lib/db";
 import {
   highlightSQL,
@@ -30,6 +31,7 @@ import {
   FileText,
   WrapText,
   RotateCcw,
+  AlignLeft,
 } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 
@@ -258,6 +260,7 @@ export function QueryTab({
     initialDatabase !== undefined,
   );
   const [textareaContentWidth, setTextareaContentWidth] = useState(0);
+  const [isFormatting, setIsFormatting] = useState(false);
 
   // ── Autocomplete state ──────────────────────────────────────
   const [acVisible, setAcVisible] = useState(false);
@@ -475,6 +478,74 @@ export function QueryTab({
       }
     },
     [selectedProfileId, selectedDb, running],
+  );
+
+  const handleFormat = useCallback(
+    async (choice: "internal" | "heidisql" | "sqlformat") => {
+      const textToFormat = sql;
+      if (!textToFormat.trim()) return;
+
+      setIsFormatting(true);
+      setError(null);
+
+      try {
+        let formatted = textToFormat;
+
+        if (choice === "internal") {
+          formatted = formatSqlInternal(textToFormat, { language: "mysql" });
+        } else if (choice === "heidisql") {
+          const res = await fetch(
+            "https://www.heidisql.com/ajax.php?action=formatSql",
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/x-www-form-urlencoded",
+              },
+              body: new URLSearchParams({ sql: textToFormat }),
+            },
+          );
+          if (!res.ok)
+            throw new Error(
+              `HeidiSQL formatting API failed with status: ${res.status}`,
+            );
+          const htmlText = await res.text();
+          if (htmlText.trim() === "File not found." || !htmlText) {
+            throw new Error(
+              "HeidiSQL API returned invalid response or is temporarily unavailable.",
+            );
+          }
+          formatted = htmlText;
+        } else if (choice === "sqlformat") {
+          const res = await fetch("https://sqlformat.org/api/v1/format", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/x-www-form-urlencoded",
+              Accept: "application/json",
+            },
+            body: new URLSearchParams({ sql: textToFormat, reindent: "1" }),
+          });
+          if (!res.ok)
+            throw new Error(
+              `sqlformat.org API failed with status: ${res.status}`,
+            );
+          const data = await res.json();
+          formatted = data.result;
+        }
+
+        if (formatted && formatted !== sql) {
+          setSql(formatted);
+        }
+      } catch (err: unknown) {
+        if (err instanceof Error) {
+          setError(`Formatting Error: ${err.message}`);
+        } else {
+          setError(`Formatting Error: ${String(err)}`);
+        }
+      } finally {
+        setIsFormatting(false);
+      }
+    },
+    [sql],
   );
 
   const handleRun = useCallback(() => executeQuery(sql), [executeQuery, sql]);
@@ -1375,6 +1446,35 @@ export function QueryTab({
           <WrapText className="w-3.5 h-3.5" />
           <span>Wrap Text</span>
         </button>
+
+        <div className="w-px h-5 bg-border mx-1" />
+
+        {/* Format SQL */}
+        <div className="relative flex items-center h-7 px-1 rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors overflow-hidden">
+          <div className="flex items-center pointer-events-none">
+            {isFormatting ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <AlignLeft className="w-3.5 h-3.5 text-blue-400 group-hover:text-blue-500" />
+            )}
+          </div>
+          <select
+            value=""
+            onChange={(e) => {
+              if (e.target.value) handleFormat(e.target.value as any);
+            }}
+            disabled={isFormatting || !sql.trim()}
+            className="h-full bg-transparent text-[11px] font-medium pl-1 pr-1 focus:outline-none appearance-none cursor-pointer"
+            title="Format SQL"
+          >
+            <option value="" disabled>
+              Format SQL
+            </option>
+            <option value="internal">Internal (offline)</option>
+            <option value="heidisql">heidisql.com (online)</option>
+            <option value="sqlformat">sqlformat.org (online)</option>
+          </select>
+        </div>
 
         <div className="w-px h-5 bg-border mx-1" />
 
