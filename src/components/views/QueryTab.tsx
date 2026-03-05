@@ -1,6 +1,13 @@
 import { useState, useCallback, useRef, useMemo, useEffect } from "react";
 import { dbQuery, QueryResultSet } from "@/lib/db";
 import { highlightSQL } from "@/lib/sqlHighlight";
+import {
+  detectContext,
+  getSuggestions,
+  measureCursorPosition,
+} from "@/lib/sqlSuggestions";
+import type { Suggestion } from "@/lib/sqlSuggestions";
+import { SqlAutocomplete } from "@/components/ui/SqlAutocomplete";
 import { useSchemaStore } from "@/state/schemaStore";
 import { useLayoutStore } from "@/state/layoutStore";
 import {
@@ -248,6 +255,14 @@ export function QueryTab({
   );
   const [textareaContentWidth, setTextareaContentWidth] = useState(0);
 
+  // ── Autocomplete state ──────────────────────────────────────
+  const [acVisible, setAcVisible] = useState(false);
+  const [acSelectedIdx, setAcSelectedIdx] = useState(0);
+  const [acSuggestions, setAcSuggestions] = useState<Suggestion[]>([]);
+  const [acPosition, setAcPosition] = useState({ top: 0, left: 0 });
+  const [acPrefix, setAcPrefix] = useState("");
+  const acDismissedForPrefix = useRef<string | null>(null);
+
   useEffect(() => {
     setEditorFontSize((prev) =>
       clamp(prev, MIN_QUERY_FONT_SIZE_PX, MAX_QUERY_FONT_SIZE_PX),
@@ -310,6 +325,49 @@ export function QueryTab({
     selectedProfileId ? s.databases[selectedProfileId] : undefined,
   );
   const databases = storeDatabases ?? [];
+
+  // Schema data for autocomplete
+  const storeTables = useSchemaStore((s) => s.tables);
+  const storeColumns = useSchemaStore((s) => s.columns);
+
+  const acSchemaInfo = useMemo(() => {
+    const tables =
+      selectedProfileId && selectedDb
+        ? (storeTables[`${selectedProfileId}::${selectedDb}`] ?? [])
+        : [];
+
+    // Collect columns from all loaded tables in the selected db
+    const columns: Array<{ name: string; type: string; table: string }> = [];
+    if (selectedProfileId && selectedDb) {
+      for (const table of tables) {
+        const key = `${selectedProfileId}::${selectedDb}::${table}`;
+        const cols = storeColumns[key];
+        if (cols) {
+          for (const c of cols) {
+            columns.push({ name: c.name, type: c.col_type, table });
+          }
+        }
+      }
+    }
+
+    return {
+      databases,
+      tables,
+      columns,
+      tablesForDb: (db: string) => {
+        if (!selectedProfileId) return [];
+        return storeTables[`${selectedProfileId}::${db}`] ?? [];
+      },
+      columnsForTable: (table: string) => {
+        if (!selectedProfileId || !selectedDb) return [];
+        const cols =
+          storeColumns[`${selectedProfileId}::${selectedDb}::${table}`];
+        return cols
+          ? cols.map((c) => ({ name: c.name, type: c.col_type }))
+          : [];
+      },
+    };
+  }, [databases, selectedProfileId, selectedDb, storeTables, storeColumns]);
 
   // Auto-select database only for brand-new tabs with no DB selection history.
   useEffect(() => {
@@ -604,6 +662,107 @@ export function QueryTab({
     [setEditorSelection],
   );
 
+  // ── Autocomplete helpers ──────────────────────────────────
+  const updateAutocomplete = useCallback(
+    (text: string, pos: number, force = false) => {
+      const textarea = editorRef.current;
+      if (!textarea) {
+        setAcVisible(false);
+        return;
+      }
+
+      const ctx = detectContext(text, pos);
+
+      // Require at least 1 char (or force via Ctrl+Space) to show popup
+      if (
+        !force &&
+        ctx.prefix.length < 1 &&
+        ctx.context !== "dot-table" &&
+        ctx.context !== "dot-column"
+      ) {
+        setAcVisible(false);
+        return;
+      }
+
+      // If user dismissed for this exact prefix, don't re-trigger
+      if (!force && acDismissedForPrefix.current === ctx.prefix) {
+        return;
+      }
+
+      const suggestions = getSuggestions(ctx, acSchemaInfo);
+
+      if (suggestions.length === 0) {
+        setAcVisible(false);
+        return;
+      }
+
+      // Measure cursor position relative to the editor container
+      const cursorPx = measureCursorPosition(textarea, pos);
+      const lineHeight =
+        parseFloat(getComputedStyle(textarea).lineHeight) || 20;
+
+      setAcSuggestions(suggestions);
+      setAcPrefix(ctx.prefix);
+      setAcSelectedIdx(0);
+      setAcPosition({
+        top: cursorPx.top + lineHeight + 2,
+        left: cursorPx.left,
+      });
+      setAcVisible(true);
+      acDismissedForPrefix.current = null;
+    },
+    [acSchemaInfo],
+  );
+
+  const dismissAutocomplete = useCallback(() => {
+    if (acVisible) {
+      acDismissedForPrefix.current = acPrefix;
+    }
+    setAcVisible(false);
+  }, [acVisible, acPrefix]);
+
+  const handleAcceptSuggestion = useCallback((suggestion: Suggestion) => {
+    const textarea = editorRef.current;
+    if (!textarea) return;
+
+    const pos = textarea.selectionStart;
+    const text = textarea.value;
+    const insertText = suggestion.insertText ?? suggestion.label;
+
+    // Find the start of the prefix being replaced
+    const ctx = detectContext(text, pos);
+    const prefixLen = ctx.prefix.length;
+    const replaceStart = pos - prefixLen;
+
+    const newText = text.slice(0, replaceStart) + insertText + text.slice(pos);
+    const newCursor = replaceStart + insertText.length;
+
+    pendingEditorSelectionRef.current = {
+      start: newCursor,
+      end: newCursor,
+    };
+    setSql(newText);
+    setAcVisible(false);
+    acDismissedForPrefix.current = null;
+
+    // Re-trigger autocomplete after accepting (for chaining, e.g. after dot)
+    setTimeout(() => {
+      const ta = editorRef.current;
+      if (ta) {
+        ta.focus();
+      }
+    }, 0);
+  }, []);
+
+  // Dismiss autocomplete on blur/click elsewhere
+  useEffect(() => {
+    const handleClickOutside = () => {
+      setAcVisible(false);
+    };
+    window.addEventListener("click", handleClickOutside);
+    return () => window.removeEventListener("click", handleClickOutside);
+  }, []);
+
   useEffect(() => {
     const pending = pendingEditorSelectionRef.current;
     if (!pending) return;
@@ -858,6 +1017,39 @@ export function QueryTab({
       const { selectionStart, selectionEnd } = e.currentTarget;
       const modKey = e.ctrlKey || e.metaKey;
       const lowered = e.key.toLowerCase();
+
+      // ── Autocomplete keyboard handling ──────────────────────
+      if (acVisible && acSuggestions.length > 0) {
+        if (e.key === "ArrowDown") {
+          e.preventDefault();
+          setAcSelectedIdx((prev) =>
+            Math.min(prev + 1, acSuggestions.length - 1),
+          );
+          return;
+        }
+        if (e.key === "ArrowUp") {
+          e.preventDefault();
+          setAcSelectedIdx((prev) => Math.max(prev - 1, 0));
+          return;
+        }
+        if (e.key === "Tab" || e.key === "Enter") {
+          e.preventDefault();
+          handleAcceptSuggestion(acSuggestions[acSelectedIdx]);
+          return;
+        }
+        if (e.key === "Escape") {
+          e.preventDefault();
+          dismissAutocomplete();
+          return;
+        }
+      }
+
+      // Ctrl+Space: force trigger autocomplete
+      if (modKey && e.key === " ") {
+        e.preventDefault();
+        updateAutocomplete(editorValue, selectionStart, true);
+        return;
+      }
       const isIncreaseFontShortcut =
         modKey &&
         e.shiftKey &&
@@ -994,13 +1186,19 @@ export function QueryTab({
       }
     },
     [
+      acSelectedIdx,
+      acSuggestions,
+      acVisible,
       activeColumn,
       activeLine,
       applyEditorEdit,
+      dismissAutocomplete,
+      handleAcceptSuggestion,
       handleRun,
       handleStop,
       running,
       setEditorSelection,
+      updateAutocomplete,
     ],
   );
 
@@ -1239,8 +1437,11 @@ export function QueryTab({
               ref={editorRef}
               value={sql}
               onChange={(e) => {
-                setSql(e.target.value);
+                const newVal = e.target.value;
+                const newPos = e.target.selectionStart;
+                setSql(newVal);
                 syncEditorMetrics(e.target);
+                updateAutocomplete(newVal, newPos);
               }}
               onScroll={handleEditorScroll}
               onSelect={handleEditorSelectionChange}
@@ -1275,6 +1476,16 @@ export function QueryTab({
             <div className="absolute top-2 right-4 text-[10px] text-muted-foreground/40 select-none uppercase tracking-wider pointer-events-none z-2">
               SQL
             </div>
+            {/* Autocomplete popup */}
+            <SqlAutocomplete
+              suggestions={acSuggestions}
+              selectedIndex={acSelectedIdx}
+              prefix={acPrefix}
+              position={acPosition}
+              onAccept={handleAcceptSuggestion}
+              onSelectedIndexChange={setAcSelectedIdx}
+              visible={acVisible}
+            />
           </div>
           <div className="w-20 shrink-0 border-l bg-muted/20 relative overflow-hidden">
             <button
