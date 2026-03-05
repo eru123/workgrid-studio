@@ -2,7 +2,16 @@ import { useState, useEffect } from "react";
 import { useLayoutStore, SplitTree, EditorTab } from "@/state/layoutStore";
 import { Sash } from "./Sash";
 import { cn } from "@/lib/utils/cn";
-import { X, Plus } from "lucide-react";
+import {
+  X,
+  Plus,
+  Terminal,
+  Database,
+  Table2,
+  Boxes,
+  ListChecks,
+  FileText,
+} from "lucide-react";
 import { useSchemaStore } from "@/state/schemaStore";
 import { WelcomeTab } from "@/components/views/WelcomeTab";
 import { ModelsPage } from "@/components/views/ModelsPage";
@@ -48,6 +57,27 @@ function TabContent({ tab }: { tab: EditorTab }) {
           {tab.title}
         </div>
       );
+  }
+}
+
+function tabIcon(type: EditorTab["type"], isActive: boolean) {
+  const cls = cn(
+    "w-3.5 h-3.5 shrink-0",
+    isActive ? "text-primary" : "text-muted-foreground/60",
+  );
+  switch (type) {
+    case "sql":
+      return <Terminal className={cls} />;
+    case "database-view":
+      return <Database className={cls} />;
+    case "table-designer":
+      return <Table2 className={cls} />;
+    case "models":
+      return <Boxes className={cls} />;
+    case "tasks":
+      return <ListChecks className={cls} />;
+    default:
+      return <FileText className={cls} />;
   }
 }
 
@@ -97,103 +127,117 @@ export function EditorNode({ tree }: { tree: SplitTree }) {
     return (
       <div className="flex-1 w-full h-full bg-background border rounded-sm overflow-hidden flex flex-col">
         {/* Tab bar */}
-        <div className="h-9 border-b flex items-center bg-muted/30 overflow-x-auto">
-          {tree.tabs.map((tab) => (
-            <div
-              key={tab.id}
-              className={cn(
-                "flex items-center gap-1 h-full px-3 text-xs cursor-pointer border-r select-none shrink-0 transition-colors",
-                tab.id === tree.activeTabId
-                  ? "bg-background text-foreground font-medium"
-                  : "text-muted-foreground hover:bg-background/50",
-              )}
-              onClick={() => setActiveTab(tab.id, tree.id)}
-              onContextMenu={(e) => {
-                e.preventDefault();
-                setContextMenu({ x: e.clientX, y: e.clientY, tabId: tab.id });
+        <div
+          className="shrink-0 relative border-b bg-muted/30"
+          style={{ height: 33 }}
+        >
+          <div className="absolute inset-0 flex items-end overflow-x-auto overflow-y-hidden">
+            {tree.tabs.map((tab) => {
+              const isActive = tab.id === tree.activeTabId;
+              return (
+                <div
+                  key={tab.id}
+                  className={cn(
+                    "group flex items-center gap-1.5 h-full px-3 text-xs cursor-pointer select-none shrink-0 transition-all border-b-2",
+                    isActive
+                      ? "border-primary bg-background text-foreground font-medium"
+                      : "border-transparent text-muted-foreground hover:text-foreground hover:bg-accent/40",
+                  )}
+                  onClick={() => setActiveTab(tab.id, tree.id)}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    setContextMenu({
+                      x: e.clientX,
+                      y: e.clientY,
+                      tabId: tab.id,
+                    });
+                  }}
+                >
+                  {tabIcon(tab.type, isActive)}
+                  <span className="truncate max-w-30">{tab.title}</span>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      closeTab(tab.id, tree.id);
+                    }}
+                    className="ml-0.5 p-0.5 rounded hover:bg-muted/80 opacity-0 group-hover:opacity-100 transition-opacity"
+                    aria-label="Close tab"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </div>
+              );
+            })}
+            {/* New tab button */}
+            <button
+              onClick={() => {
+                const entries = Object.entries(connectedProfiles);
+                const meta: Record<string, string> = {};
+                if (entries.length > 0) {
+                  meta.profileId = entries[0][0];
+                  meta.profileName = entries[0][1].name;
+                }
+                openTab({ title: "New Query", type: "sql", meta }, tree.id);
               }}
+              className="h-full px-2 text-muted-foreground hover:text-foreground hover:bg-accent/40 transition-colors shrink-0"
+              title="New SQL Query (Ctrl+N)"
             >
-              <span className="truncate max-w-30">{tab.title}</span>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  closeTab(tab.id, tree.id);
-                }}
-                className="ml-1 p-0.5 rounded hover:bg-muted"
-              >
-                <X className="w-3 h-3" />
-              </button>
-            </div>
-          ))}
-          {/* New tab button */}
-          <button
-            onClick={() => {
-              const entries = Object.entries(connectedProfiles);
-              const meta: Record<string, string> = {};
-              if (entries.length > 0) {
-                meta.profileId = entries[0][0];
-                meta.profileName = entries[0][1].name;
-              }
-              openTab({ title: "New Query", type: "sql", meta }, tree.id);
-            }}
-            className="h-full px-2 text-muted-foreground hover:text-foreground hover:bg-background/50 transition-colors"
-            title="New SQL Query (Ctrl+N)"
-          >
-            <Plus className="w-3.5 h-3.5" />
-          </button>
-
-          {/* Context Menu Dropdown */}
-          {contextMenu && (
-            <div
-              className="fixed z-50 min-w-40 bg-popover text-popover-foreground border rounded-md shadow-md p-1 text-xs"
-              style={{
-                top: contextMenu.y,
-                left: contextMenu.x,
-              }}
-            >
-              <button
-                className="w-full text-left px-2 py-1.5 hover:bg-accent rounded text-foreground flex justify-between items-center"
-                onClick={() => {
-                  closeTab(contextMenu.tabId, tree.id);
-                  setContextMenu(null);
-                }}
-              >
-                <span>Close</span>
-                <span className="text-muted-foreground text-opacity-70 text-[10px]">
-                  Ctrl+W
-                </span>
-              </button>
-              <button
-                className="w-full text-left px-2 py-1.5 hover:bg-accent rounded text-foreground"
-                onClick={() => {
-                  closeOtherTabs(contextMenu.tabId, tree.id);
-                  setContextMenu(null);
-                }}
-              >
-                Close Others
-              </button>
-              <button
-                className="w-full text-left px-2 py-1.5 hover:bg-accent rounded text-foreground"
-                onClick={() => {
-                  closeTabsToRight(contextMenu.tabId, tree.id);
-                  setContextMenu(null);
-                }}
-              >
-                Close to the Right
-              </button>
-              <div className="h-px bg-border my-1" />
-              <button
-                className="w-full text-left px-2 py-1.5 hover:bg-accent rounded text-foreground"
-                onClick={() => {
-                  closeAllTabs(tree.id);
-                  setContextMenu(null);
-                }}
-              >
-                Close All
-              </button>
-            </div>
-          )}
+              <Plus className="w-3.5 h-3.5" />
+            </button>
+          </div>
         </div>
+
+        {/* Context Menu Dropdown */}
+        {contextMenu && (
+          <div
+            className="fixed z-50 min-w-40 bg-popover text-popover-foreground border rounded-md shadow-md p-1 text-xs"
+            style={{
+              top: contextMenu.y,
+              left: contextMenu.x,
+            }}
+          >
+            <button
+              className="w-full text-left px-2 py-1.5 hover:bg-accent rounded text-foreground flex justify-between items-center"
+              onClick={() => {
+                closeTab(contextMenu.tabId, tree.id);
+                setContextMenu(null);
+              }}
+            >
+              <span>Close</span>
+              <span className="text-muted-foreground text-opacity-70 text-[10px]">
+                Ctrl+W
+              </span>
+            </button>
+            <button
+              className="w-full text-left px-2 py-1.5 hover:bg-accent rounded text-foreground"
+              onClick={() => {
+                closeOtherTabs(contextMenu.tabId, tree.id);
+                setContextMenu(null);
+              }}
+            >
+              Close Others
+            </button>
+            <button
+              className="w-full text-left px-2 py-1.5 hover:bg-accent rounded text-foreground"
+              onClick={() => {
+                closeTabsToRight(contextMenu.tabId, tree.id);
+                setContextMenu(null);
+              }}
+            >
+              Close to the Right
+            </button>
+            <div className="h-px bg-border my-1" />
+            <button
+              className="w-full text-left px-2 py-1.5 hover:bg-accent rounded text-foreground"
+              onClick={() => {
+                closeAllTabs(tree.id);
+                setContextMenu(null);
+              }}
+            >
+              Close All
+            </button>
+          </div>
+        )}
 
         {/* Tab content */}
         <div className="flex-1 min-w-0 overflow-hidden relative">
