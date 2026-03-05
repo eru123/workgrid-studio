@@ -1293,7 +1293,7 @@ export function QueryTab({
       <div className="flex-1 min-h-0 min-w-0 flex flex-col overflow-hidden">
         {/* Results tab bar (when multiple result sets) */}
         {results.length > 1 && (
-          <div className="flex items-center border-b bg-muted/20 px-1 gap-0 shrink-0 overflow-x-auto">
+          <div className="flex items-center border-b bg-muted/20 px-1 gap-0 shrink-0 min-w-0 max-w-full overflow-x-auto">
             {results.map((r, i) => (
               <button
                 key={i}
