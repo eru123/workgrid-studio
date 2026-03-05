@@ -510,10 +510,7 @@ export function QueryTab({
   );
   const isDefaultEditorFontSize = editorFontSize === DEFAULT_QUERY_FONT_SIZE_PX;
   const lineCount = useMemo(() => Math.max(1, sql.split("\n").length), [sql]);
-  const lineNumbersText = useMemo(
-    () => Array.from({ length: lineCount }, (_, i) => String(i + 1)).join("\n"),
-    [lineCount],
-  );
+
   const minimapSegments = useMemo(() => {
     const lines = sql.split("\n");
     const totalLines = Math.max(1, lines.length);
@@ -556,6 +553,12 @@ export function QueryTab({
     return safePos - lineStart + 1;
   }, [cursorPos, sql]);
   const totalCharCount = useMemo(() => sql.length, [sql]);
+
+  // Active line highlight top offset (non-wrap only; wrap mode uses line-number container measurement)
+  const activeLineTopPx = useMemo(() => {
+    // padding-top of textarea is 12px (p-3)
+    return (activeLine - 1) * editorLineHeight + 12;
+  }, [activeLine, editorLineHeight]);
 
   const syncEditorMetrics = useCallback((textarea: HTMLTextAreaElement) => {
     setCursorPos(textarea.selectionStart);
@@ -1126,9 +1129,11 @@ export function QueryTab({
         style={{ height: `${splitPercent}%` }}
       >
         <div className="flex-1 relative overflow-hidden flex">
+          {/* ── Line number gutter ── */}
           <div
             ref={lineNumberRef}
-            className="w-12 shrink-0 border-r bg-muted/25 overflow-hidden"
+            className="w-12 shrink-0 border-r border-border/40 overflow-hidden"
+            style={{ backgroundColor: "rgba(30,30,30,0.6)" }}
             aria-hidden="true"
           >
             {wordWrap && textareaContentWidth > 0 ? (
@@ -1136,7 +1141,12 @@ export function QueryTab({
                 {sql.split("\n").map((lineText, idx) => (
                   <div key={idx} className="relative overflow-hidden">
                     <div
-                      className="px-2 text-right font-mono text-muted-foreground/70 select-none absolute top-0 inset-x-0"
+                      className={cn(
+                        "px-2 text-right font-mono select-none absolute top-0 inset-x-0",
+                        idx + 1 === activeLine
+                          ? "text-foreground"
+                          : "text-muted-foreground/50",
+                      )}
                       style={{
                         fontSize: `${editorFontSize}px`,
                         lineHeight: `${editorLineHeight}px`,
@@ -1158,18 +1168,40 @@ export function QueryTab({
                 ))}
               </div>
             ) : (
-              <pre
-                className="m-0 px-2 py-3 text-right font-mono text-muted-foreground/70 select-none"
-                style={{
-                  fontSize: `${editorFontSize}px`,
-                  lineHeight: `${editorLineHeight}px`,
-                }}
-              >
-                {lineNumbersText}
-              </pre>
+              <div className="py-3">
+                {Array.from({ length: lineCount }, (_, idx) => (
+                  <div
+                    key={idx}
+                    className={cn(
+                      "px-2 text-right font-mono select-none",
+                      idx + 1 === activeLine
+                        ? "text-foreground"
+                        : "text-muted-foreground/50",
+                    )}
+                    style={{
+                      fontSize: `${editorFontSize}px`,
+                      lineHeight: `${editorLineHeight}px`,
+                    }}
+                  >
+                    {idx + 1}
+                  </div>
+                ))}
+              </div>
             )}
           </div>
-          <div className="relative flex-1 min-w-0">
+          {/* ── Textarea + active line highlight ── */}
+          <div className="relative flex-1 min-w-0 bg-background">
+            {/* Active line highlight */}
+            {!wordWrap && (
+              <div
+                className="absolute left-0 right-0 pointer-events-none z-0"
+                style={{
+                  top: `${activeLineTopPx - editorViewport.scrollTop}px`,
+                  height: `${editorLineHeight}px`,
+                  backgroundColor: "rgba(255,255,255,0.04)",
+                }}
+              />
+            )}
             <textarea
               ref={editorRef}
               value={sql}
@@ -1183,7 +1215,7 @@ export function QueryTab({
               onClick={handleEditorSelectionChange}
               onKeyDown={handleKeyDown}
               className={cn(
-                "w-full h-full bg-background resize-none outline-none text-foreground font-mono p-3",
+                "w-full h-full bg-transparent resize-none outline-none text-foreground font-mono p-3 relative z-1 caret-white",
                 wordWrap
                   ? "whitespace-pre-wrap break-all overflow-auto"
                   : "whitespace-pre overflow-auto",
@@ -1207,12 +1239,7 @@ export function QueryTab({
                 Reset Font-Size
               </button>
             )}
-            <div
-              className={cn(
-                "absolute top-2 text-[10px] text-muted-foreground/40 select-none uppercase tracking-wider pointer-events-none",
-                "right-2",
-              )}
-            >
+            <div className="absolute top-2 right-2 text-[10px] text-muted-foreground/40 select-none uppercase tracking-wider pointer-events-none z-2">
               SQL
             </div>
           </div>
