@@ -7,8 +7,11 @@ interface AutocompleteInputProps {
   suggestions: string[];
   placeholder?: string;
   disabled?: boolean;
+  spellCheck?: boolean;
   maxSuggestions?: number;
+  selectOnEnter?: boolean;
   selectOnTab?: boolean;
+  onEnter?: () => void;
   inputClassName?: string;
   dropdownClassName?: string;
 }
@@ -19,8 +22,11 @@ export function AutocompleteInput({
   suggestions,
   placeholder,
   disabled,
+  spellCheck,
   maxSuggestions = 8,
+  selectOnEnter = true,
   selectOnTab = false,
+  onEnter,
   inputClassName,
   dropdownClassName,
 }: AutocompleteInputProps) {
@@ -72,9 +78,14 @@ export function AutocompleteInput({
             return;
           }
           if (e.key === "Enter") {
-            if (visibleSuggestions[activeIdx]) {
+            if (selectOnEnter && visibleSuggestions[activeIdx]) {
               e.preventDefault();
               applySuggestion(visibleSuggestions[activeIdx]);
+              return;
+            }
+            if (onEnter) {
+              e.preventDefault();
+              onEnter();
             }
             return;
           }
@@ -91,6 +102,7 @@ export function AutocompleteInput({
           }
         }}
         disabled={disabled}
+        spellCheck={spellCheck}
         className={inputClassName}
         placeholder={placeholder}
       />

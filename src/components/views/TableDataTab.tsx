@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useCallback, useRef, memo } from "react";
 import { dbQuery, dbListColumns } from "@/lib/db";
 import type { ColumnInfo, QueryResultSet } from "@/lib/db";
 import { cn } from "@/lib/utils/cn";
+import { AutocompleteInput } from "@/components/ui/AutocompleteInput";
 import {
   Loader2,
   ChevronUp,
@@ -46,6 +47,250 @@ function escId(v: string): string {
 }
 
 const PAGE_SIZE_OPTIONS = [50, 100, 200, 500, 1000];
+
+const VALUE_OPERATORS = new Set([
+  "=",
+  "!=",
+  "<>",
+  ">",
+  ">=",
+  "<",
+  "<=",
+  "LIKE",
+]);
+
+function normalizeWhereIdentifier(token: string): string {
+  return token
+    .replace(/^[`(]+/, "")
+    .replace(/[`)]+$/, "")
+    .replace(/`/g, "")
+    .trim()
+    .toLowerCase();
+}
+
+function inferWhereValueKind(colType: string | undefined) {
+  const upper = (colType ?? "").toUpperCase();
+  if (
+    /^TINYINT\(1\)$/.test(upper) ||
+    /\bBOOL\b/.test(upper) ||
+    /\bBOOLEAN\b/.test(upper)
+  ) {
+    return "boolean" as const;
+  }
+  if (
+    /\b(TINYINT|SMALLINT|MEDIUMINT|INT|INTEGER|BIGINT|DECIMAL|NUMERIC|FLOAT|DOUBLE|REAL|BIT)\b/.test(
+      upper,
+    )
+  ) {
+    return "numeric" as const;
+  }
+  if (/\b(DATE|DATETIME|TIMESTAMP|TIME|YEAR)\b/.test(upper)) {
+    return "temporal" as const;
+  }
+  if (/\b(JSON)\b/.test(upper)) {
+    return "json" as const;
+  }
+  if (
+    /\b(CHAR|VARCHAR|TEXT|TINYTEXT|MEDIUMTEXT|LONGTEXT|ENUM|SET|BLOB|TINYBLOB|MEDIUMBLOB|LONGBLOB)\b/.test(
+      upper,
+    )
+  ) {
+    return "string" as const;
+  }
+  return "other" as const;
+}
+
+function whereValueSuggestions(columnInfo?: ColumnInfo): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const add = (value: string) => {
+    if (!value || seen.has(value)) return;
+    seen.add(value);
+    out.push(value);
+  };
+
+  if (!columnInfo || columnInfo.nullable) add("NULL");
+
+  const kind = inferWhereValueKind(columnInfo?.col_type);
+  if (kind === "boolean") {
+    add("1");
+    add("0");
+    add("TRUE");
+    add("FALSE");
+    return out;
+  }
+  if (kind === "numeric") {
+    add("0");
+    add("1");
+    add("-1");
+    return out;
+  }
+  if (kind === "temporal") {
+    add("CURRENT_DATE");
+    add("CURRENT_TIMESTAMP");
+    add("NOW()");
+    add("'2026-01-01'");
+    return out;
+  }
+  if (kind === "json") {
+    add("(JSON_OBJECT())");
+    add("(JSON_ARRAY())");
+    add("'{}'");
+    add("'[]'");
+    return out;
+  }
+  if (kind === "string") {
+    add("''");
+    add("'value'");
+    add("'%term%'");
+    return out;
+  }
+
+  add("'value'");
+  return out;
+}
+
+function buildWhereSuggestions(
+  whereClause: string,
+  columns: string[],
+  columnInfos: ColumnInfo[],
+): string[] {
+  const sourceColumns =
+    columns.length > 0 ? columns : columnInfos.map((col) => col.name);
+  const uniqueColumns = Array.from(new Set(sourceColumns));
+  const columnTokens = uniqueColumns.map((col) =>
+    /^[A-Za-z_][A-Za-z0-9_]*$/.test(col) ? col : escId(col),
+  );
+  const findColumn = (token: string): ColumnInfo | undefined => {
+    const normalized = normalizeWhereIdentifier(token);
+    if (!normalized) return undefined;
+    return columnInfos.find((col) => col.name.toLowerCase() === normalized);
+  };
+  const isColumnToken = (token: string): boolean => {
+    const normalized = normalizeWhereIdentifier(token);
+    if (!normalized) return false;
+    return uniqueColumns.some((col) => col.toLowerCase() === normalized);
+  };
+
+  const tokenMatch = whereClause.match(/(\S+)$/);
+  const activeToken = tokenMatch ? tokenMatch[1] : "";
+  const prefix = tokenMatch
+    ? whereClause.slice(0, whereClause.length - activeToken.length)
+    : whereClause;
+  const activeLower = activeToken.toLowerCase();
+
+  const words = whereClause.trim() ? whereClause.trim().split(/\s+/) : [];
+  const contextWords = tokenMatch ? words.slice(0, -1) : words;
+  const prev = contextWords[contextWords.length - 1] ?? "";
+  const prevUpper = prev.toUpperCase();
+  const prevPrev = contextWords[contextWords.length - 2] ?? "";
+  const prevPrevUpper = prevPrev.toUpperCase();
+  const prevPrevPrev = contextWords[contextWords.length - 3] ?? "";
+
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const add = (candidate: string) => {
+    if (!candidate) return;
+    if (activeLower && !candidate.toLowerCase().includes(activeLower)) return;
+    const finalValue = `${prefix}${candidate}`;
+    if (seen.has(finalValue)) return;
+    seen.add(finalValue);
+    out.push(finalValue);
+  };
+  const addColumns = () => columnTokens.forEach(add);
+  const addOperators = () => {
+    [
+      "=",
+      "!=",
+      "<>",
+      ">",
+      ">=",
+      "<",
+      "<=",
+      "LIKE",
+      "NOT LIKE",
+      "IN",
+      "NOT IN",
+      "BETWEEN",
+      "IS NULL",
+      "IS NOT NULL",
+    ].forEach(add);
+  };
+
+  if (contextWords.length === 0) {
+    addColumns();
+    ["(", "NOT", "NULL"].forEach(add);
+    return out.slice(0, 12);
+  }
+
+  if (prevUpper === "AND" || prevUpper === "OR" || prevUpper === "(") {
+    addColumns();
+    add("NOT");
+    add("(");
+    return out.slice(0, 12);
+  }
+
+  if (isColumnToken(prev)) {
+    addOperators();
+    return out.slice(0, 12);
+  }
+
+  if (prevUpper === "IS") {
+    add("NULL");
+    add("NOT NULL");
+    return out.slice(0, 12);
+  }
+
+  if (prevUpper === "NOT") {
+    if (prevPrevUpper === "IS") {
+      add("NULL");
+      return out.slice(0, 12);
+    }
+    add("LIKE");
+    add("IN");
+    return out.slice(0, 12);
+  }
+
+  let valueColumn: ColumnInfo | undefined;
+  if (VALUE_OPERATORS.has(prevUpper)) {
+    valueColumn = findColumn(prevPrev);
+  } else if (prevUpper === "LIKE" && prevPrevUpper === "NOT") {
+    valueColumn = findColumn(prevPrevPrev);
+  } else if (prevUpper === "IN" || prevUpper === "BETWEEN") {
+    valueColumn = findColumn(prevPrev);
+  }
+
+  if (prevUpper === "BETWEEN") {
+    whereValueSuggestions(valueColumn).forEach((value) =>
+      add(`${value} AND ${value}`),
+    );
+    return out.slice(0, 12);
+  }
+
+  if (
+    contextWords.length >= 2 &&
+    contextWords[contextWords.length - 2].toUpperCase() === "BETWEEN"
+  ) {
+    add("AND");
+    return out.slice(0, 12);
+  }
+
+  if (prevUpper === "IN") {
+    add("(NULL)");
+    whereValueSuggestions(valueColumn).forEach((value) => add(`(${value})`));
+    add("(...)");
+    return out.slice(0, 12);
+  }
+
+  if (VALUE_OPERATORS.has(prevUpper) || valueColumn) {
+    whereValueSuggestions(valueColumn).forEach(add);
+    return out.slice(0, 12);
+  }
+
+  addColumns();
+  ["AND", "OR", "NOT", "LIKE", "IN", "IS", "NULL"].forEach(add);
+  return out.slice(0, 12);
+}
 
 // ═══════════════════════════════════════════════════════════════════════
 //  Component
@@ -217,6 +462,11 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
     setPage(0);
   }, []);
 
+  const whereSuggestions = useMemo(
+    () => buildWhereSuggestions(whereClause, columns, columnInfos),
+    [whereClause, columns, columnInfos],
+  );
+
   // ── Close column picker on outside click ────────────────
   useEffect(() => {
     if (!showColumnPicker) return;
@@ -369,13 +619,15 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
           <span className="text-[10px] text-muted-foreground shrink-0 font-medium uppercase tracking-wide">
             WHERE
           </span>
-          <input
-            className="flex-1 h-6 rounded bg-secondary/50 border px-2 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-primary"
+          <AutocompleteInput
             value={whereClause}
-            onChange={(e) => setWhereClause(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") applyFilter();
-            }}
+            onChange={setWhereClause}
+            suggestions={whereSuggestions}
+            selectOnEnter={false}
+            selectOnTab
+            onEnter={applyFilter}
+            inputClassName="flex-1 h-6 rounded bg-secondary/50 border px-2 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-primary"
+            dropdownClassName="max-h-56 overflow-y-auto border-border/70"
             placeholder="e.g. status = 'active' AND created_at > '2024-01-01'"
             spellCheck={false}
           />
