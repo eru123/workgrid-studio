@@ -36,6 +36,8 @@ interface EditorEdit {
   selectionEnd: number;
 }
 
+const MINIMAP_SELECTOR_MIN_HEIGHT_PX = 28;
+
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
@@ -212,6 +214,13 @@ export function QueryTab({ tabId, profileId, database: initialDatabase }: Props)
   const [executionTime, setExecutionTime] = useState<number | null>(null);
   const [wordWrap, setWordWrap] = useState(false);
   const [cursorPos, setCursorPos] = useState(0);
+  const [selectedCharCount, setSelectedCharCount] = useState(0);
+  const [editorViewport, setEditorViewport] = useState({
+    scrollTop: 0,
+    scrollHeight: 1,
+    clientHeight: 1,
+  });
+  const [minimapTrackHeight, setMinimapTrackHeight] = useState(1);
   const [hasDbSelectionHistory, setHasDbSelectionHistory] = useState(
     initialDatabase !== undefined,
   );
@@ -221,6 +230,11 @@ export function QueryTab({ tabId, profileId, database: initialDatabase }: Props)
   const pendingEditorSelectionRef = useRef<{ start: number; end: number } | null>(
     null,
   );
+  const minimapRef = useRef<HTMLButtonElement>(null);
+  const minimapRafRef = useRef<number | null>(null);
+  const minimapTargetScrollRef = useRef(0);
+  const minimapDraggingRef = useRef(false);
+  const minimapDragOffsetRef = useRef(0);
 
   // ── Cancellation token ────────────────────────────────────
   // Incrementing counter: if the token when a query starts differs from the
@@ -464,6 +478,33 @@ export function QueryTab({ tabId, profileId, database: initialDatabase }: Props)
     () => Array.from({ length: lineCount }, (_, i) => String(i + 1)).join("\n"),
     [lineCount],
   );
+  const minimapSegments = useMemo(() => {
+    const lines = sql.split("\n");
+    const totalLines = Math.max(1, lines.length);
+    const maxSegments = 220;
+    const step = Math.max(1, Math.ceil(totalLines / maxSegments));
+    const segments: Array<{ top: number; height: number; width: number; opacity: number }> = [];
+
+    for (let i = 0; i < totalLines; i += step) {
+      const chunk = lines.slice(i, i + step);
+      const maxLen = chunk.reduce(
+        (curr, line) => Math.max(curr, line.trimEnd().length),
+        0,
+      );
+      const widthRatio = clamp(maxLen / 140, 0.08, 1);
+      const top = (i / totalLines) * 100;
+      const height = Math.max((step / totalLines) * 100, 0.45);
+
+      segments.push({
+        top,
+        height,
+        width: 12 + widthRatio * 88,
+        opacity: 0.18 + widthRatio * 0.28,
+      });
+    }
+
+    return segments;
+  }, [sql]);
   const activeLine = useMemo(() => {
     const safePos = clamp(cursorPos, 0, sql.length);
     return sql.slice(0, safePos).split("\n").length;
@@ -473,14 +514,25 @@ export function QueryTab({ tabId, profileId, database: initialDatabase }: Props)
     const lineStart = sql.lastIndexOf("\n", safePos - 1) + 1;
     return safePos - lineStart + 1;
   }, [cursorPos, sql]);
+  const totalCharCount = useMemo(() => sql.length, [sql]);
+
+  const syncEditorMetrics = useCallback((textarea: HTMLTextAreaElement) => {
+    setCursorPos(textarea.selectionStart);
+    setSelectedCharCount(Math.abs(textarea.selectionEnd - textarea.selectionStart));
+    setEditorViewport({
+      scrollTop: textarea.scrollTop,
+      scrollHeight: Math.max(1, textarea.scrollHeight),
+      clientHeight: Math.max(1, textarea.clientHeight),
+    });
+  }, []);
 
   const setEditorSelection = useCallback((start: number, end: number = start) => {
     const textarea = editorRef.current;
     if (!textarea) return;
     textarea.focus();
     textarea.setSelectionRange(start, end);
-    setCursorPos(start);
-  }, []);
+    syncEditorMetrics(textarea);
+  }, [syncEditorMetrics]);
 
   const applyEditorEdit = useCallback(
     (edit: EditorEdit, currentValue: string) => {
@@ -505,19 +557,193 @@ export function QueryTab({ tabId, profileId, database: initialDatabase }: Props)
     pendingEditorSelectionRef.current = null;
   }, [sql, setEditorSelection]);
 
+  useEffect(() => {
+    const textarea = editorRef.current;
+    if (!textarea) return;
+    syncEditorMetrics(textarea);
+    if (lineNumberRef.current) {
+      lineNumberRef.current.scrollTop = textarea.scrollTop;
+    }
+  }, [splitPercent, syncEditorMetrics, wordWrap]);
+
+  useEffect(() => {
+    const minimapEl = minimapRef.current;
+    if (!minimapEl) return;
+
+    const updateTrackHeight = () => {
+      setMinimapTrackHeight(Math.max(1, minimapEl.clientHeight));
+    };
+
+    updateTrackHeight();
+    const observer = new ResizeObserver(updateTrackHeight);
+    observer.observe(minimapEl);
+    return () => observer.disconnect();
+  }, [splitPercent]);
+
+  const minimapViewportHeightPx = useMemo(() => {
+    const ratio = editorViewport.clientHeight / editorViewport.scrollHeight;
+    const proportionalHeight = ratio * minimapTrackHeight;
+    return clamp(
+      proportionalHeight,
+      MINIMAP_SELECTOR_MIN_HEIGHT_PX,
+      minimapTrackHeight,
+    );
+  }, [editorViewport.clientHeight, editorViewport.scrollHeight, minimapTrackHeight]);
+  const minimapViewportTopPx = useMemo(() => {
+    if (editorViewport.scrollHeight <= editorViewport.clientHeight) return 0;
+    const maxScroll = Math.max(0, editorViewport.scrollHeight - editorViewport.clientHeight);
+    const maxTop = Math.max(0, minimapTrackHeight - minimapViewportHeightPx);
+    const ratio = maxScroll === 0 ? 0 : editorViewport.scrollTop / maxScroll;
+    return clamp(ratio * maxTop, 0, maxTop);
+  }, [
+    editorViewport.clientHeight,
+    editorViewport.scrollHeight,
+    editorViewport.scrollTop,
+    minimapTrackHeight,
+    minimapViewportHeightPx,
+  ]);
+
   const handleEditorScroll = useCallback(
     (e: React.UIEvent<HTMLTextAreaElement>) => {
-      if (!lineNumberRef.current) return;
-      lineNumberRef.current.scrollTop = e.currentTarget.scrollTop;
+      if (lineNumberRef.current) {
+        lineNumberRef.current.scrollTop = e.currentTarget.scrollTop;
+      }
+      syncEditorMetrics(e.currentTarget);
     },
-    [],
+    [syncEditorMetrics],
   );
 
   const handleEditorSelectionChange = useCallback(
     (e: React.SyntheticEvent<HTMLTextAreaElement>) => {
-      setCursorPos(e.currentTarget.selectionStart);
+      syncEditorMetrics(e.currentTarget);
     },
-    [],
+    [syncEditorMetrics],
+  );
+
+  const animateMinimapScroll = useCallback(() => {
+    if (minimapRafRef.current !== null) return;
+
+    const step = () => {
+      const textarea = editorRef.current;
+      if (!textarea) {
+        minimapRafRef.current = null;
+        return;
+      }
+
+      const targetScrollTop = minimapTargetScrollRef.current;
+      const delta = targetScrollTop - textarea.scrollTop;
+      const isCloseEnough = Math.abs(delta) < 0.5;
+
+      const nextTop = isCloseEnough
+        ? targetScrollTop
+        : textarea.scrollTop + delta * 0.28;
+
+      textarea.scrollTop = nextTop;
+      if (lineNumberRef.current) {
+        lineNumberRef.current.scrollTop = nextTop;
+      }
+      syncEditorMetrics(textarea);
+
+      if (isCloseEnough && !minimapDraggingRef.current) {
+        minimapRafRef.current = null;
+        return;
+      }
+
+      minimapRafRef.current = requestAnimationFrame(step);
+    };
+
+    minimapRafRef.current = requestAnimationFrame(step);
+  }, [syncEditorMetrics]);
+
+  const setMinimapTargetFromClientY = useCallback(
+    (clientY: number, minimapEl: HTMLButtonElement, dragOffset: number) => {
+      const textarea = editorRef.current;
+      if (!textarea) return;
+
+      const rect = minimapEl.getBoundingClientRect();
+      if (rect.height <= 0) return;
+
+      const selectorHeight = clamp(
+        (textarea.clientHeight / textarea.scrollHeight) * rect.height,
+        MINIMAP_SELECTOR_MIN_HEIGHT_PX,
+        rect.height,
+      );
+      const maxSelectorTop = Math.max(0, rect.height - selectorHeight);
+      const selectorTop = clamp(clientY - rect.top - dragOffset, 0, maxSelectorTop);
+      const scrollRatio = maxSelectorTop === 0 ? 0 : selectorTop / maxSelectorTop;
+      const maxScroll = Math.max(0, textarea.scrollHeight - textarea.clientHeight);
+
+      minimapTargetScrollRef.current = scrollRatio * maxScroll;
+      animateMinimapScroll();
+    },
+    [animateMinimapScroll],
+  );
+
+  const handleMinimapDragMove = useCallback(
+    (e: MouseEvent) => {
+      const minimapEl = minimapRef.current;
+      if (!minimapDraggingRef.current || !minimapEl) return;
+      setMinimapTargetFromClientY(
+        e.clientY,
+        minimapEl,
+        minimapDragOffsetRef.current,
+      );
+    },
+    [setMinimapTargetFromClientY],
+  );
+
+  const stopMinimapDrag = useCallback(() => {
+    if (!minimapDraggingRef.current) return;
+    minimapDraggingRef.current = false;
+    window.removeEventListener("mousemove", handleMinimapDragMove);
+    window.removeEventListener("mouseup", stopMinimapDrag);
+  }, [handleMinimapDragMove]);
+
+  const handleMinimapMouseDown = useCallback(
+    (e: React.MouseEvent<HTMLButtonElement>) => {
+      e.preventDefault();
+      const minimapEl = e.currentTarget;
+      minimapRef.current = minimapEl;
+
+      const rect = minimapEl.getBoundingClientRect();
+      const pointerY = clamp(e.clientY - rect.top, 0, rect.height);
+      const viewportTopPx = minimapViewportTopPx;
+      const viewportHeightPx = minimapViewportHeightPx;
+      const pointerInsideViewport =
+        pointerY >= viewportTopPx && pointerY <= viewportTopPx + viewportHeightPx;
+
+      minimapDragOffsetRef.current = pointerInsideViewport
+        ? pointerY - viewportTopPx
+        : viewportHeightPx / 2;
+
+      minimapDraggingRef.current = true;
+      window.addEventListener("mousemove", handleMinimapDragMove);
+      window.addEventListener("mouseup", stopMinimapDrag);
+
+      setMinimapTargetFromClientY(
+        e.clientY,
+        minimapEl,
+        minimapDragOffsetRef.current,
+      );
+    },
+    [
+      handleMinimapDragMove,
+      minimapViewportHeightPx,
+      minimapViewportTopPx,
+      setMinimapTargetFromClientY,
+      stopMinimapDrag,
+    ],
+  );
+
+  useEffect(
+    () => () => {
+      stopMinimapDrag();
+      if (minimapRafRef.current !== null) {
+        cancelAnimationFrame(minimapRafRef.current);
+        minimapRafRef.current = null;
+      }
+    },
+    [stopMinimapDrag],
   );
 
   // ── Keyboard shortcut ─────────────────────────────────────
@@ -764,29 +990,65 @@ export function QueryTab({ tabId, profileId, database: initialDatabase }: Props)
               {lineNumbersText}
             </pre>
           </div>
-          <textarea
-            ref={editorRef}
-            value={sql}
-            onChange={(e) => {
-              setSql(e.target.value);
-              setCursorPos(e.target.selectionStart);
-            }}
-            onScroll={handleEditorScroll}
-            onSelect={handleEditorSelectionChange}
-            onKeyUp={handleEditorSelectionChange}
-            onClick={handleEditorSelectionChange}
-            onKeyDown={handleKeyDown}
-            className={cn(
-              "flex-1 h-full bg-background resize-none outline-none text-foreground font-mono text-xs p-3 leading-relaxed",
-              wordWrap
-                ? "whitespace-pre-wrap break-all overflow-auto"
-                : "whitespace-pre overflow-auto",
-            )}
-            spellCheck={false}
-            placeholder="Enter SQL query here... (Ctrl+Enter to execute)"
-          />
-          <div className="absolute top-2 right-2 text-[10px] text-muted-foreground/40 select-none uppercase tracking-wider">
-            SQL
+          <div className="relative flex-1 min-w-0">
+            <textarea
+              ref={editorRef}
+              value={sql}
+              onChange={(e) => {
+                setSql(e.target.value);
+                syncEditorMetrics(e.target);
+              }}
+              onScroll={handleEditorScroll}
+              onSelect={handleEditorSelectionChange}
+              onKeyUp={handleEditorSelectionChange}
+              onClick={handleEditorSelectionChange}
+              onKeyDown={handleKeyDown}
+              className={cn(
+                "w-full h-full bg-background resize-none outline-none text-foreground font-mono text-xs p-3 leading-relaxed",
+                wordWrap
+                  ? "whitespace-pre-wrap break-all overflow-auto"
+                  : "whitespace-pre overflow-auto",
+              )}
+              spellCheck={false}
+              placeholder="Enter SQL query here... (Ctrl+Enter to execute)"
+            />
+            <div className="absolute top-2 right-2 text-[10px] text-muted-foreground/40 select-none uppercase tracking-wider pointer-events-none">
+              SQL
+            </div>
+          </div>
+          <div className="w-20 shrink-0 border-l bg-muted/20 relative overflow-hidden">
+            <button
+              ref={minimapRef}
+              type="button"
+              className="absolute inset-0 cursor-pointer bg-muted/15"
+              onMouseDown={handleMinimapMouseDown}
+              aria-label="Navigate editor via minimap"
+            >
+              <span className="absolute inset-0 pointer-events-none">
+                {minimapSegments.map((segment, idx) => (
+                  <span
+                    key={idx}
+                    className="absolute left-1.5 rounded-[1px] bg-muted-foreground"
+                    style={{
+                      top: `${segment.top}%`,
+                      height: `${segment.height}%`,
+                      width: `${segment.width}%`,
+                      opacity: segment.opacity,
+                    }}
+                  />
+                ))}
+              </span>
+              <span
+                className="absolute left-0.5 right-0.5 border border-muted-foreground/45 bg-muted-foreground/10 pointer-events-none rounded-[2px]"
+                style={{
+                  top: `${minimapViewportTopPx}px`,
+                  height: `${minimapViewportHeightPx}px`,
+                }}
+              >
+                <span className="absolute top-0.5 left-1/2 -translate-x-1/2 h-0.5 w-4 rounded bg-muted-foreground/55" />
+                <span className="absolute bottom-0.5 left-1/2 -translate-x-1/2 h-0.5 w-4 rounded bg-muted-foreground/55" />
+              </span>
+            </button>
           </div>
         </div>
       </div>
@@ -962,6 +1224,12 @@ export function QueryTab({ tabId, profileId, database: initialDatabase }: Props)
         )}
         <div className="text-muted-foreground">
           Ln {activeLine}, Col {activeColumn}
+        </div>
+        <div className="text-muted-foreground">
+          Sel {selectedCharCount} char(s)
+        </div>
+        <div className="text-muted-foreground">
+          Total {lineCount} line(s), {totalCharCount} char(s)
         </div>
         <div className="flex-1" />
         {activeResult && activeResult.rows.length > 0 && (
