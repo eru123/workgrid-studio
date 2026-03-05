@@ -183,7 +183,7 @@ export function EditorNode({ tree }: { tree: SplitTree }) {
 
                 {/* Tab content */}
                 <div className="flex-1 overflow-hidden relative">
-                    {tree.tabs.length > 0 ? (
+                    {tree.activeTabId ? (
                         tree.tabs.map((tab) => (
                             <div
                                 key={tab.id}
