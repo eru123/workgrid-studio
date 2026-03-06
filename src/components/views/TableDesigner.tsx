@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 import { AutocompleteInput } from "@/components/ui/AutocompleteInput";
+import { ContextSubmenu } from "@/components/views/ContextSubmenu";
 
 // ═══════════════════════════════════════════════════════════════════════
 //  Types
@@ -944,6 +945,57 @@ export function TableDesigner({ profileId, database, tableName }: Props) {
   const [loadedSnapshot, setLoadedSnapshot] =
     useState<TableDesignerSnapshot | null>(null);
   const [loadingSchema, setLoadingSchema] = useState(false);
+  const [ctxMenu, setCtxMenu] = useState<{
+    x: number;
+    y: number;
+    columnId: string;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!ctxMenu) return;
+    const close = () => setCtxMenu(null);
+    window.addEventListener("click", close);
+    window.addEventListener("scroll", close, true);
+    return () => {
+      window.removeEventListener("click", close);
+      window.removeEventListener("scroll", close, true);
+    };
+  }, [ctxMenu]);
+
+  const handleCreateNewIndex = useCallback(
+    (columnId: string, type: string) => {
+      const col = columns.find((c) => c.id === columnId);
+      if (!col || !col.name.trim()) return;
+      const idx = newIndex();
+      idx.type = type;
+      idx.name = `${col.name.trim()}_${type.toLowerCase()}`;
+      idx.columns = [col.name.trim()];
+      setIndexes((prev) => [...prev, idx]);
+      setSelectedIndex(idx.id);
+      setActiveTab("indexes");
+      setCtxMenu(null);
+    },
+    [columns],
+  );
+
+  const handleAddToIndex = useCallback(
+    (columnId: string, indexId: string) => {
+      const col = columns.find((c) => c.id === columnId);
+      if (!col || !col.name.trim()) return;
+      setIndexes((prev) =>
+        prev.map((idx) => {
+          if (idx.id === indexId && !idx.columns.includes(col.name.trim())) {
+            return { ...idx, columns: [...idx.columns, col.name.trim()] };
+          }
+          return idx;
+        }),
+      );
+      setSelectedIndex(indexId);
+      setActiveTab("indexes");
+      setCtxMenu(null);
+    },
+    [columns],
+  );
 
   // ── Resizable split ───────────────────────────────────────
   const [splitPercent, setSplitPercent] = useState(35);
@@ -2316,6 +2368,15 @@ export function TableDesigner({ profileId, database, tableName }: Props) {
                   onSelect={setSelectedColumn}
                   onUpdate={updateColumn}
                   collations={collations}
+                  onContextMenu={(e, colId) => {
+                    e.preventDefault();
+                    setSelectedColumn(colId);
+                    setCtxMenu({
+                      x: Math.min(e.clientX, window.innerWidth - 200),
+                      y: Math.min(e.clientY, window.innerHeight - 150),
+                      columnId: colId,
+                    });
+                  }}
                 />
               ))}
             </tbody>
@@ -2361,6 +2422,52 @@ export function TableDesigner({ profileId, database, tableName }: Props) {
           {saving ? "Saving..." : "Save"}
         </button>
       </div>
+
+      {ctxMenu && (
+        <div
+          className="fixed z-100 min-w-48 bg-popover text-popover-foreground border rounded-md shadow-md p-1 text-xs"
+          style={{ top: ctxMenu.y, left: ctxMenu.x }}
+        >
+          <ContextSubmenu
+            label="Create new index"
+            icon={<Zap className="w-3.5 h-3.5" />}
+          >
+            {INDEX_TYPES.map((type) => (
+              <button
+                key={type}
+                className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2"
+                onClick={() => handleCreateNewIndex(ctxMenu.columnId, type)}
+              >
+                {type}
+              </button>
+            ))}
+          </ContextSubmenu>
+          {(() => {
+            const col = columns.find((c) => c.id === ctxMenu.columnId);
+            const colName = col ? col.name.trim() : "";
+            const availableIndexes = indexes.filter(
+              (idx) => !idx.columns.includes(colName),
+            );
+            if (!colName || availableIndexes.length === 0) return null;
+            return (
+              <ContextSubmenu
+                label="Add to index"
+                icon={<Plus className="w-3.5 h-3.5" />}
+              >
+                {availableIndexes.map((idx) => (
+                  <button
+                    key={idx.id}
+                    className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2"
+                    onClick={() => handleAddToIndex(ctxMenu.columnId, idx.id)}
+                  >
+                    {idx.name || `(unnamed ${idx.type})`}
+                  </button>
+                ))}
+              </ContextSubmenu>
+            );
+          })()}
+        </div>
+      )}
     </div>
   );
 }
@@ -2488,6 +2595,7 @@ const ColumnRow = memo(function ColumnRow({
   onSelect,
   onUpdate,
   collations,
+  onContextMenu,
 }: {
   col: ColumnDef;
   index: number;
@@ -2495,10 +2603,17 @@ const ColumnRow = memo(function ColumnRow({
   onSelect: (id: string) => void;
   onUpdate: (id: string, field: keyof ColumnDef, value: unknown) => void;
   collations: string[];
+  onContextMenu?: (e: React.MouseEvent, colId: string) => void;
 }) {
   const collationOptions = useMemo(() => ["", ...collations], [collations]);
 
   const handleClick = useCallback(() => onSelect(col.id), [onSelect, col.id]);
+  const handleContextMenu = useCallback(
+    (e: React.MouseEvent) => {
+      if (onContextMenu) onContextMenu(e, col.id);
+    },
+    [onContextMenu, col.id],
+  );
 
   const handleName = useCallback(
     (v: string) => onUpdate(col.id, "name", v),
@@ -2556,6 +2671,7 @@ const ColumnRow = memo(function ColumnRow({
         isSelected ? "bg-accent/60" : "hover:bg-accent/20",
       )}
       onClick={handleClick}
+      onContextMenu={handleContextMenu}
     >
       <Td className="text-center text-muted-foreground/50">{index + 1}</Td>
       <Td>
