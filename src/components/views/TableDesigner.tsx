@@ -22,6 +22,7 @@ import {
 import { cn } from "@/lib/utils/cn";
 import { AutocompleteInput } from "@/components/ui/AutocompleteInput";
 import { ContextSubmenu } from "@/components/views/ContextSubmenu";
+import { highlightSQL } from "@/lib/sqlHighlight";
 
 // ═══════════════════════════════════════════════════════════════════════
 //  Types
@@ -2245,14 +2246,30 @@ export function TableDesigner({ profileId, database, tableName }: Props) {
                         <label className="w-25 text-right text-muted-foreground shrink-0 pt-1">
                           Expression:
                         </label>
-                        <textarea
-                          value={ch.expression}
-                          onChange={(e) =>
-                            updateCheck(ch.id, "expression", e.target.value)
-                          }
-                          className="flex-1 h-24 rounded bg-secondary/50 border px-2 py-1 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-primary resize-none"
-                          placeholder="e.g. age > 0"
-                        />
+                        <div className="flex-1 relative h-24 rounded bg-secondary/50 border overflow-hidden">
+                          {ch.expression && (
+                            <pre
+                              className="absolute inset-0 pointer-events-none px-2 py-1 text-xs font-mono whitespace-pre-wrap wrap-break-word text-foreground z-0 overflow-hidden"
+                              dangerouslySetInnerHTML={{
+                                __html: highlightSQL(ch.expression),
+                              }}
+                            />
+                          )}
+                          <textarea
+                            value={ch.expression}
+                            onChange={(e) =>
+                              updateCheck(ch.id, "expression", e.target.value)
+                            }
+                            className={cn(
+                              "relative w-full h-full px-2 py-1 text-xs font-mono bg-transparent border-0 resize-none outline-none z-10",
+                              ch.expression
+                                ? "text-transparent caret-foreground"
+                                : "text-foreground",
+                            )}
+                            placeholder="e.g. age > 0"
+                            spellCheck={false}
+                          />
+                        </div>
                       </div>
                     </div>
                   );
@@ -2276,12 +2293,12 @@ export function TableDesigner({ profileId, database, tableName }: Props) {
           </div>
         )}
 
-        {/* ── CREATE Code Tab ───────────────── */}
         {activeTab === "create-code" && (
           <div className="overflow-auto p-3">
-            <pre className="text-[11px] bg-secondary/30 border rounded p-3 font-mono whitespace-pre-wrap text-foreground leading-relaxed min-h-25 select-text">
-              {previewSQL}
-            </pre>
+            <pre
+              className="text-[11px] bg-secondary/30 border rounded p-3 font-mono whitespace-pre-wrap text-foreground leading-relaxed min-h-25 select-text"
+              dangerouslySetInnerHTML={{ __html: highlightSQL(previewSQL) }}
+            />
           </div>
         )}
       </div>
@@ -2709,6 +2726,10 @@ const ColumnRow = memo(function ColumnRow({
           maxSuggestions={7}
           inputClassName="w-full h-6.5 bg-transparent border-0 outline-none text-xs font-mono px-1 focus:bg-secondary/50"
           dropdownClassName="max-h-50 overflow-y-auto border-border/70 rounded-sm"
+          highlightHtml={
+            col.defaultVal ? highlightSQL(col.defaultVal) : undefined
+          }
+          highlightClassName="h-6.5 px-1 py-[5px] text-xs leading-[16px] font-mono"
         />
       </Td>
       <Td>
@@ -2722,7 +2743,16 @@ const ColumnRow = memo(function ColumnRow({
         />
       </Td>
       <Td>
-        <CellInput value={col.expression} onChange={handleExpression} />
+        <AutocompleteInput
+          value={col.expression}
+          onChange={handleExpression}
+          suggestions={[]}
+          inputClassName="w-full h-6.5 bg-transparent border-0 outline-none text-xs font-mono px-1 focus:bg-secondary/50"
+          highlightHtml={
+            col.expression ? highlightSQL(col.expression) : undefined
+          }
+          highlightClassName="h-6.5 px-1 py-[5px] text-xs leading-[16px] font-mono"
+        />
       </Td>
       <Td>
         <CellSelect
