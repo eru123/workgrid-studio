@@ -157,7 +157,11 @@ export function EditorNode({ tree }: { tree: SplitTree }) {
   useEffect(() => {
     const handleClick = () => setContextMenu(null);
     window.addEventListener("click", handleClick);
-    return () => window.removeEventListener("click", handleClick);
+    window.addEventListener("scroll", handleClick, true);
+    return () => {
+      window.removeEventListener("click", handleClick);
+      window.removeEventListener("scroll", handleClick, true);
+    };
   }, []);
 
   // Shortcut for closing active tab (Ctrl+W)

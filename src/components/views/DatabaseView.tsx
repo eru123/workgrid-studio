@@ -563,7 +563,11 @@ function TablesTable({
     if (!ctxMenu) return;
     const close = () => setCtxMenu(null);
     window.addEventListener("click", close);
-    return () => window.removeEventListener("click", close);
+    window.addEventListener("scroll", close, true);
+    return () => {
+      window.removeEventListener("click", close);
+      window.removeEventListener("scroll", close, true);
+    };
   }, [ctxMenu]);
 
   // Keep these as plain values to avoid any hook-order sensitivity here.
@@ -1348,7 +1352,11 @@ function ProcessesTable({
   useEffect(() => {
     const handleClick = () => setContextMenu(null);
     window.addEventListener("click", handleClick);
-    return () => window.removeEventListener("click", handleClick);
+    window.addEventListener("scroll", handleClick, true);
+    return () => {
+      window.removeEventListener("click", handleClick);
+      window.removeEventListener("scroll", handleClick, true);
+    };
   }, []);
 
   const handleKill = async (processId: number) => {
@@ -1646,7 +1654,11 @@ function CommandStatisticsTable({
   useEffect(() => {
     const handleClick = () => setContextMenu(null);
     window.addEventListener("click", handleClick);
-    return () => window.removeEventListener("click", handleClick);
+    window.addEventListener("scroll", handleClick, true);
+    return () => {
+      window.removeEventListener("click", handleClick);
+      window.removeEventListener("scroll", handleClick, true);
+    };
   }, []);
 
   if (loading) {
@@ -1855,4 +1867,3 @@ function CommandStatisticsTable({
     </div>
   );
 }
-

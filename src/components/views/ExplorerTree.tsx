@@ -92,9 +92,13 @@ export function ExplorerTree() {
 
   // Hide context menu on click outside
   useEffect(() => {
-    const handleClick = () => setContextMenu(null);
-    window.addEventListener("click", handleClick);
-    return () => window.removeEventListener("click", handleClick);
+    const handleClose = () => setContextMenu(null);
+    window.addEventListener("click", handleClose);
+    window.addEventListener("scroll", handleClose, true);
+    return () => {
+      window.removeEventListener("click", handleClose);
+      window.removeEventListener("scroll", handleClose, true);
+    };
   }, []);
 
   const toggle = useCallback((key: string) => {

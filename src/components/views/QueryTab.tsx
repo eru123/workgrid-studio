@@ -860,7 +860,11 @@ export function QueryTab({
       setAcVisible(false);
     };
     window.addEventListener("click", handleClickOutside);
-    return () => window.removeEventListener("click", handleClickOutside);
+    window.addEventListener("scroll", handleClickOutside, true);
+    return () => {
+      window.removeEventListener("click", handleClickOutside);
+      window.removeEventListener("scroll", handleClickOutside, true);
+    };
   }, []);
 
   useEffect(() => {
