@@ -441,14 +441,19 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
   }, []);
 
   const showAllColumns = useCallback(() => setHiddenColumns(new Set()), []);
+  const effectiveColumns = useMemo(
+    () => (columns.length > 0 ? columns : columnInfos.map((c) => c.name)),
+    [columns, columnInfos],
+  );
+
   const hideAllColumns = useCallback(() => {
-    setHiddenColumns(new Set(columns));
-  }, [columns]);
+    setHiddenColumns(new Set(effectiveColumns));
+  }, [effectiveColumns]);
 
   // ── Visible columns ─────────────────────────────────────
   const visibleColumns = useMemo(
-    () => columns.filter((c) => !hiddenColumns.has(c)),
-    [columns, hiddenColumns],
+    () => effectiveColumns.filter((c) => !hiddenColumns.has(c)),
+    [effectiveColumns, hiddenColumns],
   );
 
   // ── Filter handlers ─────────────────────────────────────
@@ -494,7 +499,7 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
   }, [showColumnPicker]);
 
   // ── Render: Loading ─────────────────────────────────────
-  if (loadingMeta && columns.length === 0) {
+  if (loadingMeta && effectiveColumns.length === 0) {
     return (
       <div className="w-full h-full flex items-center justify-center gap-2 text-muted-foreground">
         <Loader2 className="w-5 h-5 animate-spin" />
@@ -550,7 +555,7 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
             title="Show/hide columns"
           >
             <Columns3 className="w-3.5 h-3.5" />
-            Columns ({visibleColumns.length}/{columns.length})
+            Columns ({visibleColumns.length}/{effectiveColumns.length})
           </button>
 
           {showColumnPicker && (
@@ -573,7 +578,7 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
                   Hide All
                 </button>
               </div>
-              {columns.map((col) => (
+              {effectiveColumns.map((col) => (
                 <button
                   key={col}
                   className="w-full flex items-center gap-2 px-2 py-1 rounded hover:bg-accent text-xs text-left transition-colors"
@@ -727,7 +732,7 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
                   key={rowIdx}
                   row={row}
                   rowNumber={rowNumber}
-                  columns={columns}
+                  columns={effectiveColumns}
                   visibleColumns={visibleColumns}
                   columnInfos={columnInfos}
                 />
