@@ -354,7 +354,7 @@ export function DatabaseView({
                 className={cn(
                   "px-3 h-full text-xs transition-colors flex items-center gap-1.5",
                   activeTab === tab.id
-                    ? "font-semibold text-foreground border-b-2 border-primary"
+                    ? "text-foreground border-b-2 border-primary"
                     : "text-muted-foreground hover:text-foreground hover:bg-muted/50",
                 )}
               >
@@ -577,8 +577,8 @@ function TablesTable({
     tokens.length === 0
       ? sorted
       : sorted.filter((t) =>
-          tokens.every((token) => matchesTableFilterToken(t, token)),
-        );
+        tokens.every((token) => matchesTableFilterToken(t, token)),
+      );
   const filterSuggestions = buildTableFilterSuggestions(tableFilter, sorted);
 
   if (loading) {

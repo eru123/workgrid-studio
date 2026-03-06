@@ -487,7 +487,7 @@ export function ServersSidebar() {
                           className={cn(
                             "flex flex-col items-center gap-1.5 py-3 px-1 rounded-md border text-xs transition-all relative overflow-hidden",
                             formData.type === type
-                              ? "border-primary bg-primary/10 text-primary font-medium"
+                              ? "border-primary bg-primary/10 text-primary"
                               : "border-border bg-secondary/30 text-muted-foreground hover:bg-secondary/80 hover:text-foreground",
                             !isSupported && "opacity-70",
                           )}

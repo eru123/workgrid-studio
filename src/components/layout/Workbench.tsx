@@ -407,7 +407,7 @@ function BottomPanel() {
           className={cn(
             "px-3 h-full text-xs transition-colors",
             activeTab === "output"
-              ? "font-semibold text-foreground border-b-2 border-primary"
+              ? "text-foreground border-b-2 border-primary"
               : "text-muted-foreground hover:text-foreground",
           )}
         >
@@ -420,7 +420,7 @@ function BottomPanel() {
           className={cn(
             "px-3 h-full text-xs transition-colors flex items-center gap-1.5",
             activeTab === "problems"
-              ? "font-semibold text-foreground border-b-2 border-primary"
+              ? "text-foreground border-b-2 border-primary"
               : "text-muted-foreground hover:text-foreground",
           )}
         >
@@ -447,7 +447,7 @@ function BottomPanel() {
           className={cn(
             "px-3 h-full text-xs transition-colors",
             activeTab === "logs"
-              ? "font-semibold text-foreground border-b-2 border-primary"
+              ? "text-foreground border-b-2 border-primary"
               : "text-muted-foreground hover:text-foreground",
           )}
         >
@@ -598,8 +598,8 @@ function BottomPanel() {
                       line.includes("ERROR") && "text-red-400",
                       line.includes("INFO") && "text-blue-400/70",
                       line.includes("QUERY") &&
-                        !line.includes("ERROR") &&
-                        "text-foreground/80",
+                      !line.includes("ERROR") &&
+                      "text-foreground/80",
                     )}
                   >
                     {line}

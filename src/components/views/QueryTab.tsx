@@ -1741,7 +1741,7 @@ export function QueryTab({
                   className={cn(
                     "flex items-center gap-1.5 px-3 h-full text-xs transition-all whitespace-nowrap shrink-0 border-b-2",
                     activeResultIdx === i
-                      ? "border-primary bg-background text-foreground font-medium"
+                      ? "border-primary bg-background text-foreground"
                       : "border-transparent text-muted-foreground hover:text-foreground hover:bg-accent/40",
                   )}
                   onClick={() => setActiveResultIdx(i)}

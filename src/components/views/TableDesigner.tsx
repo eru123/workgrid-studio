@@ -1722,7 +1722,7 @@ export function TableDesigner({ profileId, database, tableName }: Props) {
             className={cn(
               "flex items-center gap-1.5 px-3 py-2 text-xs transition-colors border-b-2 whitespace-nowrap",
               activeTab === t.key
-                ? "border-primary text-foreground font-medium"
+                ? "border-primary text-foreground"
                 : "border-transparent text-muted-foreground hover:text-foreground hover:bg-accent/30",
             )}
             onClick={() => setActiveTab(t.key)}
