@@ -712,7 +712,7 @@ function alterTableSql(
     (beforeIdxPrimary &&
       afterIdxPrimary &&
       normalizedIndexSignature(beforeIdxPrimary) !==
-        normalizedIndexSignature(afterIdxPrimary));
+      normalizedIndexSignature(afterIdxPrimary));
   if (primaryChanged && beforeIdxPrimary)
     dropIndexClauses.push("DROP PRIMARY KEY");
   if (primaryChanged && afterIdxPrimary) {
@@ -1058,12 +1058,12 @@ export function TableDesigner({ profileId, database, tableName }: Props) {
           );
         }
       })
-      .catch(() => {});
+      .catch(() => { });
     dbListTables(profileId, database)
       .then((list) => {
         if (!cancelled) setTables(list);
       })
-      .catch(() => {});
+      .catch(() => { });
     return () => {
       cancelled = true;
     };
@@ -1599,7 +1599,7 @@ export function TableDesigner({ profileId, database, tableName }: Props) {
       }
       dbListTables(profileId, database)
         .then(setTables)
-        .catch(() => {});
+        .catch(() => { });
     } catch (e) {
       setError(String(e));
     } finally {
@@ -2525,7 +2525,7 @@ function ToolBtn({
 function Th({ children, w }: { children: React.ReactNode; w?: number }) {
   return (
     <th
-      className="text-left px-1.5 py-1.5 text-[10px] font-medium text-muted-foreground/70 uppercase tracking-wider border-b border-r bg-muted/50 whitespace-nowrap"
+      className="text-left px-1.5 py-1.5 text-[10px] font-medium text-muted-foreground/70 tracking-wider border-b border-r bg-muted/50 whitespace-nowrap"
       style={w ? { width: w, minWidth: w } : undefined}
     >
       {children}

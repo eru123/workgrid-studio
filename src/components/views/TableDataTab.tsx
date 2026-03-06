@@ -334,7 +334,7 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
       .then((cols) => {
         if (!cancelled) setColumnInfos(cols);
       })
-      .catch(() => {})
+      .catch(() => { })
       .finally(() => {
         if (!cancelled) setLoadingMeta(false);
       });
@@ -588,7 +588,7 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
                     className={cn(
                       "truncate",
                       hiddenColumns.has(col) &&
-                        "text-muted-foreground/50 line-through",
+                      "text-muted-foreground/50 line-through",
                     )}
                   >
                     {col}
@@ -688,7 +688,7 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
           <thead className="sticky top-0 z-10">
             <tr className="bg-muted/70 backdrop-blur-sm">
               {/* Row number column */}
-              <th className="text-center px-1.5 py-1.5 text-[10px] font-medium text-muted-foreground/70 uppercase tracking-wider border-b border-r bg-muted/70 whitespace-nowrap w-10">
+              <th className="text-center px-1.5 py-1.5 text-[10px] font-medium text-muted-foreground/70 tracking-wider border-b border-r bg-muted/70 whitespace-nowrap w-10">
                 #
               </th>
               {visibleColumns.map((col) => {
@@ -825,7 +825,7 @@ const SortableHeader = memo(function SortableHeader({
   return (
     <th
       className={cn(
-        "text-left px-1.5 py-1.5 text-[10px] font-medium uppercase tracking-wider border-b border-r bg-muted/70 whitespace-nowrap cursor-pointer hover:bg-accent/40 transition-colors select-none group",
+        "text-left px-1.5 py-1.5 text-[10px] font-medium tracking-wider border-b border-r bg-muted/70 whitespace-nowrap cursor-pointer hover:bg-accent/40 transition-colors select-none group",
         sortDirection && "bg-primary/10",
       )}
       onClick={onClick}
