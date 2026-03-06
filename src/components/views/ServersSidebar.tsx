@@ -268,9 +268,9 @@ export function ServersSidebar() {
                 <div
                   role="button"
                   tabIndex={0}
-                  onClick={() => handleDoubleClick(profile.id)}
+                  onDoubleClick={() => handleDoubleClick(profile.id)}
                   className="w-full text-left px-3 py-1.5 flex items-center gap-2.5 transition-colors group relative hover:bg-accent/50 cursor-pointer"
-                  title="Click to connect / open"
+                  title="Double-click to connect / open"
                 >
                   {/* DB Icon + status */}
                   <div className="relative shrink-0 flex items-center justify-center w-5 h-5">
