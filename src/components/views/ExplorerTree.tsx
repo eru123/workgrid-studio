@@ -43,7 +43,7 @@ import {
 } from "lucide-react";
 import { SiPostgresql, SiMysql, SiSqlite, SiMariadb } from "react-icons/si";
 
-const DB_ICONS: Record<string, any> = {
+const DB_ICONS: Record<string, React.ElementType> = {
   postgres: SiPostgresql,
   mysql: SiMysql,
   sqlite: SiSqlite,
@@ -287,7 +287,7 @@ export function ExplorerTree() {
               setCreateDbProfileId(profileId);
             };
 
-            const handleExpandAll = async () => {
+            const handleExpandAllServer = async () => {
               setContextMenu(null);
               const schemaStore = useSchemaStore.getState();
               let dbs = schemaStore.databases[profileId];
@@ -335,7 +335,7 @@ export function ExplorerTree() {
               }
             };
 
-            const handleCollapseAll = () => {
+            const handleCollapseAllServer = () => {
               setContextMenu(null);
               setExpanded((prev) => {
                 const next = { ...prev };
@@ -380,14 +380,14 @@ export function ExplorerTree() {
                 <div className="h-px bg-border my-1 mx-1" />
                 <button
                   className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2"
-                  onClick={handleExpandAll}
+                  onClick={handleExpandAllServer}
                 >
                   <Maximize2 className="w-3.5 h-3.5 text-muted-foreground" />{" "}
                   Expand All
                 </button>
                 <button
                   className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2"
-                  onClick={handleCollapseAll}
+                  onClick={handleCollapseAllServer}
                 >
                   <Minimize2 className="w-3.5 h-3.5 text-muted-foreground" />{" "}
                   Collapse All
@@ -425,7 +425,7 @@ export function ExplorerTree() {
               setDropDbState({ profileId, databases: targetDbs });
             };
 
-            const handleExpandAll = async () => {
+            const handleExpandAllDatabase = async () => {
               setContextMenu(null);
               const schemaStore = useSchemaStore.getState();
               await Promise.all(
@@ -454,7 +454,7 @@ export function ExplorerTree() {
               });
             };
 
-            const handleCollapseAll = () => {
+            const handleCollapseAllDatabase = () => {
               setContextMenu(null);
               setExpanded((prev) => {
                 const next = { ...prev };
@@ -511,14 +511,14 @@ export function ExplorerTree() {
                     <div className="h-px bg-border my-1 mx-1" />
                     <button
                       className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2"
-                      onClick={handleExpandAll}
+                      onClick={handleExpandAllDatabase}
                     >
                       <Maximize2 className="w-3.5 h-3.5 text-muted-foreground" />{" "}
                       Expand All
                     </button>
                     <button
                       className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2"
-                      onClick={handleCollapseAll}
+                      onClick={handleCollapseAllDatabase}
                     >
                       <Minimize2 className="w-3.5 h-3.5 text-muted-foreground" />{" "}
                       Collapse All
@@ -622,14 +622,14 @@ export function ExplorerTree() {
                     <div className="h-px bg-border my-1 mx-1" />
                     <button
                       className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2"
-                      onClick={handleExpandAll}
+                      onClick={handleExpandAllDatabase}
                     >
                       <Maximize2 className="w-3.5 h-3.5 text-muted-foreground" />{" "}
                       Expand All
                     </button>
                     <button
                       className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2"
-                      onClick={handleCollapseAll}
+                      onClick={handleCollapseAllDatabase}
                     >
                       <Minimize2 className="w-3.5 h-3.5 text-muted-foreground" />{" "}
                       Collapse All
@@ -741,7 +741,8 @@ export function ExplorerTree() {
             setDropDbState(null);
             for (const db of dbsToDrop) {
               try {
-                await dbExecuteQuery(pid, `DROP DATABASE \`${db}\``);
+                const safeDbName = db.replace(/`/g, "``");
+                await dbExecuteQuery(pid, `DROP DATABASE \`${safeDbName}\``);
               } catch (e) {
                 console.error(`Failed to drop ${db}:`, e);
               }

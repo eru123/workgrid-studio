@@ -241,6 +241,11 @@ async fn db_connect(
         }
     }
 
+    if params.ssl {
+        let ssl_opts = mysql_async::SslOpts::default();
+        builder = builder.ssl_opts(Some(ssl_opts));
+    }
+
     let opts: Opts = builder.into();
     let pool = Pool::new(opts);
 
@@ -326,8 +331,7 @@ async fn db_list_tables(
     database: String,
 ) -> Result<Vec<String>, String> {
     let pool = get_pool(&state, &profile_id)?;
-    let use_query = format!("USE `{}`", database);
-    let query = "SHOW TABLES";
+    let query = format!("SHOW TABLES FROM `{}`", database);
 
     let mut conn = pool.get_conn().await.map_err(|e| {
         let msg = format!("Connection error: {}", e);
@@ -335,21 +339,14 @@ async fn db_list_tables(
         msg
     })?;
 
-    conn.query_drop(&use_query).await.map_err(|e| {
-        let msg = format!("Query error [{}]: {}", use_query, e);
-        log_error(&profile_id, &msg);
-        msg
-    })?;
-    log_query(&profile_id, &use_query);
-
-    match conn.query::<String, _>(query).await {
+    match conn.query::<String, _>(&query).await {
         Ok(tables) => {
-            log_query_result(&profile_id, &format!("SHOW TABLES FROM `{}`", database), tables.len());
+            log_query_result(&profile_id, &query, tables.len());
             drop(conn);
             Ok(tables)
         }
         Err(e) => {
-            let msg = format!("Query error [SHOW TABLES FROM `{}`]: {}", database, e);
+            let msg = format!("Query error [{}]: {}", query, e);
             log_error(&profile_id, &msg);
             Err(msg)
         }
@@ -657,10 +654,9 @@ async fn db_set_variable(
     }
 
     // Escape backslashes and single quotes manually
-    let escaped_value = value.replace('\\', "\\\\").replace('\'', "''");
-    let query = format!("SET {} {} = '{}'", scope_str, name, escaped_value);
+    let query = format!("SET {} {} = ?", scope_str, name);
 
-    conn.query_drop(&query).await.map_err(|e| {
+    conn.exec_drop(&query, (value,)).await.map_err(|e| {
         let msg = format!("Failed to set variable {}: {}", name, e);
         log_error(&profile_id, &msg);
         msg
@@ -835,11 +831,8 @@ async fn db_query(
         msg
     })?;
 
-    // Split by semicolons for multi-statement support (simple split)
-    let statements: Vec<&str> = query.split(';')
-        .map(|s| s.trim())
-        .filter(|s| !s.is_empty())
-        .collect();
+    // Split by semicolons while respecting quotes, backticks
+    let statements = split_sql_statements(&query);
 
     let mut results = Vec::new();
 
@@ -847,15 +840,16 @@ async fn db_query(
         log_query(&profile_id, stmt);
 
         // Try as a query that returns rows
-        match conn.query::<mysql_async::Row, _>(*stmt).await {
+        match conn.query::<mysql_async::Row, _>(stmt.as_str()).await {
             Ok(rows) => {
                 if rows.is_empty() {
+                    let affected = conn.affected_rows();
                     // Might be DDL/DML — report affected rows
                     results.push(QueryResultSet {
                         columns: vec![],
                         rows: vec![],
-                        affected_rows: 0,
-                        info: format!("OK (0 rows)"),
+                        affected_rows: affected,
+                        info: format!("{} row(s) affected", affected),
                     });
                 } else {
                     // Extract column names from first row
@@ -943,6 +937,48 @@ async fn db_query(
 #[tauri::command]
 fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
+}
+
+fn split_sql_statements(sql: &str) -> Vec<String> {
+    let mut stmts = Vec::new();
+    let mut current = String::new();
+    let mut in_str_single = false;
+    let mut in_str_double = false;
+    let mut in_backtick = false;
+    let mut chars = sql.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            current.push(c);
+            if let Some(next) = chars.next() {
+                current.push(next);
+            }
+            continue;
+        }
+
+        match c {
+            '\'' if !in_str_double && !in_backtick => in_str_single = !in_str_single,
+            '"' if !in_str_single && !in_backtick => in_str_double = !in_str_double,
+            '`' if !in_str_single && !in_str_double => in_backtick = !in_backtick,
+            ';' if !in_str_single && !in_str_double && !in_backtick => {
+                let stmt = current.trim().to_string();
+                if !stmt.is_empty() {
+                    stmts.push(stmt);
+                }
+                current.clear();
+                continue;
+            }
+            _ => {}
+        }
+        current.push(c);
+    }
+
+    let stmt = current.trim().to_string();
+    if !stmt.is_empty() {
+        stmts.push(stmt);
+    }
+
+    stmts
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
