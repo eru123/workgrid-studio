@@ -1065,13 +1065,6 @@ struct AnthropicMessage {
 }
 
 #[derive(Serialize)]
-struct AnthropicPayload {
-    model: String,
-    messages: Vec<AnthropicMessage>,
-    max_tokens: u32,
-}
-
-#[derive(Serialize)]
 struct OpenAIPayload {
     model: String,
     messages: Vec<AnthropicMessage>,
@@ -1090,6 +1083,61 @@ struct OpenAIResponseMsg {
 #[derive(Deserialize)]
 struct OpenAIResponse {
     choices: Vec<OpenAIChoice>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct AiLogEntry {
+    pub id: String,
+    pub timestamp: String,
+    pub model: String,
+    pub uri: String,
+    pub payload_preview: String,
+    pub response_preview: String,
+}
+
+fn append_ai_log(entry: AiLogEntry) {
+    if let Ok(base) = ensure_app_dirs() {
+        let path = base.join("ai_logs.json");
+        let mut logs: Vec<AiLogEntry> = if path.exists() {
+            let content = fs::read_to_string(&path).unwrap_or_else(|_| "[]".to_string());
+            serde_json::from_str(&content).unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        logs.push(entry);
+        
+        // Keep only last 100 logs to prevent unbounded growth
+        if logs.len() > 100 {
+            logs.remove(0);
+        }
+        
+        if let Ok(serialized) = serde_json::to_string(&logs) {
+            let _ = fs::write(path, serialized);
+        }
+    }
+}
+
+#[tauri::command]
+fn get_ai_logs() -> Result<Vec<AiLogEntry>, String> {
+    let base = ensure_app_dirs()?;
+    let path = base.join("ai_logs.json");
+    if !path.exists() {
+         return Ok(Vec::new());
+    }
+    let content = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let mut logs: Vec<AiLogEntry> = serde_json::from_str(&content).map_err(|e| e.to_string())?;
+    logs.reverse(); // Newest first
+    Ok(logs)
+}
+
+#[tauri::command]
+fn clear_ai_logs() -> Result<(), String> {
+    let base = ensure_app_dirs()?;
+    let path = base.join("ai_logs.json");
+    if path.exists() {
+        fs::remove_file(path).map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -1124,34 +1172,65 @@ async fn ai_generate_query(
                 }
             });
             
+            let default_model = if provider_type == "deepseek" { "deepseek-chat" } else { "gpt-4o" };
+            let actual_model = if model_id.is_empty() { default_model.to_string() } else { model_id };
+            
             let payload = OpenAIPayload {
-                model: if model_id.is_empty() { "gpt-4o".to_string() } else { model_id },
+                model: actual_model.clone(),
                 messages: vec![
                     AnthropicMessage { role: "system".to_string(), content: system_prompt },
                     AnthropicMessage { role: "user".to_string(), content: user_prompt },
                 ],
             };
             
+            println!("Sending {} completion request to {} (model: {})", provider_type, url, actual_model);
+            
+            let payload_json = serde_json::to_string(&payload).unwrap_or_default();
+            
             let res = client.post(&url)
                 .bearer_auth(api_key)
                 .json(&payload)
                 .send()
-                .await
-                .map_err(|e| format!("HTTP request failed: {}", e))?;
+                .await;
                 
-            let status = res.status();
-            if !status.is_success() {
-                let text = res.text().await.unwrap_or_default();
-                return Err(format!("API Error ({}): {}", status, text));
-            }
+            let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+            let entry_id = uuid::Uuid::new_v4().to_string();
             
-            let parsed: OpenAIResponse = res.json()
-                .await
-                .map_err(|e| format!("Failed to parse response: {}", e))?;
-                
-            if let Some(choice) = parsed.choices.first() {
-                let content = choice.message.content.trim().to_string();
-                // Strip markdown codeblocks if AI disobeyed
+            match res {
+                Ok(response) => {
+                    let status = response.status();
+                    if !status.is_success() {
+                        let text = response.text().await.unwrap_or_default();
+                        println!("AI Request Error ({}): {}", status, text);
+                        
+                        append_ai_log(AiLogEntry {
+                            id: entry_id,
+                            timestamp,
+                            model: actual_model.clone(),
+                            uri: url.clone(),
+                            payload_preview: payload_json,
+                            response_preview: format!("HTTP {} - {}", status, text),
+                        });
+                        
+                        return Err(format!("API Error ({}): {}", status, text));
+                    }
+                    
+                    let raw_text = response.text().await.unwrap_or_default();
+                    let parsed: OpenAIResponse = serde_json::from_str(&raw_text)
+                        .map_err(|e| format!("Failed to parse response: {}\nRaw: {}", e, raw_text))?;
+                        
+                    append_ai_log(AiLogEntry {
+                        id: entry_id,
+                        timestamp,
+                        model: actual_model,
+                        uri: url,
+                        payload_preview: payload_json,
+                        response_preview: raw_text,
+                    });
+                        
+                    if let Some(choice) = parsed.choices.first() {
+                        let content = choice.message.content.trim().to_string();
+                        // Strip markdown codeblocks if AI disobeyed
                 let cleaned = content
                     .strip_prefix("```sql").unwrap_or(&content)
                     .strip_prefix("```").unwrap_or(&content)
@@ -1161,6 +1240,19 @@ async fn ai_generate_query(
                 Ok(cleaned)
             } else {
                 Err("No choices returned from AI provider".to_string())
+            }
+                },
+                Err(e) => {
+                    append_ai_log(AiLogEntry {
+                        id: entry_id,
+                        timestamp,
+                        model: actual_model,
+                        uri: url,
+                        payload_preview: payload_json,
+                        response_preview: format!("Connection failed: {}", e),
+                    });
+                    Err(format!("HTTP request failed: {}", e))
+                }
             }
         },
         "gemini" => {
@@ -1290,7 +1382,9 @@ pub fn run() {
             vault_set,
             vault_get,
             vault_delete,
-            ai_generate_query
+            ai_generate_query,
+            get_ai_logs,
+            clear_ai_logs
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

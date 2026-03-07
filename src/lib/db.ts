@@ -201,3 +201,22 @@ export async function aiGenerateQuery(
         schemaContext
     });
 }
+
+// ─── AI Logs ────────────────────────────────────────────────────────
+
+export interface AiLogEntry {
+    id: string;
+    timestamp: string;
+    model: string;
+    uri: string;
+    payload_preview: string;
+    response_preview: string;
+}
+
+export async function getAiLogs(): Promise<AiLogEntry[]> {
+    return invoke<AiLogEntry[]>("get_ai_logs");
+}
+
+export async function clearAiLogs(): Promise<void> {
+    return invoke<void>("clear_ai_logs");
+}

@@ -7,7 +7,7 @@ import { useAppVersion } from "@/hooks/useAppVersion";
 import { Sash } from "./Sash";
 import { EditorNode } from "./EditorNode";
 import { ExplorerTree } from "@/components/views/ExplorerTree";
-import { readProfileLog, clearProfileLog } from "@/lib/db";
+import { readProfileLog, clearProfileLog, getAiLogs, clearAiLogs, AiLogEntry } from "@/lib/db";
 import { cn } from "@/lib/utils/cn";
 import {
   FolderTree,
@@ -220,7 +220,7 @@ export function Workbench() {
 
 // ─── Bottom Panel ───────────────────────────────────────────────────
 
-type PanelTab = "output" | "problems" | "logs";
+type PanelTab = "output" | "problems" | "logs" | "ailogs";
 type LogFilter = "mysql" | "error";
 
 interface ProblemItem {
@@ -290,6 +290,7 @@ function BottomPanel() {
   const [selectedProfileId, setSelectedProfileId] = useState<string>("");
   const [logContent, setLogContent] = useState<string>("");
   const [problems, setProblems] = useState<ProblemItem[]>([]);
+  const [aiLogs, setAiLogs] = useState<AiLogEntry[]>([]);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -365,6 +366,24 @@ function BottomPanel() {
     return () => clearInterval(interval);
   }, [fetchProblems]);
 
+  // ── AI Logs fetching ────────────────────────────────────────────
+  const fetchAiLogs = useCallback(async () => {
+    if (activeTab !== "ailogs") return;
+    try {
+      const logs = await getAiLogs();
+      setAiLogs(logs);
+    } catch (e) {
+      console.error("Failed to fetch AI logs", e);
+    }
+  }, [activeTab]);
+
+  useEffect(() => {
+    fetchAiLogs();
+    if (activeTab !== "ailogs") return;
+    const interval = setInterval(fetchAiLogs, 2000);
+    return () => clearInterval(interval);
+  }, [fetchAiLogs, activeTab]);
+
   // Auto-scroll to bottom when log content changes
   useEffect(() => {
     if (scrollRef.current && activeTab === "logs") {
@@ -376,6 +395,7 @@ function BottomPanel() {
     setIsRefreshing(true);
     if (activeTab === "logs") await fetchLogs();
     if (activeTab === "problems") await fetchProblems();
+    if (activeTab === "ailogs") await fetchAiLogs();
     setTimeout(() => setIsRefreshing(false), 300);
   };
 
@@ -398,6 +418,13 @@ function BottomPanel() {
         }
       }
       setProblems([]);
+    } else if (activeTab === "ailogs") {
+      try {
+        await clearAiLogs();
+        setAiLogs([]);
+      } catch (e) {
+        console.error("Clear AI log error:", e);
+      }
     }
   };
 
@@ -461,8 +488,22 @@ function BottomPanel() {
           Logs
         </button>
 
+        {/* AI Logs tab */}
+        <button
+          onClick={() => setActiveTab("ailogs")}
+          className={cn(
+            "px-3 h-full text-xs transition-colors flex items-center gap-1",
+            activeTab === "ailogs"
+              ? "text-foreground border-b-2 border-primary"
+              : "text-muted-foreground hover:text-foreground",
+          )}
+        >
+          <Bot className="w-3 h-3" />
+          AI Logs
+        </button>
+
         {/* Right-side controls */}
-        {(activeTab === "logs" || activeTab === "problems") && (
+        {(activeTab === "logs" || activeTab === "problems" || activeTab === "ailogs") && (
           <div className="ml-auto flex items-center gap-2">
             {/* Logs-specific: Profile selector */}
             {activeTab === "logs" && connectedProfiles.length > 0 && (
@@ -618,6 +659,78 @@ function BottomPanel() {
                 No log entries yet. Interact with the database to see queries
                 here.
               </span>
+            )}
+          </div>
+        )}
+
+        {/* ── AI Logs ───────────────────────────────────────────── */}
+        {activeTab === "ailogs" && (
+          <div className="min-w-max text-xs">
+            {aiLogs.length === 0 ? (
+              <div className="p-3 text-muted-foreground font-mono">
+                No AI transactions logged.
+              </div>
+            ) : (
+              <table className="w-full text-left font-mono border-collapse">
+                <thead className="bg-muted/50 sticky top-0 border-b border-border/40 select-none">
+                  <tr>
+                    <th className="py-2 px-3 tracking-tighter hover:bg-muted/50 bg-background text-foreground/70 cursor-pointer min-w-[140px] sticky left-0 z-10 font-normal">
+                      Timestamp
+                    </th>
+                    <th className="py-2 px-3 font-normal tracking-wide min-w-[120px]">
+                      Model
+                    </th>
+                    <th className="py-2 px-3 font-normal max-w-[200px] truncate">
+                      URI
+                    </th>
+                    <th className="py-2 px-3 font-normal min-w-[200px]">
+                      Payload
+                    </th>
+                    <th className="py-2 px-3 font-normal min-w-[300px]">
+                      Response
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border/40 text-foreground/80">
+                  {aiLogs.map((log) => (
+                    <tr
+                      key={log.id}
+                      className="hover:bg-accent/30 transition-colors group align-top"
+                    >
+                      <td className="py-2 px-3 whitespace-nowrap bg-background group-hover:bg-accent/10 sticky left-0 z-10 border-r border-border/20 text-muted-foreground">
+                        {log.timestamp}
+                      </td>
+                      <td className="py-2 px-3 whitespace-nowrap">
+                        <span className="bg-primary/5 border border-primary/20 text-primary px-1.5 py-0.5 rounded text-[10px]">
+                          {log.model}
+                        </span>
+                      </td>
+                      <td
+                        className="py-2 px-3 truncate max-w-[200px] text-muted-foreground/80"
+                        title={log.uri}
+                      >
+                        {log.uri}
+                      </td>
+                      <td className="py-2 px-3">
+                        <div
+                          className="max-w-[30vw] line-clamp-3 text-muted-foreground cursor-help"
+                          title={log.payload_preview}
+                        >
+                          {log.payload_preview}
+                        </div>
+                      </td>
+                      <td className="py-2 px-3">
+                        <div
+                          className="max-w-[40vw] line-clamp-3 text-muted-foreground cursor-help"
+                          title={log.response_preview}
+                        >
+                          {log.response_preview}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             )}
           </div>
         )}

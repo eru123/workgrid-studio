@@ -23,3 +23,5 @@ reqwest = { version = "0.12", features = ["json"] }
 aes-gcm = "0.10"
 rand = "0.8"
 base64 = "0.22"
+uuid = { version = "1.22.0", features = ["v4"] }
+chrono = "0.4.44"
