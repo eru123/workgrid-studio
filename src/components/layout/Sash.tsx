@@ -39,10 +39,11 @@ export function Sash({
                 lastY = me.clientY;
 
                 // Call the latest onDrag from ref (avoids stale closure)
+                // If the panels are stacked vertically (direction="vertical"), the sash is a horizontal line -> drag vertical (dy)
                 if (direction === "vertical") {
-                    onDragRef.current?.(dx);
-                } else {
                     onDragRef.current?.(dy);
+                } else {
+                    onDragRef.current?.(dx);
                 }
             };
 
@@ -63,11 +64,8 @@ export function Sash({
         <div
             onPointerDown={handlePointerDown}
             className={cn(
-                "absolute z-50 bg-transparent transition-colors",
+                "z-50 bg-transparent transition-colors",
                 "hover:bg-[#0078d4]/40 active:bg-[#0078d4]/60",
-                direction === "vertical"
-                    ? "cursor-col-resize top-0 h-full w-[5px]"
-                    : "cursor-row-resize left-0 w-full h-[5px]",
                 className
             )}
         />

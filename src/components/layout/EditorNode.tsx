@@ -377,8 +377,8 @@ export function EditorNode({ tree }: { tree: SplitTree }) {
       <Sash
         className={
           isVert
-            ? "h-2 w-full left-0 cursor-row-resize z-60"
-            : "w-2 h-full top-0 cursor-col-resize z-60"
+            ? "relative h-[4px] w-full cursor-row-resize flex-shrink-0 -my-[2px]"
+            : "relative w-[4px] h-full cursor-col-resize flex-shrink-0 -mx-[2px]"
         }
         direction={tree.direction}
         onDrag={(delta) => {
