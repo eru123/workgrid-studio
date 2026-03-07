@@ -153,6 +153,7 @@ export function EditorNode({ tree }: { tree: SplitTree }) {
   const setActiveTab = useLayoutStore((s) => s.setActiveTab);
   const connectedProfiles = useSchemaStore((s) => s.connectedProfiles);
   const activeLeafId = useLayoutStore((s) => s.activeLeafId);
+  const isSplit = useLayoutStore((s) => s.editorTree.type !== "leaf");
 
   const [contextMenu, setContextMenu] = useState<{
     x: number;
@@ -206,7 +207,7 @@ export function EditorNode({ tree }: { tree: SplitTree }) {
       <div
         className={cn(
           "flex-1 w-full h-full bg-background border rounded-sm overflow-hidden flex flex-col transition-colors",
-          isLeafActive ? "border-primary/50" : "border-border"
+          isLeafActive && isSplit ? "border-primary/50" : "border-border"
         )}
         onClickCapture={() => setActiveLeaf(tree.id)}
       >
