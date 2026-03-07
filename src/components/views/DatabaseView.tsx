@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import {
   dbGetDatabasesInfo,
   dbGetTablesInfo,
@@ -31,6 +31,7 @@ import {
   Table2,
   Rows3,
   Pencil,
+  RefreshCw,
 } from "lucide-react";
 
 type SubTab =
@@ -258,36 +259,50 @@ export function DatabaseView({
     }
   }, [profileId, activeTab, processInfos.length]);
 
+  const triggerRefresh = useCallback(() => {
+    if (activeTab === "databases") {
+      setLoadingDbs(true);
+      dbGetDatabasesInfo(profileId)
+        .then(setDbInfos)
+        .finally(() => setLoadingDbs(false));
+    } else if (activeTab === "tables" && database) {
+      setLoadingTables(true);
+      dbGetTablesInfo(profileId, database)
+        .then(setTableInfos)
+        .finally(() => setLoadingTables(false));
+    } else if (activeTab === "variables") {
+      fetchVariables();
+    } else if (activeTab === "status" || activeTab === "commands") {
+      fetchStatus();
+    } else if (activeTab === "processes") {
+      fetchProcesses();
+    }
+  }, [activeTab, database, profileId]);
+
+  const [globalCtxMenu, setGlobalCtxMenu] = useState<{ x: number; y: number } | null>(null);
+
+  useEffect(() => {
+    const handleClose = () => setGlobalCtxMenu(null);
+    window.addEventListener("click", handleClose);
+    window.addEventListener("scroll", handleClose, true);
+    return () => {
+      window.removeEventListener("click", handleClose);
+      window.removeEventListener("scroll", handleClose, true);
+    };
+  }, []);
+
   // Handle global refresh shortcuts (F5 / Ctrl + R)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "F5" || (e.ctrlKey && e.key.toLowerCase() === "r")) {
         e.preventDefault();
-
-        // Fetch the active tab's data
-        if (activeTab === "databases") {
-          setLoadingDbs(true);
-          dbGetDatabasesInfo(profileId)
-            .then(setDbInfos)
-            .finally(() => setLoadingDbs(false));
-        } else if (activeTab === "tables" && database) {
-          setLoadingTables(true);
-          dbGetTablesInfo(profileId, database)
-            .then(setTableInfos)
-            .finally(() => setLoadingTables(false));
-        } else if (activeTab === "variables") {
-          fetchVariables();
-        } else if (activeTab === "status" || activeTab === "commands") {
-          fetchStatus();
-        } else if (activeTab === "processes") {
-          fetchProcesses();
-        }
+        triggerRefresh();
       }
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [profileId, database, activeTab]);
+  }, [triggerRefresh]);
 
   const handleSelectDatabase = (dbName: string) => {
     updateTab(tabId, {
@@ -367,7 +382,15 @@ export function DatabaseView({
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-hidden flex flex-col">
+      <div
+        className="flex-1 overflow-hidden flex flex-col"
+        onContextMenu={(e) => {
+          if (!e.isDefaultPrevented()) {
+            e.preventDefault();
+            setGlobalCtxMenu({ x: e.clientX, y: e.clientY });
+          }
+        }}
+      >
         {activeTab === "databases" && !database && (
           <DatabasesTable
             dbInfos={dbInfos}
@@ -425,6 +448,27 @@ export function DatabaseView({
           />
         )}
       </div>
+
+      {globalCtxMenu && (
+        <div
+          className="fixed z-100 min-w-40 bg-popover text-popover-foreground border rounded-md shadow-md p-1 text-xs"
+          style={{ top: globalCtxMenu.y, left: globalCtxMenu.x }}
+        >
+          <button
+            className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center justify-between"
+            onClick={() => {
+              setGlobalCtxMenu(null);
+              triggerRefresh();
+            }}
+          >
+            <span className="flex items-center gap-2">
+              <RefreshCw className="w-3.5 h-3.5 text-muted-foreground" />
+              Refresh
+            </span>
+            <span className="text-muted-foreground/50 text-[10px]">F5</span>
+          </button>
+        </div>
+      )}
     </div>
   );
 }
