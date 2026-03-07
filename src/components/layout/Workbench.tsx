@@ -18,6 +18,9 @@ import {
   Trash2,
   RefreshCw,
   Bot,
+  Sun,
+  Moon,
+  Monitor,
 } from "lucide-react";
 import { ServersSidebar } from "@/components/views/ServersSidebar";
 
@@ -47,6 +50,19 @@ export function Workbench() {
   const toggleSidebar = useLayoutStore((s) => s.toggleSidebar);
   const togglePanel = useLayoutStore((s) => s.togglePanel);
   const openTab = useLayoutStore((s) => s.openTab);
+
+  // Theme Toggle Logic
+  const globalPrefs = useProfilesStore((s) => s.globalPreferences);
+  const setGlobalPrefs = useProfilesStore((s) => s.setGlobalPreferences);
+  const theme = globalPrefs.theme || "system";
+
+  const handleToggleTheme = () => {
+    let next: "light" | "dark" | "system" = "system";
+    if (theme === "dark") next = "light";
+    else if (theme === "light") next = "system";
+    else next = "dark";
+    setGlobalPrefs({ ...globalPrefs, theme: next });
+  };
 
   // App Initialization
   useEffect(() => {
@@ -113,6 +129,15 @@ export function Workbench() {
 
         {/* Bottom icons */}
         <div className="flex flex-col items-center gap-1 mb-2">
+          <button
+            onClick={handleToggleTheme}
+            className="w-10 h-10 flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors"
+            title={`Theme: ${theme.charAt(0).toUpperCase() + theme.slice(1)}`}
+          >
+            {theme === "dark" && <Moon className="w-5 h-5" />}
+            {theme === "light" && <Sun className="w-5 h-5" />}
+            {theme === "system" && <Monitor className="w-5 h-5" />}
+          </button>
           <button
             onClick={toggleSidebar}
             className="w-10 h-10 flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors"

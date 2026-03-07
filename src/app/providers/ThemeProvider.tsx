@@ -1,8 +1,8 @@
 import { useEffect } from "react";
-import { useAppStore } from "@/state/appStore";
+import { useProfilesStore } from "@/state/profilesStore";
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-    const theme = useAppStore((state) => state.theme);
+    const theme = useProfilesStore((state) => state.globalPreferences.theme || "system");
 
     useEffect(() => {
         const root = window.document.documentElement;

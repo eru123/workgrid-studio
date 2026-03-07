@@ -1,41 +1,78 @@
 @import "tailwindcss";
 
 @theme {
-  /* VS Code Default Dark+ inspired palette */
-  --color-background: #1e1e1e;
-  --color-foreground: #cccccc;
-
-  --color-primary: #0078d4;
-  --color-primary-foreground: #ffffff;
-
-  --color-secondary: #2d2d2d;
-  --color-secondary-foreground: #cccccc;
-
-  --color-destructive: #f14c4c;
-  --color-destructive-foreground: #ffffff;
-
-  --color-muted: #2d2d2d;
-  --color-muted-foreground: #858585;
-
-  --color-accent: #37373d;
-  --color-accent-foreground: #cccccc;
-
-  --color-popover: #252526;
-  --color-popover-foreground: #cccccc;
-
-  --color-card: #252526;
-  --color-card-foreground: #cccccc;
-
-  --color-border: #3c3c3c;
-  --color-input: #3c3c3c;
-  --color-ring: #0078d4;
-
+  --color-background: var(--color-background);
+  --color-foreground: var(--color-foreground);
+  --color-primary: var(--color-primary);
+  --color-primary-foreground: var(--color-primary-foreground);
+  --color-secondary: var(--color-secondary);
+  --color-secondary-foreground: var(--color-secondary-foreground);
+  --color-destructive: var(--color-destructive);
+  --color-destructive-foreground: var(--color-destructive-foreground);
+  --color-muted: var(--color-muted);
+  --color-muted-foreground: var(--color-muted-foreground);
+  --color-accent: var(--color-accent);
+  --color-accent-foreground: var(--color-accent-foreground);
+  --color-popover: var(--color-popover);
+  --color-popover-foreground: var(--color-popover-foreground);
+  --color-card: var(--color-card);
+  --color-card-foreground: var(--color-card-foreground);
+  --color-border: var(--color-border);
+  --color-input: var(--color-input);
+  --color-ring: var(--color-ring);
+  
   --radius-lg: 0.375rem;
   --radius-md: 0.25rem;
   --radius-sm: 0.125rem;
 }
 
 :root {
+  /* VS Code Default Light+ inspired palette */
+  --color-background: #ffffff;
+  --color-foreground: #333333;
+  --color-primary: #0078d4;
+  --color-primary-foreground: #ffffff;
+  --color-secondary: #f3f3f3;
+  --color-secondary-foreground: #333333;
+  --color-destructive: #e51400;
+  --color-destructive-foreground: #ffffff;
+  --color-muted: #f3f3f3;
+  --color-muted-foreground: #767676;
+  --color-accent: #e4e6f1;
+  --color-accent-foreground: #333333;
+  --color-popover: #ffffff;
+  --color-popover-foreground: #333333;
+  --color-card: #ffffff;
+  --color-card-foreground: #333333;
+  --color-border: #e4e4e4;
+  --color-input: #e4e4e4;
+  --color-ring: #0078d4;
+
+  color-scheme: light;
+}
+
+.dark {
+  /* VS Code Default Dark+ inspired palette */
+  --color-background: #1e1e1e;
+  --color-foreground: #cccccc;
+  --color-primary: #0078d4;
+  --color-primary-foreground: #ffffff;
+  --color-secondary: #2d2d2d;
+  --color-secondary-foreground: #cccccc;
+  --color-destructive: #f14c4c;
+  --color-destructive-foreground: #ffffff;
+  --color-muted: #2d2d2d;
+  --color-muted-foreground: #858585;
+  --color-accent: #37373d;
+  --color-accent-foreground: #cccccc;
+  --color-popover: #252526;
+  --color-popover-foreground: #cccccc;
+  --color-card: #252526;
+  --color-card-foreground: #cccccc;
+  --color-border: #3c3c3c;
+  --color-input: #3c3c3c;
+  --color-ring: #0078d4;
+
   color-scheme: dark;
 }
 
@@ -54,9 +91,9 @@
     -moz-osx-font-smoothing: grayscale;
   }
 
-  /* Keep native dropdown menus aligned with the dark theme. */
+  /* Keep native dropdown menus aligned with the active theme. */
   select {
-    color-scheme: dark;
+    color-scheme: light dark;
   }
 
   select,
