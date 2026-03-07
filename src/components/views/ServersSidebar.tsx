@@ -11,6 +11,7 @@ import {
 } from "@/state/profilesStore";
 import { useSchemaStore } from "@/state/schemaStore";
 import { useLayoutStore } from "@/state/layoutStore";
+import { useAppStore } from "@/state/appStore";
 import { dbConnect, dbDisconnect, dbListDatabases } from "@/lib/db";
 import { cn } from "@/lib/utils/cn";
 import {
@@ -55,9 +56,6 @@ export function ServersSidebar() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [formData, setFormData] = useState<ProfileFormData>(
     createDefaultFormData(),
-  );
-  const [connectErrors, setConnectErrors] = useState<Record<string, string>>(
-    {},
   );
   const [contextMenu, setContextMenu] = useState<{
     id: string;
@@ -125,24 +123,22 @@ export function ServersSidebar() {
     setContextMenu(null);
   };
 
-  const clearConnectError = (id: string) =>
-    setConnectErrors((prev) => {
-      const n = { ...prev };
-      delete n[id];
-      return n;
-    });
+  const handleCancelNew = () => {
+    setViewMode("list");
+    setContextMenu(null);
+  };
 
   const handleConnect = async (id: string) => {
     const profile = profiles.find((p) => p.id === id);
     if (!profile) return;
-    clearConnectError(id);
 
     if (profile.type !== "mysql" && profile.type !== "mariadb") {
       setConnectionStatus(id, "error");
-      setConnectErrors((prev) => ({
-        ...prev,
-        [id]: "Only MySQL and MariaDB are supported in this version.",
-      }));
+      useAppStore.getState().addToast({
+        title: "Connection Failed",
+        description: "Only MySQL and MariaDB are supported in this version.",
+        variant: "destructive"
+      });
       return;
     }
 
@@ -183,7 +179,11 @@ export function ServersSidebar() {
         setActiveView("explorer");
       } catch (e) {
         setConnectionStatus(id, "error");
-        setConnectErrors((prev) => ({ ...prev, [id]: String(e) }));
+        useAppStore.getState().addToast({
+          title: "Connection Failed",
+          description: String(e),
+          variant: "destructive",
+        });
       }
     }
   };
@@ -191,7 +191,6 @@ export function ServersSidebar() {
   const handleDoubleClick = async (id: string) => {
     const profile = profiles.find((p) => p.id === id);
     if (!profile) return;
-    clearConnectError(id);
 
     if (profile.connectionStatus === "connected") {
       setActiveView("explorer");
@@ -355,21 +354,6 @@ export function ServersSidebar() {
                     </button>
                   </div>
                 </div>
-
-                {connectErrors[profile.id] &&
-                  profile.connectionStatus === "error" && (
-                    <div className="px-3 pb-2 pt-1">
-                      <div className="text-[10px] text-red-500/90 font-mono break-all overflow-hidden relative pr-4 bg-red-500/10 border border-red-500/20 rounded-md p-1.5">
-                        {connectErrors[profile.id]}
-                        <button
-                          onClick={() => clearConnectError(profile.id)}
-                          className="absolute top-1 right-1 p-0.5 rounded text-red-400 hover:text-red-300 transition-colors"
-                        >
-                          <X className="w-3 h-3" />
-                        </button>
-                      </div>
-                    </div>
-                  )}
               </div>
             );
           })
@@ -377,7 +361,8 @@ export function ServersSidebar() {
       </div>
 
       {/* Context Menu Dropdown */}
-      {contextMenu &&
+      {
+        contextMenu &&
         (() => {
           const profile = profiles.find((p) => p.id === contextMenu.id);
           if (!profile) return null;
@@ -432,250 +417,253 @@ export function ServersSidebar() {
               </button>
             </div>
           );
-        })()}
+        })()
+      }
 
       {/* Modal Form overlay rendered absolutely within the sidebar / screen */}
-      {viewMode !== "list" && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm p-4">
-          <div className="w-full max-w-lg bg-card border shadow-2xl rounded-xl flex flex-col max-h-full overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-            {/* Modal Header */}
-            <div className="h-12 border-b flex items-center justify-between px-5 shrink-0 bg-muted/40">
-              <div className="flex items-center gap-2">
-                <span className="text-sm font-semibold">
-                  {viewMode === "edit" ? "Edit Connection" : "New Connection"}
-                </span>
-              </div>
-              <button
-                onClick={handleCancel}
-                className="text-muted-foreground hover:text-foreground rounded-full p-1 hover:bg-accent transition-colors"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            {/* Modal Body */}
-            <div className="flex-1 overflow-y-auto p-5 space-y-5">
-              {/* Connection Name */}
-              <div>
-                <label className="text-xs font-semibold block mb-1.5">
-                  Connection Name *
-                </label>
-                <input
-                  type="text"
-                  value={formData.name}
-                  onChange={(e) => updateField("name", e.target.value)}
-                  placeholder="My Database"
-                  autoFocus
-                  className="w-full h-9 rounded-md border bg-secondary/50 px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary/50 transition-all"
-                />
-              </div>
-
-              {/* Database Type */}
-              <div>
-                <label className="text-xs font-semibold block mb-1.5">
-                  Database Type
-                </label>
-                <div className="grid grid-cols-5 gap-2">
-                  {(Object.keys(DB_TYPE_LABELS) as DatabaseType[]).map(
-                    (type) => {
-                      const Icon = DB_ICONS[type];
-                      const isSupported =
-                        type === "mysql" || type === "mariadb";
-                      return (
-                        <button
-                          key={type}
-                          onClick={() => handleTypeChange(type)}
-                          className={cn(
-                            "flex flex-col items-center gap-1.5 py-3 px-1 rounded-md border text-xs transition-all relative overflow-hidden",
-                            formData.type === type
-                              ? "border-primary bg-primary/10 text-primary"
-                              : "border-border bg-secondary/30 text-muted-foreground hover:bg-secondary/80 hover:text-foreground",
-                            !isSupported && "opacity-70",
-                          )}
-                        >
-                          {!isSupported && (
-                            <div className="absolute -top-[10px] -right-[14px] bg-red-500/80 text-white text-[8px] font-bold px-4 py-1.5 transform rotate-45 scale-75">
-                              SOON
-                            </div>
-                          )}
-                          <Icon
-                            className="w-4 h-4"
-                            style={{
-                              color:
-                                formData.type === type
-                                  ? DB_TYPE_COLORS[type]
-                                  : undefined,
-                            }}
-                          />
-                          <span>{DB_TYPE_LABELS[type]}</span>
-                        </button>
-                      );
-                    },
-                  )}
-                </div>
-              </div>
-
-              {/* Color Tag */}
-              <div>
-                <label className="text-xs font-semibold block mb-1.5">
-                  Color Tag
-                </label>
-                <div className="flex gap-2 items-center">
-                  <input
-                    type="color"
-                    value={formData.color}
-                    onChange={(e) => updateField("color", e.target.value)}
-                    className="w-8 h-8 rounded border cursor-pointer border-border bg-background p-0.5"
-                  />
-                  <span className="text-xs font-mono text-muted-foreground uppercase">
-                    {formData.color}
+      {
+        viewMode !== "list" && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm p-4">
+            <div className="w-full max-w-lg bg-card border shadow-2xl rounded-xl flex flex-col max-h-full overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+              {/* Modal Header */}
+              <div className="h-12 border-b flex items-center justify-between px-5 shrink-0 bg-muted/40">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-semibold">
+                    {viewMode === "edit" ? "Edit Connection" : "New Connection"}
                   </span>
                 </div>
+                <button
+                  onClick={handleCancel}
+                  className="text-muted-foreground hover:text-foreground rounded-full p-1 hover:bg-accent transition-colors"
+                >
+                  <X className="w-4 h-4" />
+                </button>
               </div>
 
-              {isSqlite ? (
-                /* SQLite: File Path */
+              {/* Modal Body */}
+              <div className="flex-1 overflow-y-auto p-5 space-y-5">
+                {/* Connection Name */}
                 <div>
                   <label className="text-xs font-semibold block mb-1.5">
-                    Database File Path
+                    Connection Name *
                   </label>
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      value={formData.filePath}
-                      onChange={(e) => updateField("filePath", e.target.value)}
-                      placeholder="/path/to/database.db"
-                      className="flex-1 h-9 rounded-md border bg-secondary/50 px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all"
-                    />
-                    <button className="h-9 px-4 rounded-md border bg-secondary/50 font-medium hover:bg-secondary hover:text-foreground text-xs transition-all">
-                      Browse
-                    </button>
+                  <input
+                    type="text"
+                    value={formData.name}
+                    onChange={(e) => updateField("name", e.target.value)}
+                    placeholder="My Database"
+                    autoFocus
+                    className="w-full h-9 rounded-md border bg-secondary/50 px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary/50 transition-all"
+                  />
+                </div>
+
+                {/* Database Type */}
+                <div>
+                  <label className="text-xs font-semibold block mb-1.5">
+                    Database Type
+                  </label>
+                  <div className="grid grid-cols-5 gap-2">
+                    {(Object.keys(DB_TYPE_LABELS) as DatabaseType[]).map(
+                      (type) => {
+                        const Icon = DB_ICONS[type];
+                        const isSupported =
+                          type === "mysql" || type === "mariadb";
+                        return (
+                          <button
+                            key={type}
+                            onClick={() => handleTypeChange(type)}
+                            className={cn(
+                              "flex flex-col items-center gap-1.5 py-3 px-1 rounded-md border text-xs transition-all relative overflow-hidden",
+                              formData.type === type
+                                ? "border-primary bg-primary/10 text-primary"
+                                : "border-border bg-secondary/30 text-muted-foreground hover:bg-secondary/80 hover:text-foreground",
+                              !isSupported && "opacity-70",
+                            )}
+                          >
+                            {!isSupported && (
+                              <div className="absolute -top-[10px] -right-[14px] bg-red-500/80 text-white text-[8px] font-bold px-4 py-1.5 transform rotate-45 scale-75">
+                                SOON
+                              </div>
+                            )}
+                            <Icon
+                              className="w-4 h-4"
+                              style={{
+                                color:
+                                  formData.type === type
+                                    ? DB_TYPE_COLORS[type]
+                                    : undefined,
+                              }}
+                            />
+                            <span>{DB_TYPE_LABELS[type]}</span>
+                          </button>
+                        );
+                      },
+                    )}
                   </div>
                 </div>
-              ) : (
-                /* TCP: Host, Port, User, Password, Database */
-                <div className="space-y-4 pt-1">
-                  <div className="grid grid-cols-3 gap-3">
-                    <div className="col-span-2">
-                      <label className="text-xs font-medium text-muted-foreground block mb-1.5">
-                        Hostname
-                      </label>
-                      <input
-                        type="text"
-                        value={formData.host}
-                        onChange={(e) => updateField("host", e.target.value)}
-                        placeholder="localhost"
-                        className="w-full h-9 rounded-md border bg-secondary/50 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-xs font-medium text-muted-foreground block mb-1.5">
-                        Port
-                      </label>
-                      <input
-                        type="number"
-                        value={formData.port ?? ""}
-                        onChange={(e) =>
-                          updateField(
-                            "port",
-                            e.target.value ? Number(e.target.value) : undefined,
-                          )
-                        }
-                        placeholder={String(
-                          DB_TYPE_DEFAULT_PORTS[formData.type] ?? "",
-                        )}
-                        className="w-full h-9 rounded-md border bg-secondary/50 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all"
-                      />
-                    </div>
-                  </div>
 
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="text-xs font-medium text-muted-foreground block mb-1.5">
-                        Username
-                      </label>
-                      <input
-                        type="text"
-                        value={formData.user}
-                        onChange={(e) => updateField("user", e.target.value)}
-                        placeholder="root"
-                        className="w-full h-9 rounded-md border bg-secondary/50 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-xs font-medium text-muted-foreground block mb-1.5">
-                        Password
-                      </label>
-                      <input
-                        type="password"
-                        value={formData.password}
-                        onChange={(e) =>
-                          updateField("password", e.target.value)
-                        }
-                        placeholder="••••••••"
-                        className="w-full h-9 rounded-md border bg-secondary/50 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all"
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="text-xs font-medium text-muted-foreground block mb-1.5">
-                      Default Database (Optional)
-                    </label>
+                {/* Color Tag */}
+                <div>
+                  <label className="text-xs font-semibold block mb-1.5">
+                    Color Tag
+                  </label>
+                  <div className="flex gap-2 items-center">
                     <input
-                      type="text"
-                      value={formData.database}
-                      onChange={(e) => updateField("database", e.target.value)}
-                      placeholder="my_database"
-                      className="w-full h-9 rounded-md border bg-secondary/50 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all"
+                      type="color"
+                      value={formData.color}
+                      onChange={(e) => updateField("color", e.target.value)}
+                      className="w-8 h-8 rounded border cursor-pointer border-border bg-background p-0.5"
                     />
-                  </div>
-
-                  {/* SSL Toggle */}
-                  <div className="flex items-center gap-3 pt-2">
-                    <button
-                      onClick={() => updateField("ssl", !formData.ssl)}
-                      className={cn(
-                        "relative w-10 h-5 rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-background space-x-0 ring-primary/50",
-                        formData.ssl ? "bg-primary" : "bg-secondary",
-                      )}
-                    >
-                      <div
-                        className={cn(
-                          "absolute top-[2px] w-4 h-4 rounded-full bg-white transition-transform shadow-sm",
-                          formData.ssl
-                            ? "translate-x-[22px]"
-                            : "translate-x-[2px]",
-                        )}
-                      />
-                    </button>
-                    <span className="text-xs font-medium">
-                      Use SSL Protocol
+                    <span className="text-xs font-mono text-muted-foreground uppercase">
+                      {formData.color}
                     </span>
                   </div>
                 </div>
-              )}
-            </div>
 
-            {/* Modal Footer */}
-            <div className="h-14 border-t flex items-center justify-end px-5 gap-3 bg-muted/20 shrink-0">
-              <button
-                onClick={handleCancel}
-                className="px-4 py-2 text-xs font-medium rounded-md hover:bg-secondary text-foreground transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleSave}
-                disabled={!formData.name.trim()}
-                className="px-5 py-2 text-xs font-semibold rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm"
-              >
-                {viewMode === "edit" ? "Save Changes" : "Create Connection"}
-              </button>
+                {isSqlite ? (
+                  /* SQLite: File Path */
+                  <div>
+                    <label className="text-xs font-semibold block mb-1.5">
+                      Database File Path
+                    </label>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={formData.filePath}
+                        onChange={(e) => updateField("filePath", e.target.value)}
+                        placeholder="/path/to/database.db"
+                        className="flex-1 h-9 rounded-md border bg-secondary/50 px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all"
+                      />
+                      <button className="h-9 px-4 rounded-md border bg-secondary/50 font-medium hover:bg-secondary hover:text-foreground text-xs transition-all">
+                        Browse
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  /* TCP: Host, Port, User, Password, Database */
+                  <div className="space-y-4 pt-1">
+                    <div className="grid grid-cols-3 gap-3">
+                      <div className="col-span-2">
+                        <label className="text-xs font-medium text-muted-foreground block mb-1.5">
+                          Hostname
+                        </label>
+                        <input
+                          type="text"
+                          value={formData.host}
+                          onChange={(e) => updateField("host", e.target.value)}
+                          placeholder="localhost"
+                          className="w-full h-9 rounded-md border bg-secondary/50 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs font-medium text-muted-foreground block mb-1.5">
+                          Port
+                        </label>
+                        <input
+                          type="number"
+                          value={formData.port ?? ""}
+                          onChange={(e) =>
+                            updateField(
+                              "port",
+                              e.target.value ? Number(e.target.value) : undefined,
+                            )
+                          }
+                          placeholder={String(
+                            DB_TYPE_DEFAULT_PORTS[formData.type] ?? "",
+                          )}
+                          className="w-full h-9 rounded-md border bg-secondary/50 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-xs font-medium text-muted-foreground block mb-1.5">
+                          Username
+                        </label>
+                        <input
+                          type="text"
+                          value={formData.user}
+                          onChange={(e) => updateField("user", e.target.value)}
+                          placeholder="root"
+                          className="w-full h-9 rounded-md border bg-secondary/50 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs font-medium text-muted-foreground block mb-1.5">
+                          Password
+                        </label>
+                        <input
+                          type="password"
+                          value={formData.password}
+                          onChange={(e) =>
+                            updateField("password", e.target.value)
+                          }
+                          placeholder="••••••••"
+                          className="w-full h-9 rounded-md border bg-secondary/50 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="text-xs font-medium text-muted-foreground block mb-1.5">
+                        Default Database (Optional)
+                      </label>
+                      <input
+                        type="text"
+                        value={formData.database}
+                        onChange={(e) => updateField("database", e.target.value)}
+                        placeholder="my_database"
+                        className="w-full h-9 rounded-md border bg-secondary/50 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all"
+                      />
+                    </div>
+
+                    {/* SSL Toggle */}
+                    <div className="flex items-center gap-3 pt-2">
+                      <button
+                        onClick={() => updateField("ssl", !formData.ssl)}
+                        className={cn(
+                          "relative w-10 h-5 rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-background space-x-0 ring-primary/50",
+                          formData.ssl ? "bg-primary" : "bg-secondary",
+                        )}
+                      >
+                        <div
+                          className={cn(
+                            "absolute top-[2px] w-4 h-4 rounded-full bg-white transition-transform shadow-sm",
+                            formData.ssl
+                              ? "translate-x-[22px]"
+                              : "translate-x-[2px]",
+                          )}
+                        />
+                      </button>
+                      <span className="text-xs font-medium">
+                        Use SSL Protocol
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Modal Footer */}
+              <div className="h-14 border-t flex items-center justify-end px-5 gap-3 bg-muted/20 shrink-0">
+                <button
+                  onClick={handleCancel}
+                  className="px-4 py-2 text-xs font-medium rounded-md hover:bg-secondary text-foreground transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSave}
+                  disabled={!formData.name.trim()}
+                  className="px-5 py-2 text-xs font-semibold rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm"
+                >
+                  {viewMode === "edit" ? "Save Changes" : "Create Connection"}
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )
+      }
     </div>
   );
 }

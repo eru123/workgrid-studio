@@ -11,6 +11,7 @@ import {
 } from "@/state/profilesStore";
 import { useSchemaStore } from "@/state/schemaStore";
 import { useLayoutStore } from "@/state/layoutStore";
+import { useAppStore } from "@/state/appStore";
 import { dbConnect, dbDisconnect } from "@/lib/db";
 import { cn } from "@/lib/utils/cn";
 import {
@@ -49,7 +50,6 @@ export function DbManagerView() {
     createDefaultFormData(),
   );
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [connectError, setConnectError] = useState<string | null>(null);
 
   const handleCreate = () => {
     setFormData(createDefaultFormData());
@@ -105,11 +105,14 @@ export function DbManagerView() {
   const handleConnect = async (id: string) => {
     const profile = profiles.find((p) => p.id === id);
     if (!profile) return;
-    setConnectError(null);
 
     if (profile.type !== "mysql" && profile.type !== "mariadb") {
       setConnectionStatus(id, "error");
-      setConnectError("Only MySQL and MariaDB are supported in this version.");
+      useAppStore.getState().addToast({
+        title: "Connection Failed",
+        description: "Only MySQL and MariaDB are supported in this version.",
+        variant: "destructive"
+      });
       return;
     }
 
@@ -142,7 +145,11 @@ export function DbManagerView() {
         setActiveView("explorer");
       } catch (e) {
         setConnectionStatus(id, "error");
-        setConnectError(String(e));
+        useAppStore.getState().addToast({
+          title: "Connection Failed",
+          description: String(e),
+          variant: "destructive",
+        });
       }
     }
   };
@@ -580,13 +587,6 @@ export function DbManagerView() {
                 <Trash2 className="w-3.5 h-3.5" /> Delete
               </button>
             </div>
-
-            {/* Connection Error */}
-            {connectError && selectedProfile.connectionStatus === "error" && (
-              <div className="mb-4 px-3 py-2 rounded border border-red-800/40 bg-red-900/20 text-red-400 text-xs font-mono break-all">
-                {connectError}
-              </div>
-            )}
 
             {/* Connection Details */}
             <div className="border rounded-lg">
