@@ -920,13 +920,14 @@ function toText(value: unknown): string {
 
 interface Props {
   tabId?: string;
+  leafId?: string;
   profileId: string;
   database: string;
   /** If provided, load existing table for editing */
   tableName?: string;
 }
 
-export function TableDesigner({ tabId, profileId, database, tableName }: Props) {
+export function TableDesigner({ tabId, leafId, profileId, database, tableName }: Props) {
   const isEditMode = Boolean(tableName);
 
   // ── State ──────────────────────────────────────────────────
@@ -967,6 +968,8 @@ export function TableDesigner({ tabId, profileId, database, tableName }: Props) 
   }, [ctxMenu]);
 
   const updateTab = useLayoutStore((s) => s.updateTab);
+  const openTab = useLayoutStore((s) => s.openTab);
+  const closeTab = useLayoutStore((s) => s.closeTab);
 
   // Sync dirty state
   useEffect(() => {
@@ -1639,6 +1642,25 @@ export function TableDesigner({ tabId, profileId, database, tableName }: Props) 
     setSuccess(null);
     try {
       await dbExecuteQuery(profileId, sql);
+
+      const tableDesignerTab = {
+        title: trimmedName,
+        type: "table-designer" as const,
+        meta: { profileId, database, tableName: trimmedName },
+      };
+
+      // Ensure dirty flag is cleared before closing so we don't get prompted
+      if (tabId && leafId) {
+        updateTab(tabId, { dirty: false });
+        // Small timeout ensures react renders the non-dirty state before close
+        setTimeout(() => {
+          openTab(tableDesignerTab, leafId);
+          closeTab(tabId, leafId); // Assuming we are in the same leaf
+        }, 50);
+      } else {
+        openTab(tableDesignerTab);
+      }
+
       setName(trimmedName);
       if (isEditMode) {
         setLoadedSnapshot(nextSnapshot);

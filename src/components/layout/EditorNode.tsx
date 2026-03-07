@@ -63,7 +63,7 @@ function TabLoadingFallback() {
 
 // Memoised tab content — prevents hidden tabs from re-rendering when
 // only the parent tree (e.g. activeTabId) changes.
-const TabContent = memo(function TabContent({ tab }: { tab: EditorTab }) {
+const TabContent = memo(function TabContent({ tab, leafId }: { tab: EditorTab, leafId: string }) {
   const content = (() => {
     switch (tab.type) {
       case "models":
@@ -83,6 +83,7 @@ const TabContent = memo(function TabContent({ tab }: { tab: EditorTab }) {
         return (
           <TableDesigner
             tabId={tab.id}
+            leafId={leafId}
             profileId={tab.meta?.profileId ?? ""}
             database={tab.meta?.database ?? ""}
             tableName={tab.meta?.tableName}
@@ -392,7 +393,7 @@ export function EditorNode({ tree }: { tree: SplitTree }) {
                   tab.id === tree.activeTabId ? "block" : "hidden",
                 )}
               >
-                <TabContent tab={tab} />
+                <TabContent tab={tab} leafId={tree.id} />
               </div>
             ))
           ) : (
