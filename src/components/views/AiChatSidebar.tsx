@@ -5,7 +5,7 @@ import { useSchemaStore } from "@/state/schemaStore";
 import { useProfilesStore } from "@/state/profilesStore";
 import { aiGenerateQuery, dbGetSchemaDdl, vaultGet } from "@/lib/db";
 import { cn } from "@/lib/utils/cn";
-import { Send, Loader2, Sparkles, Copy, ExternalLink, Trash2 } from "lucide-react";
+import { Send, Loader2, Sparkles, Copy, ExternalLink, Trash2, ChevronDown } from "lucide-react";
 
 interface ChatMessage {
     id: string;
@@ -34,6 +34,16 @@ export function AiChatSidebar() {
     const [isLoading, setIsLoading] = useState(false);
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const openTab = useLayoutStore((s) => s.openTab);
+
+    // Model selection
+    const providers = useModelsStore((s) => s.providers);
+    const allModels = providers.flatMap((p) =>
+        p.models.map((m) => ({ providerId: p.id, providerName: p.name, providerType: p.type, baseUrl: p.baseUrl, modelId: m.id, modelName: m.name }))
+    );
+    const [selectedModelKey, setSelectedModelKey] = useState("");
+
+    // Resolve the active model
+    const activeModel = allModels.find((m) => `${m.providerId}::${m.modelId}` === selectedModelKey) || allModels[0] || null;
 
     // Get active connection context
     const connectedProfiles = useSchemaStore((s) => s.connectedProfiles);
@@ -81,10 +91,7 @@ export function AiChatSidebar() {
         setIsLoading(true);
 
         try {
-            // Get AI provider
-            const providers = useModelsStore.getState().providers;
-            const activeProvider = providers.find((p) => p.defaultModelId);
-            if (!activeProvider || !activeProvider.defaultModelId) {
+            if (!activeModel) {
                 throw new Error("No AI model configured. Go to AI Models to set one up.");
             }
 
@@ -98,13 +105,13 @@ export function AiChatSidebar() {
                 }
             }
 
-            const apiKey = await vaultGet(`ai_key_${activeProvider.id}`);
+            const apiKey = await vaultGet(`ai_key_${activeModel.providerId}`);
 
             const result = await aiGenerateQuery(
-                activeProvider.type,
-                activeProvider.baseUrl || null,
+                activeModel.providerType,
+                activeModel.baseUrl || null,
                 apiKey,
-                activeProvider.defaultModelId,
+                activeModel.modelId,
                 input.trim(),
                 schemaContext,
                 ""
@@ -155,6 +162,26 @@ export function AiChatSidebar() {
                 <div className="px-3 py-1.5 border-b text-[10px] text-muted-foreground bg-muted/20 shrink-0">
                     Connected: <span className="text-foreground font-medium">{firstProfile.name}</span>
                     {firstDb && <> / <span className="text-foreground font-medium">{firstDb}</span></>}
+                </div>
+            )}
+
+            {/* Model selector */}
+            {allModels.length > 0 && (
+                <div className="px-3 py-1.5 border-b shrink-0 bg-muted/10">
+                    <div className="relative">
+                        <select
+                            value={activeModel ? `${activeModel.providerId}::${activeModel.modelId}` : ""}
+                            onChange={(e) => setSelectedModelKey(e.target.value)}
+                            className="w-full text-[11px] bg-muted/30 border rounded px-2 py-1 pr-6 appearance-none cursor-pointer focus:outline-none focus:ring-1 focus:ring-indigo-500/50 truncate"
+                        >
+                            {allModels.map((m) => (
+                                <option key={`${m.providerId}::${m.modelId}`} value={`${m.providerId}::${m.modelId}`}>
+                                    {m.modelName} ({m.providerName})
+                                </option>
+                            ))}
+                        </select>
+                        <ChevronDown className="absolute right-1.5 top-1/2 -translate-y-1/2 w-3 h-3 text-muted-foreground pointer-events-none" />
+                    </div>
                 </div>
             )}
 

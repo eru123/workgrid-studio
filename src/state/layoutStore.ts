@@ -111,7 +111,7 @@ function updateLeaf(
 export const useLayoutStore = create<LayoutState>((set) => ({
   activityBarWidth: 48,
   primarySidebarWidth: 260,
-  secondarySidebarWidth: 200,
+  secondarySidebarWidth: 300,
   bottomPanelHeight: 300,
 
   isPrimarySidebarVisible: true,
@@ -168,7 +168,7 @@ export const useLayoutStore = create<LayoutState>((set) => ({
     set((state) => ({ isSecondarySidebarVisible: !state.isSecondarySidebarVisible })),
   adjustSecondarySidebarWidth: (delta) =>
     set((state) => ({
-      secondarySidebarWidth: Math.max(200, Math.min(state.secondarySidebarWidth + delta, 600)),
+      secondarySidebarWidth: Math.max(250, Math.min(state.secondarySidebarWidth + delta, 600)),
     })),
 
   openTab: (tabData, leafId) =>

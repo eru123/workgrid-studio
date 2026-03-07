@@ -256,8 +256,8 @@ export function Workbench() {
               style={{ width: secondarySidebarWidth }}
             >
               <Sash
-                direction="vertical"
-                className="left-0 -translate-x-0.5"
+                direction="horizontal"
+                className="absolute top-0 bottom-0 left-0 w-1 cursor-col-resize"
                 onDrag={(delta) => adjustSecondarySidebarWidth(-delta)}
               />
               <AiChatSidebar />
