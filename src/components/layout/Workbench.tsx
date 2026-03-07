@@ -327,12 +327,17 @@ function BottomPanel() {
 
   // ── Problems fetching ───────────────────────────────────────────
   const fetchProblems = useCallback(async () => {
-    if (connectedProfiles.length === 0) {
+    // Read directly from the store to avoid referential dependency issues
+    // that cause infinite re-render loops when the component updates
+    const stateProfiles = useProfilesStore.getState().profiles;
+    const currentConnected = stateProfiles.filter((p) => p.connectionStatus === "connected");
+
+    if (currentConnected.length === 0) {
       setProblems([]);
       return;
     }
     const allProblems: ProblemItem[] = [];
-    for (const p of connectedProfiles) {
+    for (const p of currentConnected) {
       try {
         const raw = await readProfileLog(p.id, "error");
         const parsed = parseProblems(p.id, p.name, p.color, raw);
@@ -342,7 +347,7 @@ function BottomPanel() {
       }
     }
     // Also check profiles with error status that aren't connected
-    for (const p of profiles.filter((p) => p.connectionStatus === "error")) {
+    for (const p of stateProfiles.filter((p) => p.connectionStatus === "error")) {
       allProblems.push({
         id: `status-${p.id}`,
         severity: "error",
@@ -357,7 +362,7 @@ function BottomPanel() {
     // Sort newest first
     allProblems.reverse();
     setProblems(allProblems);
-  }, [connectedProfiles, profiles]);
+  }, []);
 
   useEffect(() => {
     fetchProblems();
