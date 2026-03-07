@@ -80,11 +80,15 @@ export function Workbench() {
         } else if (e.key.toLowerCase() === "b") {
           e.preventDefault();
           toggleSidebar();
+        } else if (e.key.toLowerCase() === "n") {
+          e.preventDefault();
+          e.stopPropagation();
+          useLayoutStore.getState().openTab({ title: "New Query", type: "sql", meta: {} });
         }
       }
     };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
+    window.addEventListener("keydown", handleKeyDown, true);
+    return () => window.removeEventListener("keydown", handleKeyDown, true);
   }, [togglePanel, toggleSidebar]);
 
   return (
