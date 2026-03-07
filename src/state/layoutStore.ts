@@ -53,8 +53,10 @@ interface LayoutState {
 
   activeView: ActivityView;
   editorTree: SplitTree;
+  activeLeafId: string | null;
 
   setActiveView: (view: ActivityView) => void;
+  setActiveLeaf: (leafId: string) => void;
   setSidebarWidth: (width: number) => void;
   adjustSidebarWidth: (delta: number) => void;
   setPanelHeight: (height: number) => void;
@@ -121,6 +123,7 @@ export const useLayoutStore = create<LayoutState>((set) => ({
     tabs: [],
     activeTabId: null,
   },
+  activeLeafId: "root-editor",
 
   setActiveView: (view) =>
     set((state) => ({
@@ -130,6 +133,8 @@ export const useLayoutStore = create<LayoutState>((set) => ({
           ? false
           : true,
     })),
+
+  setActiveLeaf: (leafId) => set({ activeLeafId: leafId }),
 
   setSidebarWidth: (width) =>
     set({ primarySidebarWidth: Math.max(180, Math.min(width, 600)) }),
@@ -159,9 +164,15 @@ export const useLayoutStore = create<LayoutState>((set) => ({
 
   openTab: (tabData, leafId) =>
     set((state) => {
-      const targetLeaf = leafId
-        ? findLeafById(state.editorTree, leafId)
-        : findFirstLeaf(state.editorTree);
+      let targetLeaf = null;
+      if (leafId) {
+        targetLeaf = findLeafById(state.editorTree, leafId);
+      } else if (state.activeLeafId) {
+        targetLeaf = findLeafById(state.editorTree, state.activeLeafId);
+      }
+      if (!targetLeaf) {
+        targetLeaf = findFirstLeaf(state.editorTree);
+      }
       if (!targetLeaf) return state;
 
       // Build a dedup key: for database-view tabs, use profileId+database;
@@ -305,10 +316,14 @@ export const useLayoutStore = create<LayoutState>((set) => ({
       }
 
       const newTree = removeLeaf(state.editorTree);
+      const updates: Partial<LayoutState> = {};
       if (newTree) {
-        return { editorTree: newTree };
+        updates.editorTree = newTree;
       }
-      return state;
+      if (state.activeLeafId === leafId) {
+        updates.activeLeafId = null;
+      }
+      return updates;
     }),
 
   resizeNode: (nodeId, newRatio) =>

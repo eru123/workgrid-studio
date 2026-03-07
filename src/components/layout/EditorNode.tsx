@@ -146,8 +146,10 @@ export function EditorNode({ tree }: { tree: SplitTree }) {
   const closeAllTabs = useLayoutStore((s) => s.closeAllTabs);
   const splitLeaf = useLayoutStore((s) => s.splitLeaf);
   const closeLeaf = useLayoutStore((s) => s.closeLeaf);
+  const setActiveLeaf = useLayoutStore((s) => s.setActiveLeaf);
   const setActiveTab = useLayoutStore((s) => s.setActiveTab);
   const connectedProfiles = useSchemaStore((s) => s.connectedProfiles);
+  const activeLeafId = useLayoutStore((s) => s.activeLeafId);
 
   const [contextMenu, setContextMenu] = useState<{
     x: number;
@@ -173,7 +175,7 @@ export function EditorNode({ tree }: { tree: SplitTree }) {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.ctrlKey && e.key.toLowerCase() === "w") {
         e.preventDefault();
-        if (tree.activeTabId) {
+        if (tree.activeTabId && activeLeafId === tree.id) {
           closeTab(tree.activeTabId, tree.id);
         }
       }
@@ -181,11 +183,18 @@ export function EditorNode({ tree }: { tree: SplitTree }) {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [tree, closeTab]);
+  }, [tree, closeTab, activeLeafId]);
 
   if (tree.type === "leaf") {
+    const isLeafActive = activeLeafId === tree.id;
     return (
-      <div className="flex-1 w-full h-full bg-background border rounded-sm overflow-hidden flex flex-col">
+      <div
+        className={cn(
+          "flex-1 w-full h-full bg-background border rounded-sm overflow-hidden flex flex-col transition-colors",
+          isLeafActive ? "border-primary/50" : "border-border"
+        )}
+        onClickCapture={() => setActiveLeaf(tree.id)}
+      >
         {/* Tab bar */}
         <div
           className="shrink-0 relative border-b bg-muted/30"
