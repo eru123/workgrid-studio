@@ -144,6 +144,8 @@ export function EditorNode({ tree }: { tree: SplitTree }) {
   const closeOtherTabs = useLayoutStore((s) => s.closeOtherTabs);
   const closeTabsToRight = useLayoutStore((s) => s.closeTabsToRight);
   const closeAllTabs = useLayoutStore((s) => s.closeAllTabs);
+  const splitLeaf = useLayoutStore((s) => s.splitLeaf);
+  const closeLeaf = useLayoutStore((s) => s.closeLeaf);
   const setActiveTab = useLayoutStore((s) => s.setActiveTab);
   const connectedProfiles = useSchemaStore((s) => s.connectedProfiles);
 
@@ -242,6 +244,34 @@ export function EditorNode({ tree }: { tree: SplitTree }) {
             >
               <Plus className="w-3.5 h-3.5" />
             </button>
+
+            {/* Spacer to push actions to the right */}
+            <div className="flex-1 min-w-[20px]" />
+
+            {/* Pane Actions (always visible on hover of the tab bar, or just keep them subtle) */}
+            <div className="flex items-center px-2 py-1 gap-1 shrink-0">
+              <button
+                onClick={() => splitLeaf(tree.id, "horizontal")}
+                className="p-1 rounded text-muted-foreground/60 hover:text-foreground hover:bg-accent/60 transition-colors"
+                title="Split Right"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="18" x="3" y="3" rx="2" ry="2" /><line x1="15" x2="15" y1="3" y2="21" /></svg>
+              </button>
+              <button
+                onClick={() => splitLeaf(tree.id, "vertical")}
+                className="p-1 rounded text-muted-foreground/60 hover:text-foreground hover:bg-accent/60 transition-colors"
+                title="Split Down"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="18" x="3" y="3" rx="2" ry="2" /><line x1="3" x2="21" y1="15" y2="15" /></svg>
+              </button>
+              <button
+                onClick={() => closeLeaf(tree.id)}
+                className="p-1 rounded text-muted-foreground/60 hover:text-red-400 hover:bg-red-400/10 transition-colors ml-1"
+                title="Close Pane"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
           </div>
         </div>
 

@@ -275,9 +275,41 @@ export const useLayoutStore = create<LayoutState>((set) => ({
       return { editorTree: newTree };
     }),
 
-  closeLeaf: (_leafId) => {
-    // Merge neighbor logic — TODO
-  },
+  closeLeaf: (leafId) =>
+    set((state) => {
+      // If the tree is just the leaf itself, simply clear its tabs
+      if (state.editorTree.type === "leaf" && state.editorTree.id === leafId) {
+        return {
+          editorTree: { ...state.editorTree, tabs: [], activeTabId: null },
+        };
+      }
+
+      // Helper to traverse and remove the leaf, pulling up the sibling
+      function removeLeaf(tree: SplitTree): SplitTree | null {
+        if (tree.type === "leaf") {
+          return tree.id === leafId ? null : tree;
+        }
+
+        const nextA = removeLeaf(tree.a);
+        const nextB = removeLeaf(tree.b);
+
+        // If left was removed, return right (merging right child up)
+        if (!nextA && nextB) return nextB;
+        // If right was removed, return left (merging left child up)
+        if (!nextB && nextA) return nextA;
+        // If both were removed (shouldn't happen), return null
+        if (!nextA && !nextB) return null;
+
+        // Neither removed directly below this node, just update children
+        return { ...tree, a: nextA as SplitTree, b: nextB as SplitTree };
+      }
+
+      const newTree = removeLeaf(state.editorTree);
+      if (newTree) {
+        return { editorTree: newTree };
+      }
+      return state;
+    }),
 
   resizeNode: (nodeId, newRatio) =>
     set((state) => ({
@@ -343,10 +375,10 @@ function updateTabInTree(
       tabs: tree.tabs.map((t) =>
         t.id === tabId
           ? {
-              ...t,
-              ...updates,
-              meta: updates.meta ? { ...t.meta, ...updates.meta } : t.meta,
-            }
+            ...t,
+            ...updates,
+            meta: updates.meta ? { ...t.meta, ...updates.meta } : t.meta,
+          }
           : t,
       ),
     };
