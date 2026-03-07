@@ -22,8 +22,10 @@ import {
   Settings,
   Trash2,
   RefreshCw,
+  Sparkles,
 } from "lucide-react";
 import { ServersSidebar } from "@/components/views/ServersSidebar";
+import { AiChatSidebar } from "@/components/views/AiChatSidebar";
 
 const activityItems: { id: ActivityView; icon: any; label: string }[] = [
   { id: "explorer", icon: FolderTree, label: "Explorer" },
@@ -51,6 +53,10 @@ export function Workbench() {
   const toggleSidebar = useLayoutStore((s) => s.toggleSidebar);
   const togglePanel = useLayoutStore((s) => s.togglePanel);
   const openTab = useLayoutStore((s) => s.openTab);
+  const isSecondarySidebarVisible = useLayoutStore((s) => s.isSecondarySidebarVisible);
+  const secondarySidebarWidth = useLayoutStore((s) => s.secondarySidebarWidth);
+  const toggleSecondarySidebar = useLayoutStore((s) => s.toggleSecondarySidebar);
+  const adjustSecondarySidebarWidth = useLayoutStore((s) => s.adjustSecondarySidebarWidth);
 
   // Theme Toggle Logic
   const globalPrefs = useProfilesStore((s) => s.globalPreferences);
@@ -143,6 +149,19 @@ export function Workbench() {
           </button>
 
           <button
+            onClick={toggleSecondarySidebar}
+            className={cn(
+              "w-10 h-10 flex items-center justify-center rounded-md transition-colors",
+              isSecondarySidebarVisible
+                ? "text-indigo-400 bg-accent"
+                : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
+            )}
+            title="AI Chat"
+          >
+            <Sparkles className="w-5 h-5" />
+          </button>
+
+          <button
             onClick={handleToggleTheme}
             className="w-10 h-10 flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors"
             title={`Theme: ${theme.charAt(0).toUpperCase() + theme.slice(1)}`}
@@ -229,6 +248,21 @@ export function Workbench() {
           <div className="flex-1 relative p-0.5 min-w-0 min-h-0">
             <EditorNode tree={editorTree} />
           </div>
+
+          {/* Secondary Sidebar (AI Chat) */}
+          {isSecondarySidebarVisible && (
+            <div
+              className="relative bg-muted/10 border-l flex flex-col shrink-0"
+              style={{ width: secondarySidebarWidth }}
+            >
+              <Sash
+                direction="vertical"
+                className="left-0 -translate-x-0.5"
+                onDrag={(delta) => adjustSecondarySidebarWidth(-delta)}
+              />
+              <AiChatSidebar />
+            </div>
+          )}
         </div>
 
         {/* Bottom Panel */}

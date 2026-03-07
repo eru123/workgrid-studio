@@ -64,6 +64,8 @@ interface LayoutState {
   adjustPanelHeight: (delta: number) => void;
   toggleSidebar: () => void;
   togglePanel: () => void;
+  toggleSecondarySidebar: () => void;
+  adjustSecondarySidebarWidth: (delta: number) => void;
 
   // Tab operations
   openTab: (tab: Omit<EditorTab, "id">, leafId?: string) => void;
@@ -162,6 +164,12 @@ export const useLayoutStore = create<LayoutState>((set) => ({
     })),
   togglePanel: () =>
     set((state) => ({ isBottomPanelVisible: !state.isBottomPanelVisible })),
+  toggleSecondarySidebar: () =>
+    set((state) => ({ isSecondarySidebarVisible: !state.isSecondarySidebarVisible })),
+  adjustSecondarySidebarWidth: (delta) =>
+    set((state) => ({
+      secondarySidebarWidth: Math.max(200, Math.min(state.secondarySidebarWidth + delta, 600)),
+    })),
 
   openTab: (tabData, leafId) =>
     set((state) => {
