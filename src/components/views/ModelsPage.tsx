@@ -1,12 +1,16 @@
 import { useState } from "react";
 import { useModelsStore, ModelProvider } from "@/state/modelsStore";
+import { vaultSet, vaultDelete, aiGenerateQuery } from "@/lib/db";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/Card";
+import { Loader2, CheckCircle2, XCircle } from "lucide-react";
 
 export function ModelsPage() {
     const { providers, addProvider, deleteProvider, selectedProviderId, setSelectedProviderId } = useModelsStore();
     const [isAdding, setIsAdding] = useState(false);
+    const [isTesting, setIsTesting] = useState<Record<string, boolean>>({});
+    const [testResult, setTestResult] = useState<Record<string, "success" | "error" | null>>({});
 
     const [newProv, setNewProv] = useState<Partial<ModelProvider>>({
         type: "openai",
@@ -15,17 +19,57 @@ export function ModelsPage() {
         apiKeyRef: "", // UI will pass reference value
     });
 
-    const handleAdd = () => {
+    const handleAdd = async () => {
         if (!newProv.name) return;
+
+        const id = crypto.randomUUID();
+        // Since we cannot securely query the vault simply, we'll prefix "prov_" to store the key.
+        const ref = `prov_${id}`;
+
+        if (newProv.apiKeyRef) {
+            await vaultSet(ref, newProv.apiKeyRef);
+        }
+
         addProvider({
-            id: crypto.randomUUID(),
+            id,
             type: newProv.type as ModelProvider["type"],
             name: newProv.name,
             baseUrl: newProv.baseUrl,
-            apiKeyRef: newProv.apiKeyRef,
+            apiKeyRef: ref,
             models: [],
         });
+
+        setNewProv({ type: "openai", name: "", baseUrl: "", apiKeyRef: "" });
         setIsAdding(false);
+    };
+
+    const handleDelete = async (p: ModelProvider) => {
+        if (p.apiKeyRef) {
+            await vaultDelete(p.apiKeyRef);
+        }
+        deleteProvider(p.id);
+    };
+
+    const handleTest = async (p: ModelProvider) => {
+        setIsTesting((s) => ({ ...s, [p.id]: true }));
+        setTestResult((s) => ({ ...s, [p.id]: null }));
+        try {
+            // A simple prompt to ensure it works
+            await aiGenerateQuery(
+                p.type,
+                p.baseUrl || null,
+                p.apiKeyRef || "",
+                p.defaultModelId || "",
+                "SELECT 1;",
+                "No schema context needed for this test."
+            );
+            setTestResult((s) => ({ ...s, [p.id]: "success" }));
+        } catch (e) {
+            console.error("Test connection failed:", e);
+            setTestResult((s) => ({ ...s, [p.id]: "error" }));
+        } finally {
+            setIsTesting((s) => ({ ...s, [p.id]: false }));
+        }
     };
 
     return (
@@ -105,8 +149,18 @@ export function ModelsPage() {
                                 >
                                     {p.id === selectedProviderId ? "Selected" : "Select Default"}
                                 </Button>
-                                <Button variant="outline" size="sm">Test Connection</Button>
-                                <Button variant="destructive" size="sm" onClick={() => deleteProvider(p.id)}>Remove</Button>
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    disabled={isTesting[p.id]}
+                                    onClick={() => handleTest(p)}
+                                    className="gap-2"
+                                >
+                                    {isTesting[p.id] ? <Loader2 className="w-4 h-4 animate-spin" /> : "Test Connection"}
+                                    {testResult[p.id] === "success" && <CheckCircle2 className="w-4 h-4 text-green-500" />}
+                                    {testResult[p.id] === "error" && <XCircle className="w-4 h-4 text-red-500" />}
+                                </Button>
+                                <Button variant="destructive" size="sm" onClick={() => handleDelete(p)}>Remove</Button>
                             </div>
                         </CardContent>
                     </Card>

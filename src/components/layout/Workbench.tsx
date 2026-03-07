@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { useLayoutStore, ActivityView } from "@/state/layoutStore";
 import { useProfilesStore } from "@/state/profilesStore";
 import { useSchemaStore } from "@/state/schemaStore";
+import { useModelsStore } from "@/state/modelsStore";
 import { useAppVersion } from "@/hooks/useAppVersion";
 import { Sash } from "./Sash";
 import { EditorNode } from "./EditorNode";
@@ -46,6 +47,12 @@ export function Workbench() {
   const toggleSidebar = useLayoutStore((s) => s.toggleSidebar);
   const togglePanel = useLayoutStore((s) => s.togglePanel);
   const openTab = useLayoutStore((s) => s.openTab);
+
+  // App Initialization
+  useEffect(() => {
+    useProfilesStore.getState().loadProfiles();
+    useModelsStore.getState().loadProviders();
+  }, []);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {

@@ -167,3 +167,37 @@ export interface QueryResultSet {
 export async function dbQuery(profileId: string, query: string): Promise<QueryResultSet[]> {
     return invoke<QueryResultSet[]>("db_query", { profileId, query });
 }
+
+// ─── Vault (Secure Storage) ─────────────────────────────────────────
+
+export async function vaultSet(key: string, secret: string): Promise<void> {
+    return invoke<void>("vault_set", { key, secret });
+}
+
+export async function vaultGet(key: string): Promise<string> {
+    return invoke<string>("vault_get", { key });
+}
+
+export async function vaultDelete(key: string): Promise<void> {
+    return invoke<void>("vault_delete", { key });
+}
+
+// ─── AI Generation ──────────────────────────────────────────────────
+
+export async function aiGenerateQuery(
+    providerType: "openai" | "gemini" | "deepseek" | "other",
+    baseUrl: string | null,
+    apiKeyRef: string,
+    modelId: string,
+    prompt: string,
+    schemaContext: string
+): Promise<string> {
+    return invoke<string>("ai_generate_query", {
+        providerType,
+        baseUrl,
+        apiKeyRef,
+        modelId,
+        prompt,
+        schemaContext
+    });
+}

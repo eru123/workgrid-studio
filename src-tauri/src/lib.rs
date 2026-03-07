@@ -1,12 +1,23 @@
+use tauri::State;
+use std::env;
+use std::path::PathBuf;
+use std::fs::{self, OpenOptions};
+use std::io::Write;
+use std::sync::Mutex;
+use std::collections::HashMap;
+
 use mysql_async::prelude::*;
 use mysql_async::{Opts, OptsBuilder, Pool};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::fs::{self, OpenOptions};
-use std::io::Write;
-use std::path::PathBuf;
-use std::sync::Mutex;
-use tauri::State;
+
+// Crypto & HTTP imports
+use aes_gcm::{
+    aead::{Aead, KeyInit},
+    Aes256Gcm, Nonce,
+};
+use base64::{engine::general_purpose::STANDARD as b64, Engine};
+use rand::RngCore;
+use reqwest::Client;
 
 // ─── App Data Dir ───────────────────────────────────────────────────
 
@@ -948,6 +959,257 @@ async fn db_query(
     Ok(results)
 }
 
+// ─── Vault (Secure Storage) ─────────────────────────────────────────
+
+// A static derived key from machine-specific or fallback string to encrypt stored secrets locally
+fn get_vault_key() -> [u8; 32] {
+    let mut key = [0u8; 32];
+    // In a real app we would use OS keyring or machine ID. 
+    // For this portable local app, we use a constant salt + username or fallback.
+    let user = env::var("USERNAME").or_else(|_| env::var("USER")).unwrap_or_else(|_| "default_user".to_string());
+    let salt = format!("workgrid_studio_local_vault_{}", user);
+    let bytes = salt.as_bytes();
+    for i in 0..key.len() {
+        key[i] = bytes.get(i).copied().unwrap_or(42);
+    }
+    key
+}
+
+#[tauri::command]
+fn vault_set(key: String, secret: String) -> Result<(), String> {
+    let base = ensure_app_dirs()?;
+    let vault_path = base.join(".vault");
+    
+    let mut vault: HashMap<String, String> = if vault_path.exists() {
+        let content = fs::read_to_string(&vault_path).unwrap_or_default();
+        serde_json::from_str(&content).unwrap_or_default()
+    } else {
+        HashMap::new()
+    };
+
+    // Encrypt the secret
+    let cipher_key = get_vault_key();
+    let cipher = Aes256Gcm::new(&cipher_key.into());
+    let mut nonce_bytes = [0u8; 12];
+    rand::thread_rng().fill_bytes(&mut nonce_bytes);
+    let nonce = Nonce::from_slice(&nonce_bytes);
+    
+    let ciphertext = cipher.encrypt(nonce, secret.as_bytes())
+        .map_err(|_| "Encryption failed".to_string())?;
+        
+    let mut combined = nonce_bytes.to_vec();
+    combined.extend(ciphertext);
+    let encrypted_b64 = b64.encode(combined);
+
+    vault.insert(key, encrypted_b64);
+    
+    let serialized = serde_json::to_string(&vault).map_err(|e| e.to_string())?;
+    fs::write(vault_path, serialized).map_err(|e| e.to_string())?;
+    
+    Ok(())
+}
+
+#[tauri::command]
+fn vault_get(key: String) -> Result<String, String> {
+    let base = ensure_app_dirs()?;
+    let vault_path = base.join(".vault");
+    
+    if !vault_path.exists() {
+        return Err("No vault found".to_string());
+    }
+    
+    let content = fs::read_to_string(&vault_path).map_err(|e| e.to_string())?;
+    let vault: HashMap<String, String> = serde_json::from_str(&content).map_err(|e| e.to_string())?;
+    
+    let encrypted_b64 = vault.get(&key).ok_or("Key not found in vault")?;
+    let combined = b64.decode(encrypted_b64).map_err(|_| "Invalid base64 payload")?;
+    
+    if combined.len() < 12 {
+        return Err("Payload too short".to_string());
+    }
+    
+    let nonce = Nonce::from_slice(&combined[0..12]);
+    let ciphertext = &combined[12..];
+    
+    let cipher_key = get_vault_key();
+    let cipher = Aes256Gcm::new(&cipher_key.into());
+    
+    let plaintext = cipher.decrypt(nonce, ciphertext)
+        .map_err(|_| "Decryption failed (bad key or corrupted data)".to_string())?;
+        
+    String::from_utf8(plaintext).map_err(|_| "Invalid UTF-8 in secret".to_string())
+}
+
+#[tauri::command]
+fn vault_delete(key: String) -> Result<(), String> {
+    let base = ensure_app_dirs()?;
+    let vault_path = base.join(".vault");
+    
+    if vault_path.exists() {
+        let content = fs::read_to_string(&vault_path).unwrap_or_default();
+        let mut vault: HashMap<String, String> = serde_json::from_str(&content).unwrap_or_default();
+        vault.remove(&key);
+        let serialized = serde_json::to_string(&vault).unwrap_or_default();
+        fs::write(vault_path, serialized).map_err(|e| e.to_string())?;
+    }
+    
+    Ok(())
+}
+
+// ─── AI Generation ──────────────────────────────────────────────────
+
+#[derive(Serialize)]
+struct AnthropicMessage {
+    role: String,
+    content: String,
+}
+
+#[derive(Serialize)]
+struct AnthropicPayload {
+    model: String,
+    messages: Vec<AnthropicMessage>,
+    max_tokens: u32,
+}
+
+#[derive(Serialize)]
+struct OpenAIPayload {
+    model: String,
+    messages: Vec<AnthropicMessage>,
+}
+
+#[derive(Deserialize)]
+struct OpenAIChoice {
+    message: OpenAIResponseMsg,
+}
+
+#[derive(Deserialize)]
+struct OpenAIResponseMsg {
+    content: String,
+}
+
+#[derive(Deserialize)]
+struct OpenAIResponse {
+    choices: Vec<OpenAIChoice>,
+}
+
+#[tauri::command]
+async fn ai_generate_query(
+    provider_type: String, // "openai", "gemini", "deepseek", "other"
+    base_url: Option<String>,
+    api_key_ref: String,
+    model_id: String,
+    prompt: String,
+    schema_context: String,
+) -> Result<String, String> {
+    let api_key = vault_get(api_key_ref)?;
+    let client = Client::new();
+    
+    let system_prompt = format!(
+        "You are an expert SQL assistant for Workgrid Studio. \
+        The user needs a query for the following database schema context:\n{}\n\
+        Output ONLY the raw SQL query. Do not wrap it in markdown codeblocks (```sql ... ```). \
+        Do not add explanations.",
+        schema_context
+    );
+    
+    let user_prompt = prompt;
+
+    match provider_type.as_str() {
+        "openai" | "deepseek" | "other" => {
+            let url = base_url.unwrap_or_else(|| {
+                if provider_type == "deepseek" {
+                    "https://api.deepseek.com/chat/completions".to_string()
+                } else {
+                    "https://api.openai.com/v1/chat/completions".to_string()
+                }
+            });
+            
+            let payload = OpenAIPayload {
+                model: if model_id.is_empty() { "gpt-4o".to_string() } else { model_id },
+                messages: vec![
+                    AnthropicMessage { role: "system".to_string(), content: system_prompt },
+                    AnthropicMessage { role: "user".to_string(), content: user_prompt },
+                ],
+            };
+            
+            let res = client.post(&url)
+                .bearer_auth(api_key)
+                .json(&payload)
+                .send()
+                .await
+                .map_err(|e| format!("HTTP request failed: {}", e))?;
+                
+            let status = res.status();
+            if !status.is_success() {
+                let text = res.text().await.unwrap_or_default();
+                return Err(format!("API Error ({}): {}", status, text));
+            }
+            
+            let parsed: OpenAIResponse = res.json()
+                .await
+                .map_err(|e| format!("Failed to parse response: {}", e))?;
+                
+            if let Some(choice) = parsed.choices.first() {
+                let content = choice.message.content.trim().to_string();
+                // Strip markdown codeblocks if AI disobeyed
+                let cleaned = content
+                    .strip_prefix("```sql").unwrap_or(&content)
+                    .strip_prefix("```").unwrap_or(&content)
+                    .strip_suffix("```").unwrap_or(&content)
+                    .trim()
+                    .to_string();
+                Ok(cleaned)
+            } else {
+                Err("No choices returned from AI provider".to_string())
+            }
+        },
+        "gemini" => {
+            // Very simple Gemini impl via proxy or google generative AI SDK format
+            // Here assuming proxy to openai-compatible gemini endpoint
+            let url = base_url.unwrap_or_else(|| "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions".to_string());
+            
+            let payload = OpenAIPayload {
+                model: if model_id.is_empty() { "gemini-2.5-flash".to_string() } else { model_id },
+                messages: vec![
+                    AnthropicMessage { role: "system".to_string(), content: system_prompt },
+                    AnthropicMessage { role: "user".to_string(), content: user_prompt },
+                ],
+            };
+            
+            let res = client.post(&url)
+                .bearer_auth(api_key)
+                .json(&payload)
+                .send()
+                .await
+                .map_err(|e| format!("HTTP request failed: {}", e))?;
+                
+            let status = res.status();
+            if !status.is_success() {
+                let text = res.text().await.unwrap_or_default();
+                return Err(format!("API Error ({}): {}", status, text));
+            }
+            
+            let parsed: OpenAIResponse = res.json()
+                .await
+                .map_err(|e| format!("Failed to parse response: {}", e))?;
+                
+            if let Some(choice) = parsed.choices.first() {
+                let content = choice.message.content.trim().to_string();
+                let cleaned = content
+                    .strip_prefix("```sql").unwrap_or(&content)
+                    .strip_prefix("```").unwrap_or(&content)
+                    .strip_suffix("```").unwrap_or(&content)
+                    .trim()
+                    .to_string();
+                Ok(cleaned)
+            } else {
+                Err("No choices returned from AI provider".to_string())
+            }
+        },
+        _ => Err("Unsupported provider type".to_string())
+    }
+}
+
 #[tauri::command]
 fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
@@ -1025,6 +1287,10 @@ pub fn run() {
             db_execute_query,
             db_get_collations,
             db_query,
+            vault_set,
+            vault_get,
+            vault_delete,
+            ai_generate_query
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

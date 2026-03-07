@@ -16,6 +16,8 @@ import { SqlAutocomplete } from "@/components/ui/SqlAutocomplete";
 import { useSchemaStore } from "@/state/schemaStore";
 import { useLayoutStore } from "@/state/layoutStore";
 import { useAppStore } from "@/state/appStore";
+import { useModelsStore } from "@/state/modelsStore";
+import { aiGenerateQuery } from "@/lib/db";
 import {
   Play,
   Square,
@@ -33,6 +35,7 @@ import {
   WrapText,
   RotateCcw,
   AlignLeft,
+  Bot
 } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 
@@ -263,6 +266,7 @@ export function QueryTab({
   );
   const [textareaContentWidth, setTextareaContentWidth] = useState(0);
   const [isFormatting, setIsFormatting] = useState(false);
+  const [isAskingAI, setIsAskingAI] = useState(false);
 
   // ── Autocomplete state ──────────────────────────────────────
   const [acVisible, setAcVisible] = useState(false);
@@ -619,6 +623,72 @@ export function QueryTab({
     // Defer revocation to give the browser time to initiate the download
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }, [results, activeResultIdx]);
+
+  // ── Ask AI ─────────────────────────────────────────────────
+  const handleAskAI = useCallback(async () => {
+    const { selectedProviderId, providers } = useModelsStore.getState();
+    const activeProvider = providers.find((p) => p.id === selectedProviderId);
+
+    if (!activeProvider) {
+      useAppStore.getState().addToast({
+        title: "No AI Provider",
+        description: "Please select an AI provider in the Models tab first.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const prompt = window.prompt("Ask AI to generate a SQL query:");
+    if (!prompt || !prompt.trim()) return;
+
+    setIsAskingAI(true);
+    try {
+      // Build schema context
+      const { tables, columns } = useSchemaStore.getState();
+      const dbTables = tables[`${profileId}::${selectedDb}`] || [];
+
+      let schemaContext = "No schema selected.";
+      if (dbTables.length > 0) {
+        schemaContext = dbTables.map(tName => {
+          const tCols = columns[`${profileId}::${selectedDb}::${tName}`] || [];
+          const colDefs = tCols.length > 0
+            ? tCols.map(c => `${c.name} (${c.col_type})`).join(", ")
+            : "unknown columns";
+          return `Table \`${tName}\`: ${colDefs}`;
+        }).join("\n");
+      }
+
+      const generatedSql = await aiGenerateQuery(
+        activeProvider.type,
+        activeProvider.baseUrl || null,
+        activeProvider.apiKeyRef || "",
+        activeProvider.defaultModelId || "",
+        prompt,
+        schemaContext
+      );
+
+      // Insert at current cursor position
+      const nextValue = `${sql.slice(0, cursorPos)}${generatedSql}${sql.slice(cursorPos)}`;
+      const nextPos = cursorPos + generatedSql.length;
+      setSql(nextValue);
+      setCursorPos(nextPos);
+
+      useAppStore.getState().addToast({
+        title: "AI Response",
+        description: "Query generated successfully.",
+        variant: "default",
+      });
+    } catch (e: any) {
+      console.error(e);
+      useAppStore.getState().addToast({
+        title: "AI Error",
+        description: e.message || String(e),
+        variant: "destructive",
+      });
+    } finally {
+      setIsAskingAI(false);
+    }
+  }, [selectedDb, profileId, sql, cursorPos, setSql, setCursorPos]);
 
   // ── Drag handle ───────────────────────────────────────────
   const handleDragStart = useCallback(
@@ -1443,6 +1513,25 @@ export function QueryTab({
           <WrapText className="w-3.5 h-3.5" />
           <span>Wrap Text</span>
         </button>
+
+        <div className="w-px h-5 bg-border mx-1" />
+
+        {/* Ask AI */}
+        <ToolBtn
+          icon={
+            isAskingAI ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Bot className="w-4 h-4" />
+            )
+          }
+          title="Ask AI to generate a query based on the schema"
+          onClick={handleAskAI}
+          disabled={running || isAskingAI}
+          active={false}
+          accent="text-indigo-400"
+          label="Ask AI"
+        />
 
         <div className="w-px h-5 bg-border mx-1" />
 
