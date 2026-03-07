@@ -192,6 +192,8 @@ pub struct ConnectParams {
     pub password: String,
     pub database: Option<String>,
     pub ssl: bool,
+    #[serde(default)]
+    pub db_type: String,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -226,8 +228,20 @@ async fn db_connect(
     params: ConnectParams,
 ) -> Result<String, String> {
     let pid = params.profile_id.clone();
+    let db_type = params.db_type.as_str();
+
+    // Backend safety net: only mysql and mariadb are supported
+    if !db_type.is_empty() && db_type != "mysql" && db_type != "mariadb" {
+        let msg = format!(
+            "Unsupported database type '{}'. Only MySQL and MariaDB are supported in this version.",
+            db_type
+        );
+        log_error(&pid, &msg);
+        return Err(msg);
+    }
+
     let target = format!("{}@{}:{}", params.user, params.host, params.port);
-    log_info(&pid, &format!("Connecting to {} ...", target));
+    log_info(&pid, &format!("Connecting to {} ({}) ...", target, if db_type.is_empty() { "mysql" } else { db_type }));
 
     let mut builder = OptsBuilder::default()
         .ip_or_hostname(params.host.clone())

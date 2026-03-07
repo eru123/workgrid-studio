@@ -165,6 +165,7 @@ export function ServersSidebar() {
           password: profile.password,
           database: profile.database || null,
           ssl: profile.ssl,
+          db_type: profile.type,
         });
         setConnectionStatus(id, "connected");
         addConnection(id, profile.name, profile.color);

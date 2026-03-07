@@ -134,6 +134,7 @@ export function DbManagerView() {
           password: profile.password,
           database: profile.database || null,
           ssl: profile.ssl,
+          db_type: profile.type,
         });
         setConnectionStatus(id, "connected");
         addConnection(id, profile.name, profile.color);
@@ -149,32 +150,13 @@ export function DbManagerView() {
   const handleDoubleClick = async (id: string) => {
     const profile = profiles.find((p) => p.id === id);
     if (!profile) return;
-    setConnectError(null);
 
     if (profile.connectionStatus === "connected") {
       // Already connected, just switch view
       setActiveView("explorer");
     } else {
-      // Real connection via Tauri backend
-      setConnectionStatus(id, "connecting");
-      try {
-        await dbConnect({
-          profile_id: id,
-          host: profile.host,
-          port: profile.port ?? 3306,
-          user: profile.user,
-          password: profile.password,
-          database: profile.database || null,
-          ssl: profile.ssl,
-        });
-        setConnectionStatus(id, "connected");
-        addConnection(id, profile.name, profile.color);
-        // Switch sidebar to Explorer so user sees the schema tree
-        setActiveView("explorer");
-      } catch (e) {
-        setConnectionStatus(id, "error");
-        setConnectError(String(e));
-      }
+      // Route through handleConnect which has the type validation
+      handleConnect(id);
     }
   };
 
@@ -535,11 +517,11 @@ export function DbManagerView() {
                   <span
                     className={cn(
                       selectedProfile.connectionStatus === "connected" &&
-                        "text-green-400",
+                      "text-green-400",
                       selectedProfile.connectionStatus === "connecting" &&
-                        "text-yellow-400",
+                      "text-yellow-400",
                       selectedProfile.connectionStatus === "error" &&
-                        "text-red-400",
+                      "text-red-400",
                     )}
                   >
                     {selectedProfile.connectionStatus === "connected"

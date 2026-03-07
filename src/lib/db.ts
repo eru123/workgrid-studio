@@ -10,6 +10,7 @@ export interface ConnectParams {
     password: string;
     database: string | null;
     ssl: boolean;
+    db_type: string;
 }
 
 export interface ColumnInfo {
