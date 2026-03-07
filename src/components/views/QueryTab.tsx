@@ -1361,10 +1361,10 @@ export function QueryTab({
   return (
     <div
       ref={containerRef}
-      className="flex flex-col w-full h-full bg-background text-foreground text-xs overflow-hidden"
+      className="flex flex-col w-full h-full bg-background text-foreground text-xs overflow-hidden min-w-0 min-h-0"
     >
       {/* ─── Toolbar ─────────────────────────────────── */}
-      <div className="flex items-center gap-0.5 px-2 py-1 border-b bg-muted/20 shrink-0">
+      <div className="flex items-center gap-0.5 px-2 py-1 border-b bg-muted/20 shrink-0 overflow-x-auto min-h-0">
         {/* Run */}
         <ToolBtn
           icon={

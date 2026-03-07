@@ -180,8 +180,8 @@ export function Workbench() {
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col relative min-w-0">
         {/* Editor Group */}
-        <div className="flex-1 flex overflow-hidden">
-          <div className="flex-1 relative p-0.5">
+        <div className="flex-1 flex overflow-hidden min-h-0 min-w-0">
+          <div className="flex-1 relative p-0.5 min-w-0 min-h-0">
             <EditorNode tree={editorTree} />
           </div>
         </div>

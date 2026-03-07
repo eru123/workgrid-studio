@@ -368,7 +368,7 @@ export function EditorNode({ tree }: { tree: SplitTree }) {
       )}
     >
       <div
-        className="relative"
+        className="relative min-w-0 min-h-0"
         style={{ [isVert ? "height" : "width"]: `${tree.ratio * 100}%` }}
       >
         <EditorNode tree={tree.a} />
@@ -399,7 +399,7 @@ export function EditorNode({ tree }: { tree: SplitTree }) {
         }}
       />
 
-      <div className="flex-1 relative">
+      <div className="flex-1 relative min-w-0 min-h-0">
         <EditorNode tree={tree.b} />
       </div>
 
