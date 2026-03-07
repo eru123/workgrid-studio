@@ -35,7 +35,8 @@ import {
   WrapText,
   RotateCcw,
   AlignLeft,
-  Bot
+  Bot,
+  Sparkles
 } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 
@@ -248,6 +249,9 @@ export function QueryTab({
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [executionTime, setExecutionTime] = useState<number | null>(null);
+  const [isAskingAI, setIsAskingAI] = useState(false);
+  const [isAiModalOpen, setIsAiModalOpen] = useState(false);
+  const [aiPromptText, setAiPromptText] = useState("");
   const [wordWrap, setWordWrap] = useState(false);
   const [editorFontSize, setEditorFontSize] = useState(
     DEFAULT_QUERY_FONT_SIZE_PX,
@@ -264,7 +268,6 @@ export function QueryTab({
   );
   const [textareaContentWidth, setTextareaContentWidth] = useState(0);
   const [isFormatting, setIsFormatting] = useState(false);
-  const [isAskingAI, setIsAskingAI] = useState(false);
 
   // ── Autocomplete state ──────────────────────────────────────
   const [acVisible, setAcVisible] = useState(false);
@@ -618,7 +621,7 @@ export function QueryTab({
   }, [results, activeResultIdx]);
 
   // ── Ask AI ─────────────────────────────────────────────────
-  const handleAskAI = useCallback(async () => {
+  const handleAskAI = useCallback(() => {
     const { selectedProviderId, providers } = useModelsStore.getState();
     const activeProvider = providers.find((p) => p.id === selectedProviderId);
 
@@ -631,8 +634,19 @@ export function QueryTab({
       return;
     }
 
-    const prompt = window.prompt("Ask AI to generate a SQL query:");
-    if (!prompt || !prompt.trim()) return;
+    setIsAiModalOpen(true);
+    setAiPromptText("");
+  }, []);
+
+  const submitAiPrompt = useCallback(async () => {
+    if (!aiPromptText.trim()) return;
+
+    const { selectedProviderId, providers } = useModelsStore.getState();
+    const activeProvider = providers.find((p) => p.id === selectedProviderId);
+    if (!activeProvider) {
+      setIsAiModalOpen(false);
+      return;
+    }
 
     setIsAskingAI(true);
     try {
@@ -652,7 +666,7 @@ export function QueryTab({
         activeProvider.baseUrl || null,
         activeProvider.apiKeyRef || "",
         activeProvider.defaultModelId || "",
-        prompt,
+        aiPromptText,
         schemaContext,
         sql
       );
@@ -668,6 +682,7 @@ export function QueryTab({
         description: "Query generated successfully.",
         variant: "default",
       });
+      setIsAiModalOpen(false);
     } catch (e: any) {
       console.error(e);
       useAppStore.getState().addToast({
@@ -678,7 +693,7 @@ export function QueryTab({
     } finally {
       setIsAskingAI(false);
     }
-  }, [selectedDb, profileId, sql, cursorPos, setSql, setCursorPos]);
+  }, [aiPromptText, selectedDb, profileId, sql, cursorPos, setSql, setCursorPos]);
 
   // ── Drag handle ───────────────────────────────────────────
   const handleDragStart = useCallback(
@@ -1210,7 +1225,7 @@ export function QueryTab({
   return (
     <div
       ref={containerRef}
-      className="flex flex-col w-full h-full bg-background text-foreground text-xs overflow-hidden min-w-0 min-h-0"
+      className="flex flex-col w-full h-full bg-background text-foreground text-xs overflow-hidden min-w-0 min-h-0 relative"
     >
       {/* ─── Toolbar ─────────────────────────────────── */}
       <div className="flex items-center gap-0.5 px-2 py-1 border-b bg-muted/20 shrink-0 overflow-x-auto min-h-0">
@@ -1555,224 +1570,292 @@ export function QueryTab({
             />
           </div>
         </div>
-        <div
-          className="h-2 flex-none cursor-row-resize flex flex-col justify-center items-center z-10 opacity-0 hover:opacity-100 group transition-opacity duration-300"
-          onMouseDown={handleDragStart}
-        >
-          <div className="w-8 h-0.5 rounded bg-muted-foreground/20 group-hover:bg-primary/50 transition-colors" />
-        </div>
+      </div>
 
-        {/* ─── Results area ─────────────────────────────── */}
-        <div className="flex-1 min-h-0 min-w-0 flex flex-col overflow-hidden">
-          {/* Results tab bar (when multiple result sets) */}
-          {results.length > 1 && (
-            <div
-              className="shrink-0 relative border-b bg-muted/20"
-              style={{ height: 30 }}
-            >
-              <div className="absolute inset-0 flex items-center px-1 gap-0 overflow-x-auto overflow-y-hidden">
-                {results.map((r, i) => (
-                  <button
-                    key={i}
+      <div
+        className="h-2 flex-none cursor-row-resize flex flex-col justify-center items-center z-10 group bg-muted/30 border-y border-border/50 hover:bg-muted/70 transition-colors"
+        onMouseDown={handleDragStart}
+      >
+        <div className="w-8 h-0.5 rounded bg-muted-foreground/30 group-hover:bg-primary/50 transition-colors" />
+      </div>
+
+      {/* ─── Results area ─────────────────────────────── */}
+      <div className="flex-1 min-h-0 min-w-0 flex flex-col overflow-hidden">
+        {/* Results tab bar (when multiple result sets) */}
+        {results.length > 1 && (
+          <div
+            className="shrink-0 relative border-b bg-muted/20"
+            style={{ height: 30 }}
+          >
+            <div className="absolute inset-0 flex items-center px-1 gap-0 overflow-x-auto overflow-y-hidden">
+              {results.map((r, i) => (
+                <button
+                  key={i}
+                  className={cn(
+                    "flex items-center gap-1.5 px-3 h-full text-xs transition-all whitespace-nowrap shrink-0 border-b-2",
+                    activeResultIdx === i
+                      ? "border-primary bg-background text-foreground"
+                      : "border-transparent text-muted-foreground hover:text-foreground hover:bg-accent/40",
+                  )}
+                  onClick={() => setActiveResultIdx(i)}
+                >
+                  <FileText
                     className={cn(
-                      "flex items-center gap-1.5 px-3 h-full text-xs transition-all whitespace-nowrap shrink-0 border-b-2",
+                      "w-3 h-3",
                       activeResultIdx === i
-                        ? "border-primary bg-background text-foreground"
-                        : "border-transparent text-muted-foreground hover:text-foreground hover:bg-accent/40",
+                        ? "text-primary"
+                        : "text-muted-foreground/60",
                     )}
-                    onClick={() => setActiveResultIdx(i)}
+                  />
+                  Result {i + 1}
+                  <span
+                    className={cn(
+                      "text-[10px] ml-0.5",
+                      activeResultIdx === i
+                        ? "text-muted-foreground"
+                        : "text-muted-foreground/40",
+                    )}
                   >
-                    <FileText
-                      className={cn(
-                        "w-3 h-3",
-                        activeResultIdx === i
-                          ? "text-primary"
-                          : "text-muted-foreground/60",
-                      )}
-                    />
-                    Result {i + 1}
-                    <span
-                      className={cn(
-                        "text-[10px] ml-0.5",
-                        activeResultIdx === i
-                          ? "text-muted-foreground"
-                          : "text-muted-foreground/40",
-                      )}
-                    >
-                      ({r.rows.length}r × {r.columns.length}c)
-                    </span>
-                  </button>
-                ))}
-              </div>
+                    ({r.rows.length}r × {r.columns.length}c)
+                  </span>
+                </button>
+              ))}
             </div>
-          )}
+          </div>
+        )}
 
-          {/* Loading state */}
-          {running && (
-            <div className="flex-1 flex items-center justify-center text-muted-foreground/50">
-              <div className="text-center">
-                <Loader2 className="w-6 h-6 mx-auto mb-2 animate-spin opacity-50" />
-                <div>Executing query…</div>
-              </div>
+        {/* Loading state */}
+        {running && (
+          <div className="flex-1 flex items-center justify-center text-muted-foreground/50">
+            <div className="text-center">
+              <Loader2 className="w-6 h-6 mx-auto mb-2 animate-spin opacity-50" />
+              <div>Executing query…</div>
             </div>
-          )}
+          </div>
+        )}
 
-          {/* Error display */}
-          {!running && error && (
-            <div className="flex items-start gap-2 px-3 py-2 bg-red-500/10 text-red-400 border-b shrink-0">
-              <XCircle className="w-4 h-4 mt-0.5 shrink-0" />
-              <pre className="text-xs font-mono whitespace-pre-wrap flex-1 select-text">
-                {error}
-              </pre>
-            </div>
-          )}
+        {/* Error display */}
+        {!running && error && (
+          <div className="flex items-start gap-2 px-3 py-2 bg-red-500/10 text-red-400 border-b shrink-0">
+            <XCircle className="w-4 h-4 mt-0.5 shrink-0" />
+            <pre className="text-xs font-mono whitespace-pre-wrap flex-1 select-text">
+              {error}
+            </pre>
+          </div>
+        )}
 
-          {/* Results grid */}
-          {!running && activeResult && activeResult.columns.length > 0 ? (
-            <div className="flex-1 min-h-0 relative">
-              <div className="absolute inset-0 overflow-auto">
-                <table className="min-w-max text-xs border-collapse">
-                  <thead>
-                    <tr className="bg-muted sticky top-0 z-10">
-                      <th className="text-center px-2 py-1.5 text-[10px] font-medium text-muted-foreground/70 border-b border-r bg-muted w-12.5">
-                        #
+        {/* Results grid */}
+        {!running && activeResult && activeResult.columns.length > 0 ? (
+          <div className="flex-1 min-h-0 relative">
+            <div className="absolute inset-0 overflow-auto">
+              <table className="min-w-max text-xs border-collapse">
+                <thead>
+                  <tr className="bg-muted sticky top-0 z-10">
+                    <th className="text-center px-2 py-1.5 text-[10px] font-medium text-muted-foreground/70 border-b border-r bg-muted w-12.5">
+                      #
+                    </th>
+                    {activeResult.columns.map((col, ci) => (
+                      <th
+                        key={ci}
+                        className="text-left px-2 py-1.5 text-[10px] font-medium text-muted-foreground/70 border-b border-r bg-muted whitespace-nowrap"
+                      >
+                        {col}
                       </th>
-                      {activeResult.columns.map((col, ci) => (
-                        <th
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {activeResult.rows.map((row, ri) => (
+                    <tr
+                      key={ri}
+                      className="border-b hover:bg-accent/20 transition-colors"
+                    >
+                      <td className="text-center px-2 py-1 border-r text-muted-foreground/40 select-none">
+                        {ri + 1}
+                      </td>
+                      {row.map((val, ci) => (
+                        <td
                           key={ci}
-                          className="text-left px-2 py-1.5 text-[10px] font-medium text-muted-foreground/70 border-b border-r bg-muted whitespace-nowrap"
+                          className={cn(
+                            "px-2 py-1 border-r font-mono max-w-75",
+                            val === null
+                              ? "text-muted-foreground/40 italic"
+                              : "",
+                            wordWrap
+                              ? "whitespace-pre-wrap break-all"
+                              : "whitespace-nowrap truncate",
+                          )}
+                          title={val === null ? "NULL" : String(val)}
                         >
-                          {col}
-                        </th>
+                          {val === null ? "NULL" : String(val)}
+                        </td>
                       ))}
                     </tr>
-                  </thead>
-                  <tbody>
-                    {activeResult.rows.map((row, ri) => (
-                      <tr
-                        key={ri}
-                        className="border-b hover:bg-accent/20 transition-colors"
-                      >
-                        <td className="text-center px-2 py-1 border-r text-muted-foreground/40 select-none">
-                          {ri + 1}
-                        </td>
-                        {row.map((val, ci) => (
-                          <td
-                            key={ci}
-                            className={cn(
-                              "px-2 py-1 border-r font-mono max-w-75",
-                              val === null
-                                ? "text-muted-foreground/40 italic"
-                                : "",
-                              wordWrap
-                                ? "whitespace-pre-wrap break-all"
-                                : "whitespace-nowrap truncate",
-                            )}
-                            title={val === null ? "NULL" : String(val)}
-                          >
-                            {val === null ? "NULL" : String(val)}
-                          </td>
-                        ))}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                  ))}
+                </tbody>
+              </table>
             </div>
-          ) : !running && !error && hasRun && results.length > 0 ? (
-            /* DML/DDL success: no column data but query ran */
-            <div className="flex-1 flex items-center justify-center text-muted-foreground/50">
-              <div className="text-center">
-                <CheckCircle2 className="w-6 h-6 mx-auto mb-2 text-green-400/50" />
-                <div>{activeResult?.info || "Query executed successfully"}</div>
-                {activeResult && activeResult.affected_rows > 0 && (
-                  <div className="text-[10px] mt-1 text-muted-foreground/40">
-                    {activeResult.affected_rows} row(s) affected
+          </div>
+        ) : !running && !error && hasRun && results.length > 0 ? (
+          /* DML/DDL success: no column data but query ran */
+          <div className="flex-1 flex items-center justify-center text-muted-foreground/50">
+            <div className="text-center">
+              <CheckCircle2 className="w-6 h-6 mx-auto mb-2 text-green-400/50" />
+              <div>{activeResult?.info || "Query executed successfully"}</div>
+              {activeResult && activeResult.affected_rows > 0 && (
+                <div className="text-[10px] mt-1 text-muted-foreground/40">
+                  {activeResult.affected_rows} row(s) affected
+                </div>
+              )}
+            </div>
+          </div>
+        ) : !running && !error && hasRun ? (
+          /* Ran successfully, no result sets returned (e.g. SET, pure DDL) */
+          <div className="flex-1 flex items-center justify-center text-muted-foreground/50">
+            <div className="text-center">
+              <CheckCircle2 className="w-6 h-6 mx-auto mb-2 text-green-400/50" />
+              <div>Query executed successfully</div>
+            </div>
+          </div>
+        ) : !running && !error ? (
+          /* Never run yet */
+          <div className="flex-1 flex items-center justify-center text-muted-foreground/30">
+            <div className="text-center">
+              <AlertCircle className="w-6 h-6 mx-auto mb-2 opacity-30" />
+              <div>Run a query to see results here</div>
+              <div className="text-[10px] mt-1">Ctrl+Enter or F5</div>
+            </div>
+          </div>
+        ) : null
+        }
+      </div >
+
+      {/* ─── Status bar ──────────────────────────────── */}
+      < div className="flex items-center gap-3 px-3 py-1 border-t bg-muted/20 shrink-0 text-[10px]" >
+        <div
+          className={cn(
+            "flex items-center gap-1",
+            running
+              ? "text-yellow-400"
+              : error
+                ? "text-red-400"
+                : results.length > 0
+                  ? "text-green-400"
+                  : "text-muted-foreground",
+          )}
+        >
+          {running ? (
+            <Loader2 className="w-3 h-3 animate-spin" />
+          ) : error ? (
+            <XCircle className="w-3 h-3" />
+          ) : results.length > 0 ? (
+            <CheckCircle2 className="w-3 h-3" />
+          ) : (
+            <AlertCircle className="w-3 h-3" />
+          )}
+          {running
+            ? "Executing..."
+            : error
+              ? "Error"
+              : results.length === 0
+                ? (hasRun ? "Done" : "Ready")
+                : `${results.length} result set(s), ${results.reduce((a, r) => a + r.rows.length, 0)} total row(s)`}
+        </div>
+        {
+          executionTime !== null && (
+            <div className="flex items-center gap-1 text-muted-foreground">
+              <Clock className="w-3 h-3" />
+              {executionTime < 1000
+                ? `${Math.round(executionTime)}ms`
+                : `${(executionTime / 1000).toFixed(2)}s`}
+            </div>
+          )
+        }
+        <div className="text-muted-foreground">
+          Ln {activeLine}, Col {activeColumn}
+        </div>
+        <div className="text-muted-foreground">
+          Sel {selectedCharCount} char(s)
+        </div>
+        <div className="text-muted-foreground">
+          Total {lineCount} line(s)
+        </div>
+        <div className="flex-1" />
+        {activeResult && activeResult.rows.length > 0 && (
+          <div className="text-muted-foreground">
+            {activeResult.rows.length} row(s) × {activeResult.columns.length}{" "}
+            col(s)
+          </div>
+        )}
+      </div>
+
+      {/* ─── Ask AI Overlay Modal ────────────────────── */}
+      {isAiModalOpen && (
+        <div className="absolute inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4 min-h-0">
+          <div className="bg-popover border shadow-lg rounded-lg flex flex-col w-full max-w-lg overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            <div className="px-4 py-3 border-b bg-muted/30 flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-indigo-400" />
+              <h3 className="font-medium text-[13px] text-foreground">Ask AI Assistant</h3>
+            </div>
+            <div className="p-4 flex flex-col gap-3 relative">
+              <textarea
+                autoFocus
+                value={aiPromptText}
+                onChange={(e) => setAiPromptText(e.target.value)}
+                placeholder="What would you like the AI to generate or modify?"
+                className={cn(
+                  "w-full h-28 bg-background border rounded-md p-3 text-xs resize-none focus:outline-none focus:ring-1 focus:ring-indigo-500/50 transition-shadow",
+                  isAskingAI && "opacity-50 pointer-events-none"
+                )}
+                disabled={isAskingAI}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                    e.preventDefault();
+                    submitAiPrompt();
+                  }
+                }}
+              />
+              <div className="flex items-center justify-between text-muted-foreground">
+                <span className="text-[10px] italic">
+                  Schema and editor contents are sent as context.
+                  (Ctrl+Enter to submit)
+                </span>
+                {isAskingAI && (
+                  <div className="flex items-center gap-1.5 text-indigo-400 text-[11px] font-medium">
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Thinking...</span>
                   </div>
                 )}
               </div>
             </div>
-          ) : !running && !error && hasRun ? (
-            /* Ran successfully, no result sets returned (e.g. SET, pure DDL) */
-            <div className="flex-1 flex items-center justify-center text-muted-foreground/50">
-              <div className="text-center">
-                <CheckCircle2 className="w-6 h-6 mx-auto mb-2 text-green-400/50" />
-                <div>Query executed successfully</div>
-              </div>
+            <div className="px-4 py-3 border-t bg-muted/20 flex justify-end gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => setIsAiModalOpen(false)}
+                disabled={isAskingAI}
+                className="px-3 py-1.5 rounded bg-secondary hover:bg-secondary/80 text-foreground transition-colors disabled:opacity-50 font-medium"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={submitAiPrompt}
+                disabled={isAskingAI || !aiPromptText.trim()}
+                className="px-3 py-1.5 rounded bg-indigo-500 text-white hover:bg-indigo-600 transition-colors flex items-center gap-1.5 disabled:opacity-50 font-medium"
+              >
+                {isAskingAI ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Sparkles className="w-3.5 h-3.5" />
+                )}
+                Generate
+              </button>
             </div>
-          ) : !running && !error ? (
-            /* Never run yet */
-            <div className="flex-1 flex items-center justify-center text-muted-foreground/30">
-              <div className="text-center">
-                <AlertCircle className="w-6 h-6 mx-auto mb-2 opacity-30" />
-                <div>Run a query to see results here</div>
-                <div className="text-[10px] mt-1">Ctrl+Enter or F5</div>
-              </div>
-            </div>
-          ) : null
-          }
-        </div >
-
-        {/* ─── Status bar ──────────────────────────────── */}
-        < div className="flex items-center gap-3 px-3 py-1 border-t bg-muted/20 shrink-0 text-[10px]" >
-          <div
-            className={cn(
-              "flex items-center gap-1",
-              running
-                ? "text-yellow-400"
-                : error
-                  ? "text-red-400"
-                  : results.length > 0
-                    ? "text-green-400"
-                    : "text-muted-foreground",
-            )}
-          >
-            {running ? (
-              <Loader2 className="w-3 h-3 animate-spin" />
-            ) : error ? (
-              <XCircle className="w-3 h-3" />
-            ) : results.length > 0 ? (
-              <CheckCircle2 className="w-3 h-3" />
-            ) : (
-              <AlertCircle className="w-3 h-3" />
-            )}
-            {running
-              ? "Executing..."
-              : error
-                ? "Error"
-                : results.length === 0
-                  ? (hasRun ? "Done" : "Ready")
-                  : `${results.length} result set(s), ${results.reduce((a, r) => a + r.rows.length, 0)} total row(s)`}
           </div>
-          {
-            executionTime !== null && (
-              <div className="flex items-center gap-1 text-muted-foreground">
-                <Clock className="w-3 h-3" />
-                {executionTime < 1000
-                  ? `${Math.round(executionTime)}ms`
-                  : `${(executionTime / 1000).toFixed(2)}s`}
-              </div>
-            )
-          }
-          <div className="text-muted-foreground">
-            Ln {activeLine}, Col {activeColumn}
-          </div>
-          <div className="text-muted-foreground">
-            Sel {selectedCharCount} char(s)
-          </div>
-          <div className="text-muted-foreground">
-            Total {lineCount} line(s)
-          </div>
-          <div className="flex-1" />
-          {activeResult && activeResult.rows.length > 0 && (
-            <div className="text-muted-foreground">
-              {activeResult.rows.length} row(s) × {activeResult.columns.length}{" "}
-              col(s)
-            </div>
-          )}
         </div>
-      </div>
-    </div>
+      )
+      }
+    </div >
   );
 }
 
