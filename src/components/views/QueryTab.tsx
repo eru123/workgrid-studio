@@ -17,7 +17,7 @@ import { useSchemaStore } from "@/state/schemaStore";
 import { useLayoutStore } from "@/state/layoutStore";
 import { useAppStore } from "@/state/appStore";
 import { useModelsStore } from "@/state/modelsStore";
-import { aiGenerateQuery } from "@/lib/db";
+import { aiGenerateQuery, dbGetSchemaDdl } from "@/lib/db";
 import {
   Play,
   Square,
@@ -643,19 +643,15 @@ export function QueryTab({
 
     setIsAskingAI(true);
     try {
-      // Build schema context
-      const { tables, columns } = useSchemaStore.getState();
-      const dbTables = tables[`${profileId}::${selectedDb}`] || [];
-
+      // Build full DDL schema context from the database
       let schemaContext = "No schema selected.";
-      if (dbTables.length > 0) {
-        schemaContext = dbTables.map(tName => {
-          const tCols = columns[`${profileId}::${selectedDb}::${tName}`] || [];
-          const colDefs = tCols.length > 0
-            ? tCols.map(c => `${c.name} (${c.col_type})`).join(", ")
-            : "unknown columns";
-          return `Table \`${tName}\`: ${colDefs}`;
-        }).join("\n");
+      if (selectedDb) {
+        try {
+          schemaContext = await dbGetSchemaDdl(profileId, selectedDb);
+        } catch {
+          // Fallback: pass minimal context
+          schemaContext = `Database: ${selectedDb} (DDL unavailable)`;
+        }
       }
 
       const generatedSql = await aiGenerateQuery(

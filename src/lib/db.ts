@@ -182,6 +182,13 @@ export async function vaultDelete(key: string): Promise<void> {
     return invoke<void>("vault_delete", { key });
 }
 
+
+// ─── Schema DDL (for AI context) ────────────────────────────────────
+
+export async function dbGetSchemaDdl(profileId: string, database: string): Promise<string> {
+    return invoke<string>("db_get_schema_ddl", { profileId, database });
+}
+
 // ─── AI Generation ──────────────────────────────────────────────────
 
 export async function aiGenerateQuery(

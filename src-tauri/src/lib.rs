@@ -959,6 +959,85 @@ async fn db_query(
     Ok(results)
 }
 
+// ─── Schema DDL for AI context ───────────────────────────────────────
+
+#[tauri::command]
+async fn db_get_schema_ddl(
+    state: State<'_, DbState>,
+    profile_id: String,
+    database: String,
+) -> Result<String, String> {
+    let pool = get_pool(&state, &profile_id)?;
+    let mut conn = pool.get_conn().await
+        .map_err(|e| format!("Connection error: {}", e))?;
+
+    // Switch to the target database
+    conn.query_drop(format!("USE `{}`", database)).await
+        .map_err(|e| format!("USE error: {}", e))?;
+
+    let mut ddl_parts: Vec<String> = Vec::new();
+    ddl_parts.push(format!("-- Schema DDL for database `{}`", database));
+
+    // 1. Tables
+    let tables: Vec<String> = conn.query("SHOW TABLES").await.unwrap_or_default();
+    for table in &tables {
+        let result: Option<(String, String)> = conn
+            .query_first(format!("SHOW CREATE TABLE `{}`", table))
+            .await
+            .unwrap_or(None);
+        if let Some((_, create_sql)) = result {
+            ddl_parts.push(format!("{};", create_sql));
+        }
+    }
+
+    // 2. Views (SHOW FULL TABLES WHERE Table_type = 'VIEW')
+    let view_rows: Vec<(String, String)> = conn
+        .query("SHOW FULL TABLES WHERE Table_type = 'VIEW'")
+        .await
+        .unwrap_or_default();
+    for (view_name, _) in &view_rows {
+        let result: Option<(String, String, String, String)> = conn
+            .query_first(format!("SHOW CREATE VIEW `{}`", view_name))
+            .await
+            .unwrap_or(None);
+        if let Some((_, create_sql, _, _)) = result {
+            ddl_parts.push(format!("{};", create_sql));
+        }
+    }
+
+    // 3. Procedures
+    let proc_rows: Vec<(String, String)> = conn
+        .query(format!("SELECT ROUTINE_NAME, ROUTINE_TYPE FROM INFORMATION_SCHEMA.ROUTINES WHERE ROUTINE_SCHEMA = '{}' AND ROUTINE_TYPE = 'PROCEDURE'", database))
+        .await
+        .unwrap_or_default();
+    for (proc_name, _) in &proc_rows {
+        let result: Option<(String, String, String, String, String, String)> = conn
+            .query_first(format!("SHOW CREATE PROCEDURE `{}`", proc_name))
+            .await
+            .unwrap_or(None);
+        if let Some((_, _, _, create_sql, _, _)) = result {
+            ddl_parts.push(format!("{};", create_sql));
+        }
+    }
+
+    // 4. Functions
+    let func_rows: Vec<(String, String)> = conn
+        .query(format!("SELECT ROUTINE_NAME, ROUTINE_TYPE FROM INFORMATION_SCHEMA.ROUTINES WHERE ROUTINE_SCHEMA = '{}' AND ROUTINE_TYPE = 'FUNCTION'", database))
+        .await
+        .unwrap_or_default();
+    for (func_name, _) in &func_rows {
+        let result: Option<(String, String, String, String, String, String)> = conn
+            .query_first(format!("SHOW CREATE FUNCTION `{}`", func_name))
+            .await
+            .unwrap_or(None);
+        if let Some((_, _, _, create_sql, _, _)) = result {
+            ddl_parts.push(format!("{};", create_sql));
+        }
+    }
+
+    Ok(ddl_parts.join("\n\n"))
+}
+
 // ─── Vault (Secure Storage) ─────────────────────────────────────────
 
 // A static derived key from machine-specific or fallback string to encrypt stored secrets locally
@@ -1148,17 +1227,30 @@ async fn ai_generate_query(
     model_id: String,
     prompt: String,
     schema_context: String,
+    current_query: Option<String>,
 ) -> Result<String, String> {
     let api_key = vault_get(api_key_ref)?;
     let client = Client::new();
     
     let system_prompt = format!(
-        "You are an expert SQL assistant for Workgrid Studio. \
-        The user needs a query for the following database schema context:\n{}\n\
-        Output ONLY the raw SQL query. Do not wrap it in markdown codeblocks (```sql ... ```). \
-        Do not add explanations.",
+        "You are an expert MySQL/MariaDB SQL assistant for Workgrid Studio. \
+        Below is the complete DDL (CREATE TABLE, CREATE VIEW, CREATE PROCEDURE, CREATE FUNCTION) \
+        for the user's database:\n\n{}\n\n\
+        Use this schema to understand indexes, constraints, relationships, and stored routines. \
+        Generate the most optimized SQL query for the user's request. \
+        If there are multiple approaches with different performance trade-offs, \
+        output them as separate queries separated by a comment like -- Alternative: ... \
+        Output ONLY raw SQL. Do not wrap it in markdown codeblocks (```sql ... ```). \
+        Do not add explanations outside of SQL comments.",
         schema_context
     );
+    
+    let mut final_system_prompt = system_prompt.clone();
+    if let Some(q) = current_query {
+        if !q.trim().is_empty() {
+            final_system_prompt.push_str(&format!("\n\nThe user's current SQL editor content is:\n```sql\n{}\n```\nUse this context if the user is asking to fix, modify, or extend their existing query.", q));
+        }
+    }
     
     let user_prompt = prompt;
 
@@ -1384,7 +1476,8 @@ pub fn run() {
             vault_delete,
             ai_generate_query,
             get_ai_logs,
-            clear_ai_logs
+            clear_ai_logs,
+            db_get_schema_ddl
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
