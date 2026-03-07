@@ -50,6 +50,11 @@ const TableDataTab = lazy(() =>
     default: m.TableDataTab,
   })),
 );
+const SettingsPage = lazy(() =>
+  import("@/components/views/SettingsPage").then((m) => ({
+    default: m.SettingsPage,
+  })),
+);
 
 // Loading skeleton shown while a lazy component is being resolved
 function TabLoadingFallback() {
@@ -70,6 +75,8 @@ const TabContent = memo(function TabContent({ tab, leafId }: { tab: EditorTab, l
         return <ModelsPage />;
       case "tasks":
         return <TasksView />;
+      case "settings":
+        return <SettingsPage />;
       case "database-view":
         return (
           <DatabaseView

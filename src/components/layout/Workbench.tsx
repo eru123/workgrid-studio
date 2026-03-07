@@ -15,12 +15,13 @@ import {
   PanelBottom,
   Sidebar,
   Server,
-  Trash2,
-  RefreshCw,
   Bot,
   Sun,
   Moon,
   Monitor,
+  Settings,
+  Trash2,
+  RefreshCw,
 } from "lucide-react";
 import { ServersSidebar } from "@/components/views/ServersSidebar";
 
@@ -129,6 +130,14 @@ export function Workbench() {
 
         {/* Bottom icons */}
         <div className="flex flex-col items-center gap-1 mb-2">
+          <button
+            onClick={() => openTab({ title: "Settings", type: "settings", meta: {} })}
+            className="w-10 h-10 flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors"
+            title="Settings"
+          >
+            <Settings className="w-5 h-5" />
+          </button>
+
           <button
             onClick={handleToggleTheme}
             className="w-10 h-10 flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors"

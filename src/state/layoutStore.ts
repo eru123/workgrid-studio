@@ -10,7 +10,8 @@ export type EditorTabType =
   | "tasks"
   | "database-view"
   | "table-designer"
-  | "table-data";
+  | "table-data"
+  | "settings";
 
 export interface EditorTab {
   id: string;
