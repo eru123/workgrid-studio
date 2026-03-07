@@ -123,11 +123,6 @@ export function ServersSidebar() {
     setContextMenu(null);
   };
 
-  const handleCancelNew = () => {
-    setViewMode("list");
-    setContextMenu(null);
-  };
-
   const handleConnect = async (id: string) => {
     const profile = profiles.find((p) => p.id === id);
     if (!profile) return;

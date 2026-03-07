@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useCallback, useRef, memo } from "react";
 import { dbQuery, dbListColumns } from "@/lib/db";
 import type { ColumnInfo, QueryResultSet } from "@/lib/db";
 import { cn } from "@/lib/utils/cn";
+import { useAppStore } from "@/state/appStore";
 import { AutocompleteInput } from "@/components/ui/AutocompleteInput";
 import { highlightSQL } from "@/lib/sqlHighlight";
 import {
@@ -382,6 +383,11 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
       setRows([]);
       setColumns([]);
       setTotalRows(0);
+      useAppStore.getState().addToast({
+        title: "Query Error",
+        description: String(e),
+        variant: "destructive",
+      });
     } finally {
       setLoading(false);
     }

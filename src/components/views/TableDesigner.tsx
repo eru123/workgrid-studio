@@ -23,6 +23,7 @@ import { cn } from "@/lib/utils/cn";
 import { AutocompleteInput } from "@/components/ui/AutocompleteInput";
 import { ContextSubmenu } from "@/components/views/ContextSubmenu";
 import { highlightSQL } from "@/lib/sqlHighlight";
+import { useAppStore } from "@/state/appStore";
 
 // ═══════════════════════════════════════════════════════════════════════
 //  Types
@@ -1341,6 +1342,11 @@ export function TableDesigner({ profileId, database, tableName }: Props) {
       } catch (e) {
         if (!cancelled) {
           setError(String(e));
+          useAppStore.getState().addToast({
+            title: "Failed to Load Table",
+            description: String(e),
+            variant: "destructive",
+          });
         }
       } finally {
         if (!cancelled) {

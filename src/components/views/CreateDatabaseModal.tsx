@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect } from "react";
 import { X } from "lucide-react";
 import { dbExecuteQuery, dbListDatabases, dbGetCollations } from "@/lib/db";
 import { useSchemaStore } from "@/state/schemaStore";
+import { useAppStore } from "@/state/appStore";
 
 interface Props {
     profileId: string;
@@ -66,6 +67,11 @@ export function CreateDatabaseModal({ profileId, onClose, onCreated }: Props) {
         } catch (e: any) {
             setError(String(e));
             setIsSubmitting(false);
+            useAppStore.getState().addToast({
+                title: "Failed to Create Database",
+                description: String(e),
+                variant: "destructive",
+            });
         }
     };
 

@@ -15,6 +15,7 @@ import type { Suggestion } from "@/lib/sqlSuggestions";
 import { SqlAutocomplete } from "@/components/ui/SqlAutocomplete";
 import { useSchemaStore } from "@/state/schemaStore";
 import { useLayoutStore } from "@/state/layoutStore";
+import { useAppStore } from "@/state/appStore";
 import {
   Play,
   Square,
@@ -471,6 +472,11 @@ export function QueryTab({
         setExecutionTime(elapsed);
         setError(String(e));
         setHasRun(true);
+        useAppStore.getState().addToast({
+          title: "Query Error",
+          description: String(e),
+          variant: "destructive",
+        });
       } finally {
         if (token === runTokenRef.current) {
           setRunning(false);
