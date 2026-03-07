@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
-import { X, Loader2 } from "lucide-react";
-import { dbExecuteQuery, dbGetCollations } from "@/lib/db";
+import { X, Loader2, AlertTriangle } from "lucide-react";
+import { dbExecuteQuery, dbGetCollations, dbQuery } from "@/lib/db";
 import { useSchemaStore } from "@/state/schemaStore";
 import { useAppStore } from "@/state/appStore";
 
@@ -21,6 +21,10 @@ export function EditDatabaseModal({ profileId, database, onClose, onCompleted }:
     const [step, setStep] = useState("");
     const [confirmed, setConfirmed] = useState(false);
 
+    // Stored objects that won't be transferred by RENAME TABLE
+    const [storedObjects, setStoredObjects] = useState<{ type: string; name: string }[]>([]);
+    const [loadingObjects, setLoadingObjects] = useState(false);
+
     useEffect(() => {
         dbGetCollations(profileId)
             .then(res => {
@@ -36,6 +40,56 @@ export function EditDatabaseModal({ profileId, database, onClose, onCompleted }:
                 setError("Failed to fetch collations: " + String(e));
             });
     }, [profileId]);
+
+    // Enumerate stored procedures, functions, triggers, events when name changes
+    useEffect(() => {
+        if (newName === database) {
+            setStoredObjects([]);
+            return;
+        }
+        setLoadingObjects(true);
+        const fetchObjects = async () => {
+            try {
+                const items: { type: string; name: string }[] = [];
+
+                // Procedures
+                const procs = await dbQuery(profileId,
+                    `SELECT ROUTINE_NAME FROM INFORMATION_SCHEMA.ROUTINES WHERE ROUTINE_SCHEMA = '${database}' AND ROUTINE_TYPE = 'PROCEDURE'`);
+                for (const row of (procs[0]?.rows || [])) {
+                    items.push({ type: "Procedure", name: String(row[0]) });
+                }
+
+                // Functions
+                const funcs = await dbQuery(profileId,
+                    `SELECT ROUTINE_NAME FROM INFORMATION_SCHEMA.ROUTINES WHERE ROUTINE_SCHEMA = '${database}' AND ROUTINE_TYPE = 'FUNCTION'`);
+                for (const row of (funcs[0]?.rows || [])) {
+                    items.push({ type: "Function", name: String(row[0]) });
+                }
+
+                // Triggers
+                const trigs = await dbQuery(profileId,
+                    `SELECT TRIGGER_NAME FROM INFORMATION_SCHEMA.TRIGGERS WHERE TRIGGER_SCHEMA = '${database}'`);
+                for (const row of (trigs[0]?.rows || [])) {
+                    items.push({ type: "Trigger", name: String(row[0]) });
+                }
+
+                // Events
+                const evts = await dbQuery(profileId,
+                    `SELECT EVENT_NAME FROM INFORMATION_SCHEMA.EVENTS WHERE EVENT_SCHEMA = '${database}'`);
+                for (const row of (evts[0]?.rows || [])) {
+                    items.push({ type: "Event", name: String(row[0]) });
+                }
+
+                setStoredObjects(items);
+            } catch {
+                // Non-critical — just show a generic warning
+                setStoredObjects([]);
+            } finally {
+                setLoadingObjects(false);
+            }
+        };
+        fetchObjects();
+    }, [profileId, database, newName]);
 
     const hasChanges = newName !== database || (collation && collation !== defaultCollation);
 
@@ -89,8 +143,43 @@ export function EditDatabaseModal({ profileId, database, onClose, onCompleted }:
                     await dbExecuteQuery(profileId, `RENAME TABLE \`${database}\`.\`${table}\` TO \`${newName}\`.\`${table}\``);
                 }
 
-                // Note: RENAME TABLE handles tables. Stored procedures, functions,
-                // triggers, and events are schema-bound and need manual recreation.
+                // Transfer stored procedures, functions, triggers, events
+                if (storedObjects.length > 0) {
+                    for (const obj of storedObjects) {
+                        try {
+                            setStep(`Transferring ${obj.type.toLowerCase()}: ${obj.name}...`);
+                            let showCmd = "";
+                            if (obj.type === "Procedure") showCmd = `SHOW CREATE PROCEDURE \`${database}\`.\`${obj.name}\``;
+                            else if (obj.type === "Function") showCmd = `SHOW CREATE FUNCTION \`${database}\`.\`${obj.name}\``;
+                            else if (obj.type === "Trigger") showCmd = `SHOW CREATE TRIGGER \`${database}\`.\`${obj.name}\``;
+                            else if (obj.type === "Event") showCmd = `SHOW CREATE EVENT \`${database}\`.\`${obj.name}\``;
+
+                            if (showCmd) {
+                                const result = await dbQuery(profileId, showCmd);
+                                // The CREATE statement is typically in column index 2 for procedures/functions, 2 for triggers, 3 for events
+                                const row = result[0]?.rows?.[0];
+                                if (row) {
+                                    let createStmt = "";
+                                    // Find the column that contains "CREATE"
+                                    for (const col of row) {
+                                        const val = String(col || "");
+                                        if (val.toUpperCase().startsWith("CREATE")) {
+                                            createStmt = val;
+                                            break;
+                                        }
+                                    }
+                                    if (createStmt) {
+                                        // Execute in context of new database
+                                        await dbExecuteQuery(profileId, `USE \`${newName}\``);
+                                        await dbExecuteQuery(profileId, createStmt);
+                                    }
+                                }
+                            }
+                        } catch {
+                            // Non-fatal: continue with other objects
+                        }
+                    }
+                }
 
                 // Drop old database
                 setStep("Dropping old database...");
@@ -178,9 +267,36 @@ export function EditDatabaseModal({ profileId, database, onClose, onCompleted }:
 
                     {/* Rename warning */}
                     {newName !== database && (
-                        <div className="text-xs text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded px-3 py-2">
-                            ⚠ Renaming will create a new database, transfer all tables using RENAME TABLE, then drop the old database.
-                            Stored procedures, functions, triggers, and events may need to be recreated manually.
+                        <div className="space-y-2">
+                            <div className="text-xs text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded px-3 py-2">
+                                <div className="flex items-start gap-1.5">
+                                    <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                                    <div>
+                                        Renaming will create a new database, transfer all tables using RENAME TABLE, then drop the old database.
+                                        {storedObjects.length > 0
+                                            ? " The following stored objects will be transferred:"
+                                            : " No stored procedures, functions, triggers, or events were detected."}
+                                    </div>
+                                </div>
+                            </div>
+
+                            {loadingObjects && (
+                                <div className="flex items-center gap-1.5 text-xs text-muted-foreground pl-1">
+                                    <Loader2 className="w-3 h-3 animate-spin" />
+                                    Checking for stored objects...
+                                </div>
+                            )}
+
+                            {storedObjects.length > 0 && (
+                                <div className="text-xs border rounded overflow-hidden max-h-[120px] overflow-y-auto">
+                                    {storedObjects.map((obj, i) => (
+                                        <div key={i} className="flex items-center gap-2 px-3 py-1.5 border-b last:border-b-0 bg-muted/20">
+                                            <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium w-16">{obj.type}</span>
+                                            <span className="font-mono text-foreground">{obj.name}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
                         </div>
                     )}
 
