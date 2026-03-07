@@ -1270,7 +1270,7 @@ async fn ai_generate_query(
             let payload = OpenAIPayload {
                 model: actual_model.clone(),
                 messages: vec![
-                    AnthropicMessage { role: "system".to_string(), content: system_prompt },
+                    AnthropicMessage { role: "system".to_string(), content: final_system_prompt },
                     AnthropicMessage { role: "user".to_string(), content: user_prompt },
                 ],
             };
@@ -1355,7 +1355,7 @@ async fn ai_generate_query(
             let payload = OpenAIPayload {
                 model: if model_id.is_empty() { "gemini-2.5-flash".to_string() } else { model_id },
                 messages: vec![
-                    AnthropicMessage { role: "system".to_string(), content: system_prompt },
+                    AnthropicMessage { role: "system".to_string(), content: final_system_prompt },
                     AnthropicMessage { role: "user".to_string(), content: user_prompt },
                 ],
             };

@@ -61,7 +61,8 @@ export function ModelsPage() {
                 p.apiKeyRef || "",
                 p.defaultModelId || "",
                 "SELECT 1;",
-                "No schema context needed for this test."
+                "No schema context needed for this test.",
+                ""
             );
             setTestResult((s) => ({ ...s, [p.id]: "success" }));
         } catch (e) {

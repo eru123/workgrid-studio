@@ -660,7 +660,8 @@ export function QueryTab({
         activeProvider.apiKeyRef || "",
         activeProvider.defaultModelId || "",
         prompt,
-        schemaContext
+        schemaContext,
+        sql
       );
 
       // Insert at current cursor position

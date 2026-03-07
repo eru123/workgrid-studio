@@ -197,7 +197,8 @@ export async function aiGenerateQuery(
     apiKeyRef: string,
     modelId: string,
     prompt: string,
-    schemaContext: string
+    schemaContext: string,
+    currentQuery: string
 ): Promise<string> {
     return invoke<string>("ai_generate_query", {
         providerType,
@@ -205,7 +206,8 @@ export async function aiGenerateQuery(
         apiKeyRef,
         modelId,
         prompt,
-        schemaContext
+        schemaContext,
+        currentQuery
     });
 }
 
