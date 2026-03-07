@@ -58,7 +58,6 @@ interface EditorEdit {
 const DEFAULT_QUERY_FONT_SIZE_PX = 12;
 const MIN_QUERY_FONT_SIZE_PX = 10;
 const MAX_QUERY_FONT_SIZE_PX = 24;
-const MINIMAP_SELECTOR_MIN_HEIGHT_PX = 28;
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
@@ -260,7 +259,6 @@ export function QueryTab({
     scrollHeight: 1,
     clientHeight: 1,
   });
-  const [minimapTrackHeight, setMinimapTrackHeight] = useState(1);
   const [hasDbSelectionHistory, setHasDbSelectionHistory] = useState(
     initialDatabase !== undefined,
   );
@@ -294,11 +292,6 @@ export function QueryTab({
     start: number;
     end: number;
   } | null>(null);
-  const minimapRef = useRef<HTMLButtonElement>(null);
-  const minimapRafRef = useRef<number | null>(null);
-  const minimapTargetScrollRef = useRef(0);
-  const minimapDraggingRef = useRef(false);
-  const minimapDragOffsetRef = useRef(0);
 
   // ── Matching brackets ─────────────────────────────────────
   const matchBrackets = useMemo(() => {
@@ -724,13 +717,6 @@ export function QueryTab({
   const activeResult = results[activeResultIdx] ?? null;
 
   // ── Row count summary ─────────────────────────────────────
-  const statusText = useMemo(() => {
-    if (running) return "Executing...";
-    if (error) return "Error";
-    if (results.length === 0) return hasRun ? "Done" : "Ready";
-    const total = results.reduce((a, r) => a + r.rows.length, 0);
-    return `${results.length} result set(s), ${total} total row(s)`;
-  }, [running, error, results, hasRun]);
 
   const editorLineHeight = useMemo(
     () => Math.round(editorFontSize * 1.6 * 100) / 100,
@@ -739,38 +725,7 @@ export function QueryTab({
   const isDefaultEditorFontSize = editorFontSize === DEFAULT_QUERY_FONT_SIZE_PX;
   const lineCount = useMemo(() => Math.max(1, sql.split("\n").length), [sql]);
 
-  const minimapSegments = useMemo(() => {
-    const lines = sql.split("\n");
-    const totalLines = Math.max(1, lines.length);
-    const maxSegments = 220;
-    const step = Math.max(1, Math.ceil(totalLines / maxSegments));
-    const segments: Array<{
-      top: number;
-      height: number;
-      width: number;
-      opacity: number;
-    }> = [];
-
-    for (let i = 0; i < totalLines; i += step) {
-      const chunk = lines.slice(i, i + step);
-      const maxLen = chunk.reduce(
-        (curr, line) => Math.max(curr, line.trimEnd().length),
-        0,
-      );
-      const widthRatio = clamp(maxLen / 140, 0.08, 1);
-      const top = (i / totalLines) * 100;
-      const height = Math.max((step / totalLines) * 100, 0.45);
-
-      segments.push({
-        top,
-        height,
-        width: 12 + widthRatio * 88,
-        opacity: 0.18 + widthRatio * 0.28,
-      });
-    }
-
-    return segments;
-  }, [sql]);
+  // Sort newest first
   const activeLine = useMemo(() => {
     const safePos = clamp(cursorPos, 0, sql.length);
     return sql.slice(0, safePos).split("\n").length;
@@ -780,7 +735,6 @@ export function QueryTab({
     const lineStart = sql.lastIndexOf("\n", safePos - 1) + 1;
     return safePos - lineStart + 1;
   }, [cursorPos, sql]);
-  const totalCharCount = useMemo(() => sql.length, [sql]);
 
   // Active line highlight top offset (non-wrap only; wrap mode uses line-number container measurement)
   const activeLineTopPx = useMemo(() => {
@@ -985,50 +939,6 @@ export function QueryTab({
     return () => observer.disconnect();
   }, [wordWrap]);
 
-  useEffect(() => {
-    const minimapEl = minimapRef.current;
-    if (!minimapEl) return;
-
-    const updateTrackHeight = () => {
-      setMinimapTrackHeight(Math.max(1, minimapEl.clientHeight));
-    };
-
-    updateTrackHeight();
-    const observer = new ResizeObserver(updateTrackHeight);
-    observer.observe(minimapEl);
-    return () => observer.disconnect();
-  }, [splitPercent]);
-
-  const minimapViewportHeightPx = useMemo(() => {
-    const ratio = editorViewport.clientHeight / editorViewport.scrollHeight;
-    const proportionalHeight = ratio * minimapTrackHeight;
-    return clamp(
-      proportionalHeight,
-      MINIMAP_SELECTOR_MIN_HEIGHT_PX,
-      minimapTrackHeight,
-    );
-  }, [
-    editorViewport.clientHeight,
-    editorViewport.scrollHeight,
-    minimapTrackHeight,
-  ]);
-  const minimapViewportTopPx = useMemo(() => {
-    if (editorViewport.scrollHeight <= editorViewport.clientHeight) return 0;
-    const maxScroll = Math.max(
-      0,
-      editorViewport.scrollHeight - editorViewport.clientHeight,
-    );
-    const maxTop = Math.max(0, minimapTrackHeight - minimapViewportHeightPx);
-    const ratio = maxScroll === 0 ? 0 : editorViewport.scrollTop / maxScroll;
-    return clamp(ratio * maxTop, 0, maxTop);
-  }, [
-    editorViewport.clientHeight,
-    editorViewport.scrollHeight,
-    editorViewport.scrollTop,
-    minimapTrackHeight,
-    minimapViewportHeightPx,
-  ]);
-
   const handleEditorScroll = useCallback(
     (e: React.UIEvent<HTMLTextAreaElement>) => {
       if (lineNumberRef.current) {
@@ -1057,143 +967,6 @@ export function QueryTab({
       setEditorFontSize(DEFAULT_QUERY_FONT_SIZE_PX);
     },
     [],
-  );
-
-  const animateMinimapScroll = useCallback(() => {
-    if (minimapRafRef.current !== null) return;
-
-    const step = () => {
-      const textarea = editorRef.current;
-      if (!textarea) {
-        minimapRafRef.current = null;
-        return;
-      }
-
-      const targetScrollTop = minimapTargetScrollRef.current;
-      const delta = targetScrollTop - textarea.scrollTop;
-      const isCloseEnough = Math.abs(delta) < 0.5;
-      const nextTop = isCloseEnough
-        ? targetScrollTop
-        : textarea.scrollTop + delta * 0.28;
-
-      textarea.scrollTop = nextTop;
-      if (lineNumberRef.current) {
-        lineNumberRef.current.scrollTop = nextTop;
-      }
-      if (highlightRef.current) {
-        highlightRef.current.scrollTop = nextTop;
-      }
-      syncEditorMetrics(textarea);
-
-      if (isCloseEnough && !minimapDraggingRef.current) {
-        minimapRafRef.current = null;
-        return;
-      }
-
-      minimapRafRef.current = requestAnimationFrame(step);
-    };
-
-    minimapRafRef.current = requestAnimationFrame(step);
-  }, [syncEditorMetrics]);
-
-  const setMinimapTargetFromClientY = useCallback(
-    (clientY: number, minimapEl: HTMLButtonElement, dragOffset: number) => {
-      const textarea = editorRef.current;
-      if (!textarea) return;
-
-      const rect = minimapEl.getBoundingClientRect();
-      if (rect.height <= 0) return;
-
-      const selectorHeight = clamp(
-        (textarea.clientHeight / textarea.scrollHeight) * rect.height,
-        MINIMAP_SELECTOR_MIN_HEIGHT_PX,
-        rect.height,
-      );
-      const maxSelectorTop = Math.max(0, rect.height - selectorHeight);
-      const selectorTop = clamp(
-        clientY - rect.top - dragOffset,
-        0,
-        maxSelectorTop,
-      );
-      const scrollRatio =
-        maxSelectorTop === 0 ? 0 : selectorTop / maxSelectorTop;
-      const maxScroll = Math.max(
-        0,
-        textarea.scrollHeight - textarea.clientHeight,
-      );
-
-      minimapTargetScrollRef.current = scrollRatio * maxScroll;
-      animateMinimapScroll();
-    },
-    [animateMinimapScroll],
-  );
-
-  const handleMinimapDragMove = useCallback(
-    (e: MouseEvent) => {
-      const minimapEl = minimapRef.current;
-      if (!minimapDraggingRef.current || !minimapEl) return;
-      setMinimapTargetFromClientY(
-        e.clientY,
-        minimapEl,
-        minimapDragOffsetRef.current,
-      );
-    },
-    [setMinimapTargetFromClientY],
-  );
-
-  const stopMinimapDrag = useCallback(() => {
-    if (!minimapDraggingRef.current) return;
-    minimapDraggingRef.current = false;
-    window.removeEventListener("mousemove", handleMinimapDragMove);
-    window.removeEventListener("mouseup", stopMinimapDrag);
-  }, [handleMinimapDragMove]);
-
-  const handleMinimapMouseDown = useCallback(
-    (e: React.MouseEvent<HTMLButtonElement>) => {
-      e.preventDefault();
-      const minimapEl = e.currentTarget;
-      minimapRef.current = minimapEl;
-
-      const rect = minimapEl.getBoundingClientRect();
-      const pointerY = clamp(e.clientY - rect.top, 0, rect.height);
-      const viewportTopPx = minimapViewportTopPx;
-      const viewportHeightPx = minimapViewportHeightPx;
-      const pointerInsideViewport =
-        pointerY >= viewportTopPx &&
-        pointerY <= viewportTopPx + viewportHeightPx;
-
-      minimapDragOffsetRef.current = pointerInsideViewport
-        ? pointerY - viewportTopPx
-        : viewportHeightPx / 2;
-
-      minimapDraggingRef.current = true;
-      window.addEventListener("mousemove", handleMinimapDragMove);
-      window.addEventListener("mouseup", stopMinimapDrag);
-
-      setMinimapTargetFromClientY(
-        e.clientY,
-        minimapEl,
-        minimapDragOffsetRef.current,
-      );
-    },
-    [
-      handleMinimapDragMove,
-      minimapViewportHeightPx,
-      minimapViewportTopPx,
-      setMinimapTargetFromClientY,
-      stopMinimapDrag,
-    ],
-  );
-
-  useEffect(
-    () => () => {
-      stopMinimapDrag();
-      if (minimapRafRef.current !== null) {
-        cancelAnimationFrame(minimapRafRef.current);
-        minimapRafRef.current = null;
-      }
-    },
-    [stopMinimapDrag],
   );
 
   // ── Keyboard shortcut ─────────────────────────────────────
@@ -1781,251 +1554,223 @@ export function QueryTab({
               visible={acVisible}
             />
           </div>
-          <div className="w-20 shrink-0 border-l bg-muted/20 relative overflow-hidden">
-            <button
-              ref={minimapRef}
-              type="button"
-              className="absolute inset-0 cursor-pointer bg-muted/15"
-              onMouseDown={handleMinimapMouseDown}
-              aria-label="Navigate editor via minimap"
-            >
-              <span className="absolute inset-0 pointer-events-none">
-                {minimapSegments.map((segment, idx) => (
-                  <span
-                    key={idx}
-                    className="absolute left-1.5 rounded-[1px] bg-muted-foreground"
-                    style={{
-                      top: `${segment.top}%`,
-                      height: `${segment.height}%`,
-                      width: `${segment.width}%`,
-                      opacity: segment.opacity,
-                    }}
-                  />
-                ))}
-              </span>
-              <span
-                className="absolute left-0.5 right-0.5 border border-muted-foreground/45 bg-muted-foreground/10 pointer-events-none rounded-[2px]"
-                style={{
-                  top: `${minimapViewportTopPx}px`,
-                  height: `${minimapViewportHeightPx}px`,
-                }}
-              >
-                <span className="absolute top-0.5 left-1/2 -translate-x-1/2 h-0.5 w-4 rounded bg-muted-foreground/55" />
-                <span className="absolute bottom-0.5 left-1/2 -translate-x-1/2 h-0.5 w-4 rounded bg-muted-foreground/55" />
-              </span>
-            </button>
-          </div>
         </div>
-      </div>
+        <div
+          className="h-2 flex-none cursor-row-resize flex flex-col justify-center items-center z-10 opacity-0 hover:opacity-100 group transition-opacity duration-300"
+          onMouseDown={handleDragStart}
+        >
+          <div className="w-8 h-0.5 rounded bg-muted-foreground/20 group-hover:bg-primary/50 transition-colors" />
+        </div>
 
-      {/* ─── Drag handle ─────────────────────────────── */}
-      <div
-        className="shrink-0 border-y border-border cursor-row-resize hover:bg-primary/20 active:bg-primary/30 transition-colors group flex items-center justify-center"
-        style={{ height: 5 }}
-        onMouseDown={handleDragStart}
-      >
-        <div className="w-8 h-0.5 rounded bg-muted-foreground/20 group-hover:bg-primary/50 transition-colors" />
-      </div>
-
-      {/* ─── Results area ─────────────────────────────── */}
-      <div className="flex-1 min-h-0 min-w-0 flex flex-col overflow-hidden">
-        {/* Results tab bar (when multiple result sets) */}
-        {results.length > 1 && (
-          <div
-            className="shrink-0 relative border-b bg-muted/20"
-            style={{ height: 30 }}
-          >
-            <div className="absolute inset-0 flex items-center px-1 gap-0 overflow-x-auto overflow-y-hidden">
-              {results.map((r, i) => (
-                <button
-                  key={i}
-                  className={cn(
-                    "flex items-center gap-1.5 px-3 h-full text-xs transition-all whitespace-nowrap shrink-0 border-b-2",
-                    activeResultIdx === i
-                      ? "border-primary bg-background text-foreground"
-                      : "border-transparent text-muted-foreground hover:text-foreground hover:bg-accent/40",
-                  )}
-                  onClick={() => setActiveResultIdx(i)}
-                >
-                  <FileText
+        {/* ─── Results area ─────────────────────────────── */}
+        <div className="flex-1 min-h-0 min-w-0 flex flex-col overflow-hidden">
+          {/* Results tab bar (when multiple result sets) */}
+          {results.length > 1 && (
+            <div
+              className="shrink-0 relative border-b bg-muted/20"
+              style={{ height: 30 }}
+            >
+              <div className="absolute inset-0 flex items-center px-1 gap-0 overflow-x-auto overflow-y-hidden">
+                {results.map((r, i) => (
+                  <button
+                    key={i}
                     className={cn(
-                      "w-3 h-3",
+                      "flex items-center gap-1.5 px-3 h-full text-xs transition-all whitespace-nowrap shrink-0 border-b-2",
                       activeResultIdx === i
-                        ? "text-primary"
-                        : "text-muted-foreground/60",
+                        ? "border-primary bg-background text-foreground"
+                        : "border-transparent text-muted-foreground hover:text-foreground hover:bg-accent/40",
                     )}
-                  />
-                  Result {i + 1}
-                  <span
-                    className={cn(
-                      "text-[10px] ml-0.5",
-                      activeResultIdx === i
-                        ? "text-muted-foreground"
-                        : "text-muted-foreground/40",
-                    )}
+                    onClick={() => setActiveResultIdx(i)}
                   >
-                    ({r.rows.length}r × {r.columns.length}c)
-                  </span>
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Loading state */}
-        {running && (
-          <div className="flex-1 flex items-center justify-center text-muted-foreground/50">
-            <div className="text-center">
-              <Loader2 className="w-6 h-6 mx-auto mb-2 animate-spin opacity-50" />
-              <div>Executing query…</div>
-            </div>
-          </div>
-        )}
-
-        {/* Error display */}
-        {!running && error && (
-          <div className="flex items-start gap-2 px-3 py-2 bg-red-500/10 text-red-400 border-b shrink-0">
-            <XCircle className="w-4 h-4 mt-0.5 shrink-0" />
-            <pre className="text-xs font-mono whitespace-pre-wrap flex-1 select-text">
-              {error}
-            </pre>
-          </div>
-        )}
-
-        {/* Results grid */}
-        {!running && activeResult && activeResult.columns.length > 0 ? (
-          <div className="flex-1 min-h-0 relative">
-            <div className="absolute inset-0 overflow-auto">
-              <table className="min-w-max text-xs border-collapse">
-                <thead>
-                  <tr className="bg-muted sticky top-0 z-10">
-                    <th className="text-center px-2 py-1.5 text-[10px] font-medium text-muted-foreground/70 border-b border-r bg-muted w-12.5">
-                      #
-                    </th>
-                    {activeResult.columns.map((col, ci) => (
-                      <th
-                        key={ci}
-                        className="text-left px-2 py-1.5 text-[10px] font-medium text-muted-foreground/70 border-b border-r bg-muted whitespace-nowrap"
-                      >
-                        {col}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {activeResult.rows.map((row, ri) => (
-                    <tr
-                      key={ri}
-                      className="border-b hover:bg-accent/20 transition-colors"
+                    <FileText
+                      className={cn(
+                        "w-3 h-3",
+                        activeResultIdx === i
+                          ? "text-primary"
+                          : "text-muted-foreground/60",
+                      )}
+                    />
+                    Result {i + 1}
+                    <span
+                      className={cn(
+                        "text-[10px] ml-0.5",
+                        activeResultIdx === i
+                          ? "text-muted-foreground"
+                          : "text-muted-foreground/40",
+                      )}
                     >
-                      <td className="text-center px-2 py-1 border-r text-muted-foreground/40 select-none">
-                        {ri + 1}
-                      </td>
-                      {row.map((val, ci) => (
-                        <td
+                      ({r.rows.length}r × {r.columns.length}c)
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Loading state */}
+          {running && (
+            <div className="flex-1 flex items-center justify-center text-muted-foreground/50">
+              <div className="text-center">
+                <Loader2 className="w-6 h-6 mx-auto mb-2 animate-spin opacity-50" />
+                <div>Executing query…</div>
+              </div>
+            </div>
+          )}
+
+          {/* Error display */}
+          {!running && error && (
+            <div className="flex items-start gap-2 px-3 py-2 bg-red-500/10 text-red-400 border-b shrink-0">
+              <XCircle className="w-4 h-4 mt-0.5 shrink-0" />
+              <pre className="text-xs font-mono whitespace-pre-wrap flex-1 select-text">
+                {error}
+              </pre>
+            </div>
+          )}
+
+          {/* Results grid */}
+          {!running && activeResult && activeResult.columns.length > 0 ? (
+            <div className="flex-1 min-h-0 relative">
+              <div className="absolute inset-0 overflow-auto">
+                <table className="min-w-max text-xs border-collapse">
+                  <thead>
+                    <tr className="bg-muted sticky top-0 z-10">
+                      <th className="text-center px-2 py-1.5 text-[10px] font-medium text-muted-foreground/70 border-b border-r bg-muted w-12.5">
+                        #
+                      </th>
+                      {activeResult.columns.map((col, ci) => (
+                        <th
                           key={ci}
-                          className={cn(
-                            "px-2 py-1 border-r font-mono max-w-75",
-                            val === null
-                              ? "text-muted-foreground/40 italic"
-                              : "",
-                            wordWrap
-                              ? "whitespace-pre-wrap break-all"
-                              : "whitespace-nowrap truncate",
-                          )}
-                          title={val === null ? "NULL" : String(val)}
+                          className="text-left px-2 py-1.5 text-[10px] font-medium text-muted-foreground/70 border-b border-r bg-muted whitespace-nowrap"
                         >
-                          {val === null ? "NULL" : String(val)}
-                        </td>
+                          {col}
+                        </th>
                       ))}
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {activeResult.rows.map((row, ri) => (
+                      <tr
+                        key={ri}
+                        className="border-b hover:bg-accent/20 transition-colors"
+                      >
+                        <td className="text-center px-2 py-1 border-r text-muted-foreground/40 select-none">
+                          {ri + 1}
+                        </td>
+                        {row.map((val, ci) => (
+                          <td
+                            key={ci}
+                            className={cn(
+                              "px-2 py-1 border-r font-mono max-w-75",
+                              val === null
+                                ? "text-muted-foreground/40 italic"
+                                : "",
+                              wordWrap
+                                ? "whitespace-pre-wrap break-all"
+                                : "whitespace-nowrap truncate",
+                            )}
+                            title={val === null ? "NULL" : String(val)}
+                          >
+                            {val === null ? "NULL" : String(val)}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
-          </div>
-        ) : !running && !error && hasRun && results.length > 0 ? (
-          /* DML/DDL success: no column data but query ran */
-          <div className="flex-1 flex items-center justify-center text-muted-foreground/50">
-            <div className="text-center">
-              <CheckCircle2 className="w-6 h-6 mx-auto mb-2 text-green-400/50" />
-              <div>{activeResult?.info || "Query executed successfully"}</div>
-              {activeResult && activeResult.affected_rows > 0 && (
-                <div className="text-[10px] mt-1 text-muted-foreground/40">
-                  {activeResult.affected_rows} row(s) affected
-                </div>
-              )}
+          ) : !running && !error && hasRun && results.length > 0 ? (
+            /* DML/DDL success: no column data but query ran */
+            <div className="flex-1 flex items-center justify-center text-muted-foreground/50">
+              <div className="text-center">
+                <CheckCircle2 className="w-6 h-6 mx-auto mb-2 text-green-400/50" />
+                <div>{activeResult?.info || "Query executed successfully"}</div>
+                {activeResult && activeResult.affected_rows > 0 && (
+                  <div className="text-[10px] mt-1 text-muted-foreground/40">
+                    {activeResult.affected_rows} row(s) affected
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
-        ) : !running && !error && hasRun ? (
-          /* Ran successfully, no result sets returned (e.g. SET, pure DDL) */
-          <div className="flex-1 flex items-center justify-center text-muted-foreground/50">
-            <div className="text-center">
-              <CheckCircle2 className="w-6 h-6 mx-auto mb-2 text-green-400/50" />
-              <div>Query executed successfully</div>
+          ) : !running && !error && hasRun ? (
+            /* Ran successfully, no result sets returned (e.g. SET, pure DDL) */
+            <div className="flex-1 flex items-center justify-center text-muted-foreground/50">
+              <div className="text-center">
+                <CheckCircle2 className="w-6 h-6 mx-auto mb-2 text-green-400/50" />
+                <div>Query executed successfully</div>
+              </div>
             </div>
-          </div>
-        ) : !running && !error ? (
-          /* Never run yet */
-          <div className="flex-1 flex items-center justify-center text-muted-foreground/30">
-            <div className="text-center">
-              <AlertCircle className="w-6 h-6 mx-auto mb-2 opacity-30" />
-              <div>Run a query to see results here</div>
-              <div className="text-[10px] mt-1">Ctrl+Enter or F5</div>
+          ) : !running && !error ? (
+            /* Never run yet */
+            <div className="flex-1 flex items-center justify-center text-muted-foreground/30">
+              <div className="text-center">
+                <AlertCircle className="w-6 h-6 mx-auto mb-2 opacity-30" />
+                <div>Run a query to see results here</div>
+                <div className="text-[10px] mt-1">Ctrl+Enter or F5</div>
+              </div>
             </div>
-          </div>
-        ) : null}
-      </div>
+          ) : null
+          }
+        </div >
 
-      {/* ─── Status bar ──────────────────────────────── */}
-      <div className="flex items-center gap-3 px-3 py-1 border-t bg-muted/20 shrink-0 text-[10px]">
-        <div
-          className={cn(
-            "flex items-center gap-1",
-            running
-              ? "text-yellow-400"
+        {/* ─── Status bar ──────────────────────────────── */}
+        < div className="flex items-center gap-3 px-3 py-1 border-t bg-muted/20 shrink-0 text-[10px]" >
+          <div
+            className={cn(
+              "flex items-center gap-1",
+              running
+                ? "text-yellow-400"
+                : error
+                  ? "text-red-400"
+                  : results.length > 0
+                    ? "text-green-400"
+                    : "text-muted-foreground",
+            )}
+          >
+            {running ? (
+              <Loader2 className="w-3 h-3 animate-spin" />
+            ) : error ? (
+              <XCircle className="w-3 h-3" />
+            ) : results.length > 0 ? (
+              <CheckCircle2 className="w-3 h-3" />
+            ) : (
+              <AlertCircle className="w-3 h-3" />
+            )}
+            {running
+              ? "Executing..."
               : error
-                ? "text-red-400"
-                : results.length > 0
-                  ? "text-green-400"
-                  : "text-muted-foreground",
-          )}
-        >
-          {running ? (
-            <Loader2 className="w-3 h-3 animate-spin" />
-          ) : error ? (
-            <XCircle className="w-3 h-3" />
-          ) : results.length > 0 ? (
-            <CheckCircle2 className="w-3 h-3" />
-          ) : (
-            <AlertCircle className="w-3 h-3" />
-          )}
-          {statusText}
-        </div>
-        {executionTime !== null && (
-          <div className="flex items-center gap-1 text-muted-foreground">
-            <Clock className="w-3 h-3" />
-            {executionTime < 1000
-              ? `${Math.round(executionTime)}ms`
-              : `${(executionTime / 1000).toFixed(2)}s`}
+                ? "Error"
+                : results.length === 0
+                  ? (hasRun ? "Done" : "Ready")
+                  : `${results.length} result set(s), ${results.reduce((a, r) => a + r.rows.length, 0)} total row(s)`}
           </div>
-        )}
-        <div className="text-muted-foreground">
-          Ln {activeLine}, Col {activeColumn}
-        </div>
-        <div className="text-muted-foreground">
-          Sel {selectedCharCount} char(s)
-        </div>
-        <div className="text-muted-foreground">
-          Total {lineCount} line(s), {totalCharCount} char(s)
-        </div>
-        <div className="flex-1" />
-        {activeResult && activeResult.rows.length > 0 && (
+          {
+            executionTime !== null && (
+              <div className="flex items-center gap-1 text-muted-foreground">
+                <Clock className="w-3 h-3" />
+                {executionTime < 1000
+                  ? `${Math.round(executionTime)}ms`
+                  : `${(executionTime / 1000).toFixed(2)}s`}
+              </div>
+            )
+          }
           <div className="text-muted-foreground">
-            {activeResult.rows.length} row(s) × {activeResult.columns.length}{" "}
-            col(s)
+            Ln {activeLine}, Col {activeColumn}
           </div>
-        )}
+          <div className="text-muted-foreground">
+            Sel {selectedCharCount} char(s)
+          </div>
+          <div className="text-muted-foreground">
+            Total {lineCount} line(s)
+          </div>
+          <div className="flex-1" />
+          {activeResult && activeResult.rows.length > 0 && (
+            <div className="text-muted-foreground">
+              {activeResult.rows.length} row(s) × {activeResult.columns.length}{" "}
+              col(s)
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
