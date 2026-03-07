@@ -164,7 +164,22 @@ export function ExplorerTree() {
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto overflow-x-hidden pt-1">
+      <div
+        className="flex-1 overflow-y-auto overflow-x-hidden pt-1"
+        onContextMenu={(e) => {
+          // If we clicked directly on this container (empty space)
+          // and not on a child element, show context menu for the last server
+          if (e.target === e.currentTarget && connectedList.length > 0) {
+            e.preventDefault();
+            const lastProfile = connectedList[connectedList.length - 1];
+            setContextMenu({
+              target: { type: "server", profileId: lastProfile.id },
+              x: e.clientX,
+              y: e.clientY,
+            });
+          }
+        }}
+      >
         {connectedList.map((profile) => {
           const meta = connectedProfiles[profile.id];
           return (
