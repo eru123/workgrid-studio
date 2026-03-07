@@ -444,6 +444,26 @@ export function ExplorerTree() {
               setDropDbState({ profileId, databases: targetDbs });
             };
 
+            const handleRefreshDatabase = async () => {
+              setContextMenu(null);
+              const schemaStore = useSchemaStore.getState();
+              await Promise.all(
+                targetDbs.map(async (db) => {
+                  const cacheKey = `${profileId}::${db}`;
+                  schemaStore.setLoading(cacheKey, "tables", true);
+                  schemaStore.clearError(`tbl-${cacheKey}`);
+                  try {
+                    const tbls = await dbListTables(profileId, db);
+                    schemaStore.setTables(profileId, db, tbls);
+                  } catch (e) {
+                    schemaStore.setError(`tbl-${cacheKey}`, String(e));
+                  } finally {
+                    schemaStore.setLoading(cacheKey, "tables", false);
+                  }
+                }),
+              );
+            };
+
             const handleExpandAllDatabase = async () => {
               setContextMenu(null);
               const schemaStore = useSchemaStore.getState();
@@ -519,6 +539,13 @@ export function ExplorerTree() {
                       <Square className="w-3.5 h-3.5 text-muted-foreground" />{" "}
                       Deselect All
                     </button>
+                    <button
+                      className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2"
+                      onClick={handleRefreshDatabase}
+                    >
+                      <RefreshCw className="w-3.5 h-3.5 text-muted-foreground" />{" "}
+                      Refresh
+                    </button>
                     <div className="h-px bg-border my-1 mx-1" />
                     <button
                       className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2 text-red-400"
@@ -572,6 +599,13 @@ export function ExplorerTree() {
                     >
                       <Pencil className="w-3.5 h-3.5 text-muted-foreground" />{" "}
                       Edit Database...
+                    </button>
+                    <button
+                      className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2"
+                      onClick={handleRefreshDatabase}
+                    >
+                      <RefreshCw className="w-3.5 h-3.5 text-muted-foreground" />{" "}
+                      Refresh
                     </button>
                     <div className="h-px bg-border my-1 mx-1" />
                     <ContextSubmenu
