@@ -239,6 +239,7 @@ export function QueryTab({
 }: Props) {
   // ── State ──────────────────────────────────────────────────
   const [sql, setSql] = useState("");
+  const [lastSavedSql, setLastSavedSql] = useState("");
   const [results, setResults] = useState<QueryResultSet[]>([]);
   const [hasRun, setHasRun] = useState(false);
   const [activeResultIdx, setActiveResultIdx] = useState(0);
@@ -428,6 +429,13 @@ export function QueryTab({
     }
   }, [selectedProfileId, selectedDb, tabId, updateTab, connectedProfiles]);
 
+  // Sync dirty state
+  useEffect(() => {
+    if (tabId) {
+      updateTab(tabId, { dirty: sql !== lastSavedSql });
+    }
+  }, [sql, lastSavedSql, tabId, updateTab]);
+
   const executeQuery = useCallback(
     async (queryText: string) => {
       if (!queryText.trim() || running || !selectedProfileId) return;
@@ -466,6 +474,7 @@ export function QueryTab({
         setResults(filteredResults);
         setHasRun(true);
         setActiveResultIdx(0);
+        setLastSavedSql(sql);
       } catch (e) {
         if (token !== runTokenRef.current) return;
         const elapsed = performance.now() - startTime;

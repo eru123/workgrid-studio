@@ -24,6 +24,7 @@ import { AutocompleteInput } from "@/components/ui/AutocompleteInput";
 import { ContextSubmenu } from "@/components/views/ContextSubmenu";
 import { highlightSQL } from "@/lib/sqlHighlight";
 import { useAppStore } from "@/state/appStore";
+import { useLayoutStore } from "@/state/layoutStore";
 
 // ═══════════════════════════════════════════════════════════════════════
 //  Types
@@ -918,13 +919,14 @@ function toText(value: unknown): string {
 // ═══════════════════════════════════════════════════════════════════════
 
 interface Props {
+  tabId?: string;
   profileId: string;
   database: string;
   /** If provided, load existing table for editing */
   tableName?: string;
 }
 
-export function TableDesigner({ profileId, database, tableName }: Props) {
+export function TableDesigner({ tabId, profileId, database, tableName }: Props) {
   const isEditMode = Boolean(tableName);
 
   // ── State ──────────────────────────────────────────────────
@@ -963,6 +965,47 @@ export function TableDesigner({ profileId, database, tableName }: Props) {
       window.removeEventListener("scroll", close, true);
     };
   }, [ctxMenu]);
+
+  const updateTab = useLayoutStore((s) => s.updateTab);
+
+  // Sync dirty state
+  useEffect(() => {
+    const current = makeSnapshot({
+      name,
+      tableComment,
+      columns,
+      indexes,
+      foreignKeys,
+      checkConstraints,
+      options,
+    });
+
+    let dirty = false;
+    if (!loadedSnapshot) {
+      if (!isEditMode) {
+        // new table -> dirty if anything is touched
+        dirty = name.trim() !== "" || columns.length > 0;
+      }
+    } else {
+      dirty = snapshotSignature(current) !== snapshotSignature(loadedSnapshot);
+    }
+
+    if (tabId) {
+      updateTab(tabId, { dirty });
+    }
+  }, [
+    name,
+    tableComment,
+    columns,
+    indexes,
+    foreignKeys,
+    checkConstraints,
+    options,
+    loadedSnapshot,
+    isEditMode,
+    tabId,
+    updateTab
+  ]);
 
   const handleCreateNewIndex = useCallback(
     (columnId: string, type: string) => {

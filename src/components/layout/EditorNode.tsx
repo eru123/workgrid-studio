@@ -13,6 +13,7 @@ import {
   FileText,
   Loader2,
   Rows3,
+  Circle,
 } from "lucide-react";
 import { useSchemaStore } from "@/state/schemaStore";
 import { WelcomeTab } from "@/components/views/WelcomeTab";
@@ -81,6 +82,7 @@ const TabContent = memo(function TabContent({ tab }: { tab: EditorTab }) {
       case "table-designer":
         return (
           <TableDesigner
+            tabId={tab.id}
             profileId={tab.meta?.profileId ?? ""}
             database={tab.meta?.database ?? ""}
             tableName={tab.meta?.tableName}
@@ -176,6 +178,10 @@ export function EditorNode({ tree }: { tree: SplitTree }) {
       if (e.ctrlKey && e.key.toLowerCase() === "w") {
         e.preventDefault();
         if (tree.activeTabId && activeLeafId === tree.id) {
+          const activeTab = tree.tabs.find(t => t.id === tree.activeTabId);
+          if (activeTab?.dirty && !window.confirm("You have unsaved changes. Are you sure you want to close this tab?")) {
+            return;
+          }
           closeTab(tree.activeTabId, tree.id);
         }
       }
@@ -184,6 +190,14 @@ export function EditorNode({ tree }: { tree: SplitTree }) {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [tree, closeTab, activeLeafId]);
+
+  const checkDirtyTabs = (tabsToClose: EditorTab[]) => {
+    const dirtyCount = tabsToClose.filter(t => t.dirty).length;
+    if (dirtyCount > 0) {
+      return window.confirm(`You have ${dirtyCount} tab(s) with unsaved changes. Are you sure you want to close them?`);
+    }
+    return true;
+  };
 
   if (tree.type === "leaf") {
     const isLeafActive = activeLeafId === tree.id;
@@ -227,12 +241,25 @@ export function EditorNode({ tree }: { tree: SplitTree }) {
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
+                      if (tab.dirty && !window.confirm("You have unsaved changes. Are you sure you want to close this tab?")) {
+                        return;
+                      }
                       closeTab(tab.id, tree.id);
                     }}
-                    className="ml-0.5 p-0.5 rounded hover:bg-muted/80 opacity-0 group-hover:opacity-100 transition-opacity"
+                    className={cn(
+                      "ml-0.5 p-0.5 rounded hover:bg-muted/80 transition-opacity group/close",
+                      tab.dirty ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+                    )}
                     aria-label="Close tab"
                   >
-                    <X className="w-3 h-3" />
+                    {tab.dirty ? (
+                      <>
+                        <Circle className="w-2 h-2 fill-current opacity-80 group-hover/close:hidden" />
+                        <X className="w-3 h-3 hidden group-hover/close:block" />
+                      </>
+                    ) : (
+                      <X className="w-3 h-3" />
+                    )}
                   </button>
                 </div>
               );
@@ -274,7 +301,11 @@ export function EditorNode({ tree }: { tree: SplitTree }) {
                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="18" x="3" y="3" rx="2" ry="2" /><line x1="3" x2="21" y1="15" y2="15" /></svg>
               </button>
               <button
-                onClick={() => closeLeaf(tree.id)}
+                onClick={() => {
+                  if (checkDirtyTabs(tree.tabs)) {
+                    closeLeaf(tree.id);
+                  }
+                }}
                 className="p-1 rounded text-muted-foreground/60 hover:text-red-400 hover:bg-red-400/10 transition-colors ml-1"
                 title="Close Pane"
               >
@@ -296,6 +327,11 @@ export function EditorNode({ tree }: { tree: SplitTree }) {
             <button
               className="w-full text-left px-2 py-1.5 hover:bg-accent rounded text-foreground flex justify-between items-center"
               onClick={() => {
+                const tab = tree.tabs.find(t => t.id === contextMenu.tabId);
+                if (tab?.dirty && !window.confirm("You have unsaved changes. Are you sure you want to close this tab?")) {
+                  setContextMenu(null);
+                  return;
+                }
                 closeTab(contextMenu.tabId, tree.id);
                 setContextMenu(null);
               }}
@@ -308,7 +344,10 @@ export function EditorNode({ tree }: { tree: SplitTree }) {
             <button
               className="w-full text-left px-2 py-1.5 hover:bg-accent rounded text-foreground"
               onClick={() => {
-                closeOtherTabs(contextMenu.tabId, tree.id);
+                const toClose = tree.tabs.filter(t => t.id !== contextMenu.tabId);
+                if (checkDirtyTabs(toClose)) {
+                  closeOtherTabs(contextMenu.tabId, tree.id);
+                }
                 setContextMenu(null);
               }}
             >
@@ -317,7 +356,11 @@ export function EditorNode({ tree }: { tree: SplitTree }) {
             <button
               className="w-full text-left px-2 py-1.5 hover:bg-accent rounded text-foreground"
               onClick={() => {
-                closeTabsToRight(contextMenu.tabId, tree.id);
+                const tabIndex = tree.tabs.findIndex((t) => t.id === contextMenu.tabId);
+                const toClose = tree.tabs.slice(tabIndex + 1);
+                if (checkDirtyTabs(toClose)) {
+                  closeTabsToRight(contextMenu.tabId, tree.id);
+                }
                 setContextMenu(null);
               }}
             >
@@ -327,7 +370,9 @@ export function EditorNode({ tree }: { tree: SplitTree }) {
             <button
               className="w-full text-left px-2 py-1.5 hover:bg-accent rounded text-foreground"
               onClick={() => {
-                closeAllTabs(tree.id);
+                if (checkDirtyTabs(tree.tabs)) {
+                  closeAllTabs(tree.id);
+                }
                 setContextMenu(null);
               }}
             >

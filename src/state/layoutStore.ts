@@ -74,7 +74,7 @@ interface LayoutState {
   setActiveTab: (tabId: string, leafId: string) => void;
   updateTab: (
     tabId: string,
-    updates: Partial<Pick<EditorTab, "title" | "meta">>,
+    updates: Partial<Pick<EditorTab, "title" | "meta" | "dirty">>,
   ) => void;
 
   // Editor tree operations
@@ -380,7 +380,7 @@ function updateNode(
 function updateTabInTree(
   tree: SplitTree,
   tabId: string,
-  updates: Partial<Pick<EditorTab, "title" | "meta">>,
+  updates: Partial<Pick<EditorTab, "title" | "meta" | "dirty">>,
 ): SplitTree {
   if (tree.type === "leaf") {
     const hasTab = tree.tabs.some((t) => t.id === tabId);
@@ -392,6 +392,7 @@ function updateTabInTree(
           ? {
             ...t,
             ...updates,
+            dirty: updates.dirty !== undefined ? updates.dirty : t.dirty,
             meta: updates.meta ? { ...t.meta, ...updates.meta } : t.meta,
           }
           : t,
