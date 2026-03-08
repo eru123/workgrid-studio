@@ -4,8 +4,6 @@ export type SplitDirection = "horizontal" | "vertical";
 
 export type EditorTabType =
   | "sql"
-  | "results"
-  | "schema"
   | "models"
   | "tasks"
   | "database-view"
