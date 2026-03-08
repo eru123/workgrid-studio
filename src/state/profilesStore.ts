@@ -57,6 +57,10 @@ export interface SavedProfile {
   database: string;
   filePath: string;
   ssl: boolean;
+  sslCaFile?: string;
+  sslCertFile?: string;
+  sslKeyFile?: string;
+  sslRejectUnauthorized?: boolean;
   lastConnectedAt: number | null;
   createdAt: number;
   preferences?: ProfilePreferences;
@@ -85,6 +89,7 @@ export function createDefaultFormData(type?: DatabaseType): ProfileFormData {
     database: "",
     filePath: "",
     ssl: false,
+    sslRejectUnauthorized: false,
   };
 }
 

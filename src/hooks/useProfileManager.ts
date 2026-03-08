@@ -59,6 +59,10 @@ export function useProfileManager() {
             database: profile.database,
             filePath: profile.filePath,
             ssl: profile.ssl,
+            sslCaFile: profile.sslCaFile,
+            sslCertFile: profile.sslCertFile,
+            sslKeyFile: profile.sslKeyFile,
+            sslRejectUnauthorized: profile.sslRejectUnauthorized,
         });
         setEditingId(profile.id);
         setViewMode("edit");
@@ -125,6 +129,10 @@ export function useProfileManager() {
                     password: profile.password,
                     database: profile.database || null,
                     ssl: profile.ssl,
+                    ssl_ca_file: profile.sslCaFile || null,
+                    ssl_cert_file: profile.sslCertFile || null,
+                    ssl_key_file: profile.sslKeyFile || null,
+                    ssl_reject_unauthorized: profile.sslRejectUnauthorized ?? false,
                     db_type: profile.type,
                 });
                 setConnectionStatus(id, "connected");

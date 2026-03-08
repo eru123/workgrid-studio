@@ -203,6 +203,11 @@ pub struct ConnectParams {
     pub password: String,
     pub database: Option<String>,
     pub ssl: bool,
+    pub ssl_ca_file: Option<String>,
+    pub ssl_cert_file: Option<String>,
+    pub ssl_key_file: Option<String>,
+    #[serde(default)]
+    pub ssl_reject_unauthorized: bool,
     #[serde(default)]
     pub db_type: String,
 }
@@ -267,7 +272,62 @@ async fn db_connect(
     }
 
     if params.ssl {
-        let ssl_opts = mysql_async::SslOpts::default();
+        let mut ssl_opts = mysql_async::SslOpts::default();
+        
+        if !params.ssl_reject_unauthorized {
+            ssl_opts = ssl_opts.with_danger_accept_invalid_certs(true);
+        }
+
+        if let Some(ca) = params.ssl_ca_file {
+            if !ca.is_empty() {
+                let path = std::path::PathBuf::from(&ca);
+                if !path.exists() {
+                    let msg = format!("CA Certificate file does not exist at path: {}", ca);
+                    log_error(&pid, &msg);
+                    return Err(msg);
+                }
+                ssl_opts = ssl_opts.with_root_certs(vec![path.into()]);
+            }
+        }
+
+        let mut has_cert = false;
+        let mut has_key = false;
+        let mut cert_path = std::path::PathBuf::new();
+        let mut key_path = std::path::PathBuf::new();
+
+        if let Some(cert) = params.ssl_cert_file {
+            if !cert.is_empty() {
+                cert_path = std::path::PathBuf::from(&cert);
+                if !cert_path.exists() {
+                    let msg = format!("Client Certificate file does not exist at path: {}", cert);
+                    log_error(&pid, &msg);
+                    return Err(msg);
+                }
+                has_cert = true;
+            }
+        }
+
+        if let Some(key) = params.ssl_key_file {
+            if !key.is_empty() {
+                key_path = std::path::PathBuf::from(&key);
+                if !key_path.exists() {
+                    let msg = format!("Client Key file does not exist at path: {}", key);
+                    log_error(&pid, &msg);
+                    return Err(msg);
+                }
+                has_key = true;
+            }
+        }
+
+        if has_cert && has_key {
+            let identity = mysql_async::ClientIdentity::new(cert_path.into(), key_path.into());
+            ssl_opts = ssl_opts.with_client_identity(Some(identity));
+        } else if has_cert || has_key {
+            let msg = "Both Client Certificate and Client Key must be provided for mutual TLS.".to_string();
+            log_error(&pid, &msg);
+            return Err(msg);
+        }
+
         builder = builder.ssl_opts(Some(ssl_opts));
     }
 

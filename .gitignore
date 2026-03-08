@@ -27,3 +27,4 @@ dist-ssr
 /TASKS-?*.md
 /TODO.md
 .env
+src-tauri/err.txt

@@ -10,6 +10,10 @@ export interface ConnectParams {
     password: string;
     database: string | null;
     ssl: boolean;
+    ssl_ca_file: string | null;
+    ssl_cert_file: string | null;
+    ssl_key_file: string | null;
+    ssl_reject_unauthorized: boolean;
     db_type: string;
 }
 

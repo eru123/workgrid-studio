@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { open } from "@tauri-apps/plugin-dialog";
 import {
   DatabaseType,
   DB_TYPE_LABELS,
@@ -487,6 +488,164 @@ export function ServersSidebar() {
                         Use SSL Protocol
                       </span>
                     </div>
+
+                    {/* Extended SSL Fields */}
+                    {formData.ssl && (
+                      <div className="space-y-3 pt-2 border-t mt-3 border-border/50">
+                        {/* Reject Unauthorized Toggle */}
+                        <div className="flex items-center gap-3 pb-1">
+                          <button
+                            onClick={() =>
+                              updateField(
+                                "sslRejectUnauthorized",
+                                !formData.sslRejectUnauthorized,
+                              )
+                            }
+                            className={cn(
+                              "relative w-10 h-5 rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-background space-x-0 ring-primary/50",
+                              formData.sslRejectUnauthorized
+                                ? "bg-primary"
+                                : "bg-secondary",
+                            )}
+                          >
+                            <div
+                              className={cn(
+                                "absolute top-[2px] w-4 h-4 rounded-full bg-white transition-transform shadow-sm",
+                                formData.sslRejectUnauthorized
+                                  ? "translate-x-[22px]"
+                                  : "translate-x-[2px]",
+                              )}
+                            />
+                          </button>
+                          <span className="text-xs font-medium">
+                            Reject Unauthorized (Strict Validation)
+                          </span>
+                        </div>
+
+                        {/* CA Certificate */}
+                        <div>
+                          <label className="text-xs font-medium text-muted-foreground block mb-1.5">
+                            CA Certificate (.pem, .crt)
+                          </label>
+                          <div className="flex gap-2">
+                            <input
+                              type="text"
+                              value={formData.sslCaFile || ""}
+                              onChange={(e) =>
+                                updateField("sslCaFile", e.target.value)
+                              }
+                              placeholder="/path/to/ca.pem"
+                              className="flex-1 h-9 rounded-md border bg-secondary/50 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all font-mono"
+                            />
+                            <button
+                              onClick={async () => {
+                                const selected = await open({
+                                  multiple: false,
+                                  directory: false,
+                                  filters: [{ name: "Certificate", extensions: ["pem", "crt"] }],
+                                });
+                                if (typeof selected === "string") {
+                                  updateField("sslCaFile", selected);
+                                }
+                              }}
+                              className="h-9 px-3 rounded-md border bg-secondary font-medium hover:bg-secondary/80 hover:text-foreground text-xs transition-all"
+                            >
+                              Browse
+                            </button>
+                            {formData.sslCaFile && (
+                              <button
+                                onClick={() => updateField("sslCaFile", undefined)}
+                                className="h-9 px-2 text-muted-foreground hover:text-red-500 rounded-md hover:bg-red-500/10 transition-colors"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Client Certificate */}
+                        <div>
+                          <label className="text-xs font-medium text-muted-foreground block mb-1.5">
+                            Client Certificate (.pem, .crt)
+                          </label>
+                          <div className="flex gap-2">
+                            <input
+                              type="text"
+                              value={formData.sslCertFile || ""}
+                              onChange={(e) =>
+                                updateField("sslCertFile", e.target.value)
+                              }
+                              placeholder="/path/to/client-cert.pem"
+                              className="flex-1 h-9 rounded-md border bg-secondary/50 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all font-mono"
+                            />
+                            <button
+                              onClick={async () => {
+                                const selected = await open({
+                                  multiple: false,
+                                  directory: false,
+                                  filters: [{ name: "Certificate", extensions: ["pem", "crt"] }],
+                                });
+                                if (typeof selected === "string") {
+                                  updateField("sslCertFile", selected);
+                                }
+                              }}
+                              className="h-9 px-3 rounded-md border bg-secondary font-medium hover:bg-secondary/80 hover:text-foreground text-xs transition-all"
+                            >
+                              Browse
+                            </button>
+                            {formData.sslCertFile && (
+                              <button
+                                onClick={() => updateField("sslCertFile", undefined)}
+                                className="h-9 px-2 text-muted-foreground hover:text-red-500 rounded-md hover:bg-red-500/10 transition-colors"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Client Key */}
+                        <div>
+                          <label className="text-xs font-medium text-muted-foreground block mb-1.5">
+                            Client Key (.pem, .key)
+                          </label>
+                          <div className="flex gap-2">
+                            <input
+                              type="text"
+                              value={formData.sslKeyFile || ""}
+                              onChange={(e) =>
+                                updateField("sslKeyFile", e.target.value)
+                              }
+                              placeholder="/path/to/client-key.pem"
+                              className="flex-1 h-9 rounded-md border bg-secondary/50 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all font-mono"
+                            />
+                            <button
+                              onClick={async () => {
+                                const selected = await open({
+                                  multiple: false,
+                                  directory: false,
+                                  filters: [{ name: "Key", extensions: ["pem", "key"] }],
+                                });
+                                if (typeof selected === "string") {
+                                  updateField("sslKeyFile", selected);
+                                }
+                              }}
+                              className="h-9 px-3 rounded-md border bg-secondary font-medium hover:bg-secondary/80 hover:text-foreground text-xs transition-all"
+                            >
+                              Browse
+                            </button>
+                            {formData.sslKeyFile && (
+                              <button
+                                onClick={() => updateField("sslKeyFile", undefined)}
+                                className="h-9 px-2 text-muted-foreground hover:text-red-500 rounded-md hover:bg-red-500/10 transition-colors"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
