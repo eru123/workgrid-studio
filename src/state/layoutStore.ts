@@ -85,6 +85,12 @@ interface LayoutState {
   splitLeaf: (leafId: string, direction: SplitDirection) => void;
   closeLeaf: (leafId: string) => void;
   resizeNode: (nodeId: string, newRatio: number) => void;
+  moveTab: (
+    tabId: string,
+    sourceLeafId: string,
+    targetLeafId: string,
+    targetIndex?: number,
+  ) => void;
 }
 
 // Update a specific leaf in the tree
@@ -303,6 +309,65 @@ export const useLayoutStore = create<LayoutState>((set) => ({
     set((state) => ({
       editorTree: updateTabInTree(state.editorTree, tabId, updates),
     })),
+
+  moveTab: (tabId, sourceLeafId, targetLeafId, targetIndex) =>
+    set((state) => {
+      const sourceLeaf = findLeafById(state.editorTree, sourceLeafId);
+      const targetLeaf = findLeafById(state.editorTree, targetLeafId);
+      if (!sourceLeaf || !targetLeaf) return state;
+
+      const tabIndex = sourceLeaf.tabs.findIndex((t) => t.id === tabId);
+      if (tabIndex === -1) return state;
+      const tab = sourceLeaf.tabs[tabIndex];
+
+      if (sourceLeafId === targetLeafId) {
+        // Same leaf reorder
+        const newTabs = [...sourceLeaf.tabs];
+        newTabs.splice(tabIndex, 1);
+        if (targetIndex !== undefined) {
+          // Since we removed an element, if we dropped past the removed index, we need to adjust
+          const dropIndex = targetIndex > tabIndex ? targetIndex - 1 : targetIndex;
+          newTabs.splice(dropIndex, 0, tab);
+        } else {
+          newTabs.push(tab);
+        }
+        return {
+          editorTree: updateLeaf(state.editorTree, sourceLeafId, (l) => ({
+            ...l,
+            tabs: newTabs,
+          })),
+        };
+      } else {
+        // Different leaf move
+        const newSourceTabs = sourceLeaf.tabs.filter((t) => t.id !== tabId);
+        const newSourceActiveId =
+          sourceLeaf.activeTabId === tabId
+            ? newSourceTabs.length > 0
+              ? newSourceTabs[newSourceTabs.length - 1].id
+              : null
+            : sourceLeaf.activeTabId;
+
+        const newTargetTabs = [...targetLeaf.tabs];
+        let dropIndex = targetIndex !== undefined ? targetIndex : newTargetTabs.length;
+        newTargetTabs.splice(dropIndex, 0, tab);
+
+        let newTree = updateLeaf(state.editorTree, sourceLeafId, (l) => ({
+          ...l,
+          tabs: newSourceTabs,
+          activeTabId: newSourceActiveId,
+        }));
+        newTree = updateLeaf(newTree, targetLeafId, (l) => ({
+          ...l,
+          tabs: newTargetTabs,
+          activeTabId: tab.id,
+        }));
+
+        return {
+          editorTree: newTree,
+          activeLeafId: targetLeafId,
+        };
+      }
+    }),
 
   splitLeaf: (leafId, direction) =>
     set((state) => {

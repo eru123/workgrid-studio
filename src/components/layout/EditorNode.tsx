@@ -147,6 +147,9 @@ function tabIcon(type: EditorTab["type"], isActive: boolean) {
   }
 }
 
+// Module-level state for drag payload to bypass WebView dataTransfer filtering robustly
+let activeDragPayload: { tabId: string; sourceLeafId: string } | null = null;
+
 export function EditorNode({ tree }: { tree: SplitTree }) {
   const resizeNode = useLayoutStore((s) => s.resizeNode);
   const openTab = useLayoutStore((s) => s.openTab);
@@ -158,6 +161,7 @@ export function EditorNode({ tree }: { tree: SplitTree }) {
   const closeLeaf = useLayoutStore((s) => s.closeLeaf);
   const setActiveLeaf = useLayoutStore((s) => s.setActiveLeaf);
   const setActiveTab = useLayoutStore((s) => s.setActiveTab);
+  const moveTab = useLayoutStore((s) => s.moveTab);
   const connectedProfiles = useSchemaStore((s) => s.connectedProfiles);
   const activeLeafId = useLayoutStore((s) => s.activeLeafId);
   const isSplit = useLayoutStore((s) => s.editorTree.type !== "leaf");
@@ -167,6 +171,57 @@ export function EditorNode({ tree }: { tree: SplitTree }) {
     y: number;
     tabId: string;
   } | null>(null);
+
+  const [dragOverTabId, setDragOverTabId] = useState<string | null>(null);
+  const [isDragOverPane, setIsDragOverPane] = useState<boolean>(false);
+
+  const handleDragStart = (e: React.DragEvent, tabId: string, leafId: string) => {
+    e.dataTransfer.effectAllowed = "move";
+    // Browsers require some text data to initiate a drag properly
+    e.dataTransfer.setData("text/plain", "workgrid-tab");
+    activeDragPayload = { tabId, sourceLeafId: leafId };
+  };
+
+  const handleDragEnter = (e: React.DragEvent, tabId: string | null) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    if (tabId) {
+      if (dragOverTabId !== tabId) setDragOverTabId(tabId);
+      if (isDragOverPane) setIsDragOverPane(false);
+    } else {
+      if (dragOverTabId !== null) setDragOverTabId(null);
+      if (!isDragOverPane) setIsDragOverPane(true);
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault(); // Unconditional preventDefault to allow drop
+    e.dataTransfer.dropEffect = "move";
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    // Only reset if we actually left the boundary (not just entering a child)
+    if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+      setDragOverTabId(null);
+      setIsDragOverPane(false);
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent, leafId: string, targetIndex?: number) => {
+    e.preventDefault();
+    setDragOverTabId(null);
+    setIsDragOverPane(false);
+
+    if (activeDragPayload) {
+      moveTab(activeDragPayload.tabId, activeDragPayload.sourceLeafId, leafId, targetIndex);
+    }
+  };
+
+  const handleDragEnd = () => {
+    activeDragPayload = null;
+    setDragOverTabId(null);
+    setIsDragOverPane(false);
+  };
 
   // Global click listener to close context menu
   useEffect(() => {
@@ -214,18 +269,29 @@ export function EditorNode({ tree }: { tree: SplitTree }) {
       <div
         className={cn(
           "flex-1 w-full h-full bg-background border rounded-sm overflow-hidden flex flex-col transition-colors",
-          isLeafActive && isSplit ? "border-primary/50" : "border-border"
+          isLeafActive && isSplit ? "border-primary/50" : "border-border",
+          isDragOverPane && "ring-2 ring-primary bg-primary/5"
         )}
         onClickCapture={() => setActiveLeaf(tree.id)}
+        onDragEnter={(e) => handleDragEnter(e, null)}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={(e) => handleDrop(e, tree.id)}
       >
         {/* Tab bar */}
         <div
           className="shrink-0 relative border-b bg-muted/30"
           style={{ height: 29 }}
         >
-          <div className="absolute inset-0 flex items-end overflow-x-auto overflow-y-hidden">
-            {tree.tabs.map((tab) => {
+          <div
+            className="absolute inset-0 flex items-end overflow-x-auto overflow-y-hidden"
+            onDragEnter={(e) => handleDragEnter(e, null)}
+            onDragOver={handleDragOver}
+            onDrop={(e) => handleDrop(e, tree.id)}
+          >
+            {tree.tabs.map((tab, idx) => {
               const isActive = tab.id === tree.activeTabId;
+              const isDragTarget = dragOverTabId === tab.id;
               return (
                 <div
                   key={tab.id}
@@ -234,8 +300,36 @@ export function EditorNode({ tree }: { tree: SplitTree }) {
                     isActive
                       ? "border-primary bg-background text-foreground"
                       : "border-transparent text-muted-foreground hover:text-foreground hover:bg-accent/40",
+                    isDragTarget && "border-l-2 border-l-primary",
                   )}
+                  draggable
+                  onDragStart={(e) => handleDragStart(e, tab.id, tree.id)}
+                  onDragEnter={(e) => handleDragEnter(e, tab.id)}
+                  onDragOver={handleDragOver}
+                  onDragLeave={() => setDragOverTabId(null)}
+                  onDragEnd={handleDragEnd}
+                  onDrop={(e) => {
+                    e.stopPropagation(); // prevent container drop
+                    handleDrop(e, tree.id, idx);
+                  }}
                   onClick={() => setActiveTab(tab.id, tree.id)}
+                  onAuxClick={(e) => {
+                    if (e.button === 1) {
+                      e.preventDefault();
+                      if (
+                        tab.dirty &&
+                        !window.confirm(
+                          "You have unsaved changes. Are you sure you want to close this tab?",
+                        )
+                      ) {
+                        return;
+                      }
+                      closeTab(tab.id, tree.id);
+                    }
+                  }}
+                  onMouseDown={(e) => {
+                    if (e.button === 1) e.preventDefault();
+                  }}
                   onContextMenu={(e) => {
                     e.preventDefault();
                     setContextMenu({
