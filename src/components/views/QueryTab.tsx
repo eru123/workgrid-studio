@@ -452,6 +452,11 @@ export function QueryTab({
       if (!path) return;
       await writeFile(path, new TextEncoder().encode(sql));
       setLastSavedSql(sql);
+
+      // Extract filename and update tab title
+      const filename = path.split(/[/\\]/).pop() || "Query";
+      updateTab(tabId, { title: filename });
+
       useAppStore.getState().addToast({
         title: "File Saved",
         description: `Successfully saved to ${path}`,
@@ -463,7 +468,7 @@ export function QueryTab({
         variant: "destructive",
       });
     }
-  }, [sql]);
+  }, [sql, tabId, updateTab]);
 
   const handleOpenFile = useCallback(async () => {
     try {
@@ -478,6 +483,10 @@ export function QueryTab({
       const content = await readTextFile(selected);
       setSql(content);
       setLastSavedSql(content);
+
+      // Extract filename and update tab title
+      const filename = selected.split(/[/\\]/).pop() || "Query";
+      updateTab(tabId, { title: filename });
     } catch (e) {
       useAppStore.getState().addToast({
         title: "Open Failed",
@@ -485,7 +494,7 @@ export function QueryTab({
         variant: "destructive",
       });
     }
-  }, []);
+  }, [tabId, updateTab]);
 
   // Ctrl+S listener
   useEffect(() => {
