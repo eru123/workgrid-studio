@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, useRef, memo } from "react";
-import { dbQuery, dbListColumns } from "@/lib/db";
+import { dbQuery, dbExecuteQuery, dbListColumns } from "@/lib/db";
 import type { ColumnInfo, QueryResultSet } from "@/lib/db";
 import { cn } from "@/lib/utils/cn";
 import { useAppStore } from "@/state/appStore";
@@ -23,6 +23,10 @@ import {
   ArrowUpDown,
   AlertCircle,
   Check,
+  Plus,
+  Trash2,
+  Save,
+  RotateCcw,
 } from "lucide-react";
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -322,6 +326,16 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
   const [showColumnPicker, setShowColumnPicker] = useState(false);
   const columnPickerRef = useRef<HTMLDivElement>(null);
 
+  // ── Edit state ──────────────────────────────────────────
+  const [editedCells, setEditedCells] = useState<Record<string, string | null>>({});
+  const [addedRows, setAddedRows] = useState<Record<string, string | null>[]>([]);
+  const [deletedRows, setDeletedRows] = useState<Set<number>>(new Set());
+  const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
+  const [isApplying, setIsApplying] = useState(false);
+  const [applyError, setApplyError] = useState<string | null>(null);
+
+  const hasEdits = Object.keys(editedCells).length > 0 || addedRows.length > 0 || deletedRows.size > 0;
+
   // ── Filter ──────────────────────────────────────────────
   const [whereClause, setWhereClause] = useState("");
   const [appliedWhere, setAppliedWhere] = useState("");
@@ -366,6 +380,11 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
   const fetchData = useCallback(async () => {
     setLoading(true);
     setError(null);
+    setEditedCells({});
+    setAddedRows([]);
+    setDeletedRows(new Set());
+    setSelectedRows(new Set());
+    setApplyError(null);
     try {
       const [countRes, dataRes] = await Promise.all([
         dbQuery(profileId, countQuery),
@@ -504,6 +523,140 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
     return () => document.removeEventListener("mousedown", handleClick);
   }, [showColumnPicker]);
 
+  // ── Edit handlers ───────────────────────────────────────
+  const handleAddRow = useCallback(() => {
+    setAddedRows(prev => {
+      const newRow: Record<string, string | null> = {};
+      columns.forEach(col => newRow[col] = null);
+      return [...prev, newRow];
+    });
+  }, [columns]);
+
+  const handleDeleteSelected = useCallback(() => {
+    setDeletedRows(prev => {
+      const next = new Set(prev);
+      selectedRows.forEach(idx => {
+        if (idx < rows.length) next.add(idx);
+      });
+      return next;
+    });
+    setSelectedRows(new Set());
+  }, [selectedRows, rows]);
+
+  const handleDiscardChanges = useCallback(() => {
+    setEditedCells({});
+    setAddedRows([]);
+    setDeletedRows(new Set());
+    setSelectedRows(new Set());
+    setApplyError(null);
+  }, []);
+
+  const handleApplyChanges = useCallback(async () => {
+    if (!hasEdits) return;
+    setIsApplying(true);
+    setApplyError(null);
+    try {
+      // Find PK columns
+      const pkCols = columnInfos.filter(c => c.key === "PRI").map(c => c.name);
+      if (pkCols.length === 0 && (Object.keys(editedCells).length > 0 || deletedRows.size > 0)) {
+        throw new Error("Cannot update or delete rows because the table has no Primary Key.");
+      }
+
+      const queries: string[] = [];
+
+      // 1. Deletes
+      for (const rowIdx of deletedRows) {
+        const row = rows[rowIdx];
+        const whereParts = pkCols.map(pkCol => {
+          const colIdx = columns.indexOf(pkCol);
+          const val = row[colIdx];
+          return `${escId(pkCol)} = ${val === null ? 'NULL' : `'${String(val).replace(/'/g, "''")}'`}`;
+        });
+        queries.push(`DELETE FROM ${escId(database)}.${escId(tableName)} WHERE ${whereParts.join(" AND ")};`);
+      }
+
+      // 2. Updates
+      const updatesByRow: Record<number, Record<string, string | null>> = {};
+      Object.entries(editedCells).forEach(([key, val]) => {
+        const [rowIdxStr, colName] = key.split(":");
+        const rowIdx = parseInt(rowIdxStr, 10);
+        if (!updatesByRow[rowIdx]) updatesByRow[rowIdx] = {};
+        updatesByRow[rowIdx][colName] = val;
+      });
+
+      for (const [rowIdxStr, changes] of Object.entries(updatesByRow)) {
+        const rowIdx = parseInt(rowIdxStr, 10);
+        if (deletedRows.has(rowIdx)) continue; // skip if deleted
+
+        const row = rows[rowIdx];
+        const setParts = Object.entries(changes).map(([col, val]) => {
+          return `${escId(col)} = ${val === null ? 'NULL' : `'${String(val).replace(/'/g, "''")}'`}`;
+        });
+        const whereParts = pkCols.map(pkCol => {
+          const colIdx = columns.indexOf(pkCol);
+          const val = row[colIdx];
+          return `${escId(pkCol)} = ${val === null ? 'NULL' : `'${String(val).replace(/'/g, "''")}'`}`;
+        });
+
+        queries.push(`UPDATE ${escId(database)}.${escId(tableName)} SET ${setParts.join(", ")} WHERE ${whereParts.join(" AND ")};`);
+      }
+
+      // 3. Inserts
+      for (const newRow of addedRows) {
+        const colsToInsert = Object.keys(newRow).filter(col => newRow[col] !== null && newRow[col] !== "");
+        if (colsToInsert.length === 0) continue; // skip totally empty rows
+
+        const colNames = colsToInsert.map(c => escId(c)).join(", ");
+        const colVals = colsToInsert.map(c => newRow[c] === null ? 'NULL' : `'${String(newRow[c]).replace(/'/g, "''")}'`).join(", ");
+        queries.push(`INSERT INTO ${escId(database)}.${escId(tableName)} (${colNames}) VALUES (${colVals});`);
+      }
+
+      if (queries.length > 0) {
+        for (const q of queries) {
+          await dbExecuteQuery(profileId, q);
+        }
+      }
+
+      useAppStore.getState().addToast({
+        title: "Changes Applied",
+        description: `Successfully applied ${queries.length} change(s).`,
+      });
+
+      await fetchData();
+
+    } catch (e) {
+      setApplyError(String(e));
+      useAppStore.getState().addToast({
+        title: "Failed to apply changes",
+        description: String(e),
+        variant: "destructive",
+      });
+    } finally {
+      setIsApplying(false);
+    }
+  }, [hasEdits, editedCells, addedRows, deletedRows, rows, columns, columnInfos, database, tableName, profileId, fetchData]);
+
+  const toggleRowSelection = useCallback((rowIdx: number) => {
+    setSelectedRows(prev => {
+      const next = new Set(prev);
+      if (next.has(rowIdx)) next.delete(rowIdx);
+      else next.add(rowIdx);
+      return next;
+    });
+  }, []);
+
+  const toggleAllSelection = useCallback(() => {
+    if (selectedRows.size === rows.length - deletedRows.size) {
+      setSelectedRows(new Set());
+    } else {
+      const next = new Set<number>();
+      rows.forEach((_, i) => {
+        if (!deletedRows.has(i)) next.add(i);
+      });
+      setSelectedRows(next);
+    }
+  }, [rows, selectedRows.size, deletedRows]);
+
   // ── Render: Loading ─────────────────────────────────────
   if (loadingMeta && effectiveColumns.length === 0) {
     return (
@@ -628,8 +781,56 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
         {/* Spacer */}
         <div className="flex-1" />
 
+        {/* Edit Controls */}
+        <div className="flex items-center gap-1 border-l pl-1">
+          <button
+            className="flex items-center gap-1 px-2 py-1 rounded hover:bg-accent transition-colors text-xs text-muted-foreground hover:text-foreground"
+            onClick={handleAddRow}
+            title="Insert new row"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            Insert
+          </button>
+          <button
+            className={cn("flex items-center gap-1 px-2 py-1 rounded transition-colors text-xs",
+              selectedRows.size > 0 ? "hover:bg-red-500/20 text-red-500" : "opacity-30 pointer-events-none text-muted-foreground")}
+            onClick={handleDeleteSelected}
+            title="Delete selected rows"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            Delete
+          </button>
+
+          <div className="w-px h-4 bg-border mx-1" />
+
+          {hasEdits && (
+            <>
+              <button
+                className="flex items-center gap-1 px-2 py-1 rounded hover:bg-accent transition-colors text-xs text-muted-foreground"
+                onClick={handleDiscardChanges}
+                disabled={isApplying}
+                title="Discard all changes"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                Discard
+              </button>
+              <button
+                className="flex items-center gap-1 px-2 py-1 rounded bg-primary text-primary-foreground hover:bg-primary/90 transition-colors text-xs"
+                onClick={handleApplyChanges}
+                disabled={isApplying}
+                title="Apply changes to database"
+              >
+                {isApplying ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                Apply
+              </button>
+            </>
+          )}
+        </div>
+
+        <div className="w-px h-4 bg-border mx-1" />
+
         {/* Row count */}
-        <span className="text-muted-foreground text-[10px] mr-1">
+        <span className="text-muted-foreground text-[10px] mr-1 flex items-center gap-1">
           {totalRows.toLocaleString()} rows total
           {appliedWhere ? " (filtered)" : ""}
         </span>
@@ -677,10 +878,10 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
       )}
 
       {/* ─── Error banner ──────────────────────────── */}
-      {error && (
+      {(error || applyError) && (
         <div className="flex items-start gap-2 px-3 py-2 border-b bg-red-500/10 text-red-400 text-xs shrink-0">
           <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-          <span className="break-all">{error}</span>
+          <span className="break-all">{error || applyError}</span>
         </div>
       )}
 
@@ -698,6 +899,15 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
         <table className="w-full text-xs border-collapse">
           <thead className="sticky top-0 z-10">
             <tr className="bg-muted/70 backdrop-blur-sm">
+              <th className="text-center px-1.5 py-1.5 border-b border-r bg-muted/70 whitespace-nowrap w-8">
+                <input
+                  type="checkbox"
+                  className="w-3 h-3 rounded-sm opacity-50 hover:opacity-100 cursor-pointer"
+                  style={{ accentColor: 'var(--primary)' }}
+                  checked={rows.length > 0 && selectedRows.size === rows.length - deletedRows.size}
+                  onChange={toggleAllSelection}
+                />
+              </th>
               {/* Row number column */}
               <th className="text-center px-1.5 py-1.5 text-[10px] font-medium text-muted-foreground/70 tracking-wider border-b border-r bg-muted/70 whitespace-nowrap w-10">
                 #
@@ -721,26 +931,50 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
             </tr>
           </thead>
           <tbody>
-            {rows.length === 0 && !loading && (
+            {rows.length === 0 && addedRows.length === 0 && !loading && (
               <tr>
                 <td
-                  colSpan={visibleColumns.length + 1}
+                  colSpan={visibleColumns.length + 2}
                   className="text-center py-10 text-muted-foreground/40"
                 >
                   {appliedWhere ? "No rows matching filter" : "Empty table"}
                 </td>
               </tr>
             )}
+            {addedRows.map((newRow, idx) => (
+              <NewDataRow
+                key={`new-${idx}`}
+                newRow={newRow}
+                rowIdx={idx}
+                columns={effectiveColumns}
+                visibleColumns={visibleColumns}
+                columnInfos={columnInfos}
+                onEditCell={(colName, val) => {
+                  setAddedRows(prev => {
+                    const next = [...prev];
+                    next[idx] = { ...next[idx], [colName]: val };
+                    return next;
+                  });
+                }}
+              />
+            ))}
             {rows.map((row, rowIdx) => {
+              if (deletedRows.has(rowIdx)) return null;
               const rowNumber = page * pageSize + rowIdx + 1;
+              const isSelected = selectedRows.has(rowIdx);
               return (
                 <DataRow
-                  key={rowIdx}
+                  key={`row-${rowIdx}`}
                   row={row}
+                  rowIdx={rowIdx}
                   rowNumber={rowNumber}
                   columns={effectiveColumns}
                   visibleColumns={visibleColumns}
                   columnInfos={columnInfos}
+                  isSelected={isSelected}
+                  onToggleSelect={() => toggleRowSelection(rowIdx)}
+                  editedCells={editedCells}
+                  onEditCell={(colName, val) => setEditedCells(prev => ({ ...prev, [`${rowIdx}:${colName}`]: val }))}
                 />
               );
             })}
