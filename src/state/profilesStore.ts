@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { readData, writeData } from "@/lib/storage";
+import { encryptPassword, decryptPassword } from "@/lib/db";
 
 export type DatabaseType =
   | "postgres"
@@ -95,13 +96,20 @@ let saveTimer: ReturnType<typeof setTimeout> | null = null;
 function debouncedSave(profiles: DatabaseProfile[]) {
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
-    // Strip runtime-only fields before saving
-    const toSave: SavedProfile[] = profiles.map(
-      ({ connectionStatus: _, ...rest }) => rest,
-    );
-    writeData(PROFILES_FILE, toSave).catch(() => {
-      // Silently catch in production, persistence will retry on next action
-    });
+    (async () => {
+      try {
+        // Strip runtime-only fields and selectively encrypt passwords
+        const toSave: SavedProfile[] = await Promise.all(
+          profiles.map(async ({ connectionStatus: _, password, ...rest }) => ({
+            ...rest,
+            password: password ? await encryptPassword(password) : "",
+          }))
+        );
+        await writeData(PROFILES_FILE, toSave);
+      } catch (err) {
+        // Silently catch in production, persistence will retry on next action
+      }
+    })();
   }, 300);
 }
 
@@ -128,10 +136,13 @@ export const useProfilesStore = create<ProfilesState>((set, get) => ({
     if (get()._loaded) return;
     try {
       const saved = await readData<SavedProfile[]>(PROFILES_FILE, []);
-      const profiles: DatabaseProfile[] = saved.map((s) => ({
-        ...s,
-        connectionStatus: "disconnected" as ConnectionStatus,
-      }));
+      const profiles: DatabaseProfile[] = await Promise.all(
+        saved.map(async (s) => ({
+          ...s,
+          password: s.password ? await decryptPassword(s.password) : "",
+          connectionStatus: "disconnected" as ConnectionStatus,
+        }))
+      );
       set({ profiles, _loaded: true });
     } catch (e) {
       // console.error("[profiles] load error:", e);
@@ -194,11 +205,11 @@ export const useProfilesStore = create<ProfilesState>((set, get) => ({
       const profiles = state.profiles.map((p) =>
         p.id === id
           ? {
-              ...p,
-              connectionStatus: status,
-              lastConnectedAt:
-                status === "connected" ? Date.now() : p.lastConnectedAt,
-            }
+            ...p,
+            connectionStatus: status,
+            lastConnectedAt:
+              status === "connected" ? Date.now() : p.lastConnectedAt,
+          }
           : p,
       );
       // Save on connect/disconnect to persist lastConnectedAt

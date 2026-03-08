@@ -1394,6 +1394,83 @@ async fn ai_generate_query(
     }
 }
 
+fn get_or_create_secret_key() -> Result<[u8; 32], String> {
+    let base = ensure_app_dirs()?;
+    let key_path = base.join("data").join("secret.key");
+
+    if key_path.exists() {
+        let contents = fs::read(&key_path).map_err(|e| format!("Failed to read secret.key: {}", e))?;
+        if contents.len() == 32 {
+            let mut key = [0u8; 32];
+            key.copy_from_slice(&contents);
+            return Ok(key);
+        }
+    }
+
+    let mut key = [0u8; 32];
+    rand::thread_rng().fill_bytes(&mut key);
+    fs::write(&key_path, key).map_err(|e| format!("Failed to write secret.key: {}", e))?;
+
+    Ok(key)
+}
+
+#[tauri::command]
+fn encrypt_password(password: String) -> Result<String, String> {
+    if password.is_empty() {
+        return Ok(String::new());
+    }
+
+    let key = get_or_create_secret_key()?;
+    let cipher = Aes256Gcm::new(&key.into());
+
+    let mut nonce_bytes = [0u8; 12];
+    rand::thread_rng().fill_bytes(&mut nonce_bytes);
+    let nonce = Nonce::from_slice(&nonce_bytes);
+
+    match cipher.encrypt(nonce, password.as_bytes()) {
+        Ok(ciphertext) => {
+            let mut payload = Vec::with_capacity(12 + ciphertext.len());
+            payload.extend_from_slice(&nonce_bytes);
+            payload.extend_from_slice(&ciphertext);
+            Ok(format!("wkgrd:{}", b64.encode(payload)))
+        }
+        Err(e) => Err(format!("Encryption failed: {}", e)),
+    }
+}
+
+#[tauri::command]
+fn decrypt_password(encrypted: String) -> Result<String, String> {
+    if encrypted.is_empty() {
+        return Ok(String::new());
+    }
+
+    if !encrypted.starts_with("wkgrd:") {
+        return Ok(encrypted);
+    }
+
+    let base64_payload = &encrypted[6..];
+    let payload = match b64.decode(base64_payload) {
+        Ok(p) => p,
+        Err(_) => return Ok(encrypted),
+    };
+
+    if payload.len() < 12 {
+        return Ok(encrypted);
+    }
+
+    let nonce_bytes = &payload[..12];
+    let ciphertext = &payload[12..];
+
+    let key = get_or_create_secret_key()?;
+    let cipher = Aes256Gcm::new(&key.into());
+    let nonce = Nonce::from_slice(nonce_bytes);
+
+    match cipher.decrypt(nonce, ciphertext) {
+        Ok(plaintext) => String::from_utf8(plaintext).or_else(|_| Ok(encrypted.clone())),
+        Err(_) => Ok(encrypted),
+    }
+}
+
 #[tauri::command]
 fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
@@ -1479,7 +1556,9 @@ pub fn run() {
             ai_generate_query,
             get_ai_logs,
             clear_ai_logs,
-            db_get_schema_ddl
+            db_get_schema_ddl,
+            encrypt_password,
+            decrypt_password
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

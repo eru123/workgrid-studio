@@ -182,6 +182,15 @@ export async function vaultDelete(key: string): Promise<void> {
     return invoke<void>("vault_delete", { key });
 }
 
+// ─── Encryption ─────────────────────────────────────────────────────
+
+export async function encryptPassword(password: string): Promise<string> {
+    return invoke<string>("encrypt_password", { password });
+}
+
+export async function decryptPassword(encrypted: string): Promise<string> {
+    return invoke<string>("decrypt_password", { encrypted });
+}
 
 // ─── Schema DDL (for AI context) ────────────────────────────────────
 
