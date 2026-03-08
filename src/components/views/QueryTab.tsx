@@ -18,6 +18,9 @@ import { useLayoutStore } from "@/state/layoutStore";
 import { useAppStore } from "@/state/appStore";
 import { useModelsStore } from "@/state/modelsStore";
 import { aiGenerateQuery, dbGetSchemaDdl } from "@/lib/db";
+import { save, open } from "@tauri-apps/plugin-dialog";
+import { writeFile, readTextFile } from "@tauri-apps/plugin-fs";
+import { useQueryHistoryStore } from "@/state/queryHistoryStore";
 import {
   Play,
   Square,
@@ -36,7 +39,10 @@ import {
   RotateCcw,
   AlignLeft,
   Bot,
-  Sparkles
+  Sparkles,
+  Save as SaveIcon,
+  FolderOpen,
+  History
 } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 
@@ -268,6 +274,11 @@ export function QueryTab({
   );
   const [textareaContentWidth, setTextareaContentWidth] = useState(0);
   const [isFormatting, setIsFormatting] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
+
+  const addHistoryItem = useQueryHistoryStore((s) => s.addHistoryItem);
+  const history = useQueryHistoryStore((s) => s.history);
+  const clearHistory = useQueryHistoryStore((s) => s.clearHistory);
 
   // ── Autocomplete state ──────────────────────────────────────
   const [acVisible, setAcVisible] = useState(false);
@@ -429,6 +440,65 @@ export function QueryTab({
     }
   }, [selectedProfileId, selectedDb, tabId, updateTab, connectedProfiles]);
 
+  const handleSave = useCallback(async () => {
+    if (!sql.trim()) return;
+    try {
+      const path = await save({
+        filters: [{
+          name: 'SQL',
+          extensions: ['sql']
+        }]
+      });
+      if (!path) return;
+      await writeFile(path, new TextEncoder().encode(sql));
+      setLastSavedSql(sql);
+      useAppStore.getState().addToast({
+        title: "File Saved",
+        description: `Successfully saved to ${path}`,
+      });
+    } catch (e) {
+      useAppStore.getState().addToast({
+        title: "Save Failed",
+        description: String(e),
+        variant: "destructive",
+      });
+    }
+  }, [sql]);
+
+  const handleOpenFile = useCallback(async () => {
+    try {
+      const selected = await open({
+        multiple: false,
+        filters: [{
+          name: 'SQL',
+          extensions: ['sql']
+        }]
+      });
+      if (!selected || Array.isArray(selected)) return;
+      const content = await readTextFile(selected);
+      setSql(content);
+      setLastSavedSql(content);
+    } catch (e) {
+      useAppStore.getState().addToast({
+        title: "Open Failed",
+        description: String(e),
+        variant: "destructive",
+      });
+    }
+  }, []);
+
+  // Ctrl+S listener
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "s") {
+        e.preventDefault();
+        handleSave();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [handleSave]);
+
   // Sync dirty state
   useEffect(() => {
     if (tabId) {
@@ -475,6 +545,13 @@ export function QueryTab({
         setHasRun(true);
         setActiveResultIdx(0);
         setLastSavedSql(sql);
+
+        // Add to history
+        addHistoryItem({
+          query: queryText,
+          profileId: selectedProfileId!,
+          database: selectedDb
+        });
       } catch (e) {
         if (token !== runTokenRef.current) return;
         const elapsed = performance.now() - startTime;
@@ -1301,15 +1378,8 @@ export function QueryTab({
 
         <div className="w-px h-5 bg-border mx-1" />
 
-        {/* Ask AI */}
         <ToolBtn
-          icon={
-            isAskingAI ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <Bot className="w-4 h-4" />
-            )
-          }
+          icon={<Bot className="w-4 h-4" />}
           title="Ask AI to generate a query based on the schema"
           onClick={handleAskAI}
           disabled={running || isAskingAI}
@@ -1317,6 +1387,74 @@ export function QueryTab({
           accent="text-indigo-400"
           label="Ask AI"
         />
+
+        <div className="w-px h-5 bg-border mx-1" />
+
+        <ToolBtn
+          icon={<FolderOpen className="w-4 h-4" />}
+          title="Open SQL file (Ctrl+O)"
+          onClick={handleOpenFile}
+          disabled={running}
+          active={false}
+        />
+        <ToolBtn
+          icon={<SaveIcon className="w-4 h-4" />}
+          title="Save to SQL file (Ctrl+S)"
+          onClick={handleSave}
+          disabled={running || !sql.trim()}
+          active={false}
+        />
+
+        <div className="w-px h-5 bg-border mx-1" />
+
+        <div className="relative group/history">
+          <ToolBtn
+            icon={<History className="w-4 h-4" />}
+            title="Query History"
+            onClick={() => setShowHistory(!showHistory)}
+            disabled={running}
+            active={showHistory}
+          />
+          {showHistory && (
+            <div className="absolute top-full left-0 z-50 mt-1 w-80 max-h-96 bg-popover border rounded-md shadow-xl flex flex-col overflow-hidden animate-in fade-in slide-in-from-top-1">
+              <div className="flex items-center justify-between px-3 py-2 border-b bg-muted/30">
+                <span className="text-[10px] font-bold uppercase tracking-wider">Recent Queries</span>
+                <button
+                  className="text-[10px] text-red-500 hover:underline"
+                  onClick={() => {
+                    if (window.confirm("Clear query history?")) clearHistory();
+                  }}
+                >
+                  Clear All
+                </button>
+              </div>
+              <div className="flex-1 overflow-y-auto p-1 space-y-1 bg-background/50 backdrop-blur-sm">
+                {history.length === 0 ? (
+                  <div className="py-8 text-center text-muted-foreground/40 text-[10px]">No history yet</div>
+                ) : (
+                  history.filter(h => h.profileId === selectedProfileId).map((h) => (
+                    <button
+                      key={h.id}
+                      className="w-full text-left p-2 rounded hover:bg-accent group/hitem transition-colors border border-transparent hover:border-border"
+                      onClick={() => {
+                        setSql(h.query);
+                        setShowHistory(false);
+                      }}
+                    >
+                      <div className="text-[11px] font-mono line-clamp-2 text-foreground/80 group-hover/hitem:text-foreground">
+                        {h.query}
+                      </div>
+                      <div className="mt-1 flex items-center justify-between text-[9px] text-muted-foreground">
+                        <span>{h.database}</span>
+                        <span>{new Date(h.timestamp).toLocaleString()}</span>
+                      </div>
+                    </button>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
+        </div>
 
         <div className="w-px h-5 bg-border mx-1" />
 

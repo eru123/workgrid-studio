@@ -90,6 +90,9 @@ export function Workbench() {
           e.preventDefault();
           e.stopPropagation();
           useLayoutStore.getState().openTab({ title: "New Query", type: "sql", meta: {} });
+        } else if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "t") {
+          e.preventDefault();
+          useLayoutStore.getState().restoreLastClosedTab();
         }
       }
     };

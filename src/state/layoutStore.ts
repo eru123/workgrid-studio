@@ -67,6 +67,9 @@ interface LayoutState {
   toggleSecondarySidebar: () => void;
   adjustSecondarySidebarWidth: (delta: number) => void;
 
+  closedTabsStack: { tab: EditorTab; leafId: string }[];
+  restoreLastClosedTab: () => void;
+
   // Tab operations
   openTab: (tab: Omit<EditorTab, "id">, leafId?: string) => void;
   closeTab: (tabId: string, leafId: string) => void;
@@ -84,12 +87,6 @@ interface LayoutState {
   splitLeaf: (leafId: string, direction: SplitDirection) => void;
   closeLeaf: (leafId: string) => void;
   resizeNode: (nodeId: string, newRatio: number) => void;
-}
-
-// Find the first leaf in the tree
-function findFirstLeaf(tree: SplitTree): SplitLeaf {
-  if (tree.type === "leaf") return tree;
-  return findFirstLeaf(tree.a);
 }
 
 // Update a specific leaf in the tree
@@ -116,17 +113,17 @@ export const useLayoutStore = create<LayoutState>((set) => ({
 
   isPrimarySidebarVisible: true,
   isSecondarySidebarVisible: false,
-  isBottomPanelVisible: false,
+  isBottomPanelVisible: true,
 
-  activeView: "explorer",
-
+  activeView: "servers",
   editorTree: {
     type: "leaf",
-    id: "root-editor",
+    id: "leaf-main",
     tabs: [],
     activeTabId: null,
   },
-  activeLeafId: "root-editor",
+  activeLeafId: "leaf-main",
+  closedTabsStack: [],
 
   setActiveView: (view) =>
     set((state) => ({
@@ -220,18 +217,50 @@ export const useLayoutStore = create<LayoutState>((set) => ({
     }),
 
   closeTab: (tabId, leafId) =>
-    set((state) => ({
-      editorTree: updateLeaf(state.editorTree, leafId, (leaf) => {
-        const newTabs = leaf.tabs.filter((t) => t.id !== tabId);
-        const newActiveId =
-          leaf.activeTabId === tabId
-            ? newTabs.length > 0
-              ? newTabs[newTabs.length - 1].id
-              : null
-            : leaf.activeTabId;
-        return { ...leaf, tabs: newTabs, activeTabId: newActiveId };
-      }),
-    })),
+    set((state) => {
+      const leaf = findLeafById(state.editorTree, leafId);
+      if (!leaf) return state;
+      const tabToClose = leaf.tabs.find((t) => t.id === tabId);
+      if (!tabToClose) return state;
+
+      const newStack = [{ tab: tabToClose, leafId }, ...state.closedTabsStack].slice(0, 20);
+
+      return {
+        closedTabsStack: newStack,
+        editorTree: updateLeaf(state.editorTree, leafId, (l) => {
+          const newTabs = l.tabs.filter((t) => t.id !== tabId);
+          const newActiveId =
+            l.activeTabId === tabId
+              ? newTabs.length > 0
+                ? newTabs[newTabs.length - 1].id
+                : null
+              : l.activeTabId;
+          return { ...l, tabs: newTabs, activeTabId: newActiveId };
+        }),
+      };
+    }),
+
+  restoreLastClosedTab: () =>
+    set((state) => {
+      if (state.closedTabsStack.length === 0) return state;
+      const [last, ...nextStack] = state.closedTabsStack;
+
+      // Check if leaf still exists
+      let targetLeaf = findLeafById(state.editorTree, last.leafId);
+      if (!targetLeaf) {
+        targetLeaf = findFirstLeaf(state.editorTree);
+      }
+      if (!targetLeaf) return { closedTabsStack: nextStack };
+
+      return {
+        closedTabsStack: nextStack,
+        editorTree: updateLeaf(state.editorTree, targetLeaf.id, (leaf) => ({
+          ...leaf,
+          tabs: [...leaf.tabs, last.tab],
+          activeTabId: last.tab.id,
+        }))
+      };
+    }),
 
   closeOtherTabs: (tabId, leafId) =>
     set((state) => ({
@@ -342,9 +371,16 @@ export const useLayoutStore = create<LayoutState>((set) => ({
 }));
 
 // Helper: find a leaf by ID
-function findLeafById(tree: SplitTree, id: string): SplitLeaf | null {
+function findLeafById(tree: SplitTree, id: string | null): SplitLeaf | null {
+  if (!id) return null;
   if (tree.type === "leaf") return tree.id === id ? tree : null;
   return findLeafById(tree.a, id) || findLeafById(tree.b, id);
+}
+
+// Helper: find the first leaf in the tree
+function findFirstLeaf(tree: SplitTree): SplitLeaf {
+  if (tree.type === "leaf") return tree;
+  return findFirstLeaf(tree.a);
 }
 
 // Helper: replace a leaf node

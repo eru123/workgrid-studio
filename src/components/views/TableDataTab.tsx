@@ -333,6 +333,7 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
   const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
   const [isApplying, setIsApplying] = useState(false);
   const [applyError, setApplyError] = useState<string | null>(null);
+  const [columnFilters, setColumnFilters] = useState<Record<string, string>>({});
 
   const hasEdits = Object.keys(editedCells).length > 0 || addedRows.length > 0 || deletedRows.size > 0;
 
@@ -359,22 +360,33 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
   }, [profileId, database, tableName]);
 
   // ── Build count query ───────────────────────────────────
+  const effectiveWhere = useMemo(() => {
+    const parts: string[] = [];
+    if (appliedWhere.trim()) parts.push(`(${appliedWhere.trim()})`);
+
+    Object.entries(columnFilters).forEach(([col, val]) => {
+      if (val.trim()) {
+        const escapedVal = val.replace(/'/g, "''");
+        parts.push(`${escId(col)} LIKE '%${escapedVal}%'`);
+      }
+    });
+
+    return parts.length > 0 ? ` WHERE ${parts.join(" AND ")}` : "";
+  }, [appliedWhere, columnFilters]);
+
   const countQuery = useMemo(() => {
-    let q = `SELECT COUNT(*) AS cnt FROM ${escId(database)}.${escId(tableName)}`;
-    if (appliedWhere.trim()) q += ` WHERE ${appliedWhere.trim()}`;
-    return q;
-  }, [database, tableName, appliedWhere]);
+    return `SELECT COUNT(*) AS cnt FROM ${escId(database)}.${escId(tableName)}${effectiveWhere}`;
+  }, [database, tableName, effectiveWhere]);
 
   // ── Build data query ────────────────────────────────────
   const dataQuery = useMemo(() => {
-    let q = `SELECT * FROM ${escId(database)}.${escId(tableName)}`;
-    if (appliedWhere.trim()) q += ` WHERE ${appliedWhere.trim()}`;
+    let q = `SELECT * FROM ${escId(database)}.${escId(tableName)}${effectiveWhere}`;
     if (sorts.length > 0) {
       q += ` ORDER BY ${sorts.map((s) => `${escId(s.column)} ${s.direction}`).join(", ")}`;
     }
     q += ` LIMIT ${pageSize} OFFSET ${page * pageSize}`;
     return q;
-  }, [database, tableName, appliedWhere, sorts, page, pageSize]);
+  }, [database, tableName, effectiveWhere, sorts, page, pageSize]);
 
   // ── Fetch data ──────────────────────────────────────────
   const fetchData = useCallback(async () => {
@@ -385,6 +397,7 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
     setDeletedRows(new Set());
     setSelectedRows(new Set());
     setApplyError(null);
+    setColumnFilters({});
     try {
       const [countRes, dataRes] = await Promise.all([
         dbQuery(profileId, countQuery),
@@ -533,6 +546,9 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
   }, [columns]);
 
   const handleDeleteSelected = useCallback(() => {
+    if (selectedRows.size === 0) return;
+    if (!window.confirm(`Are you sure you want to mark ${selectedRows.size} row(s) for deletion? Changes will not be permanent until you click 'Apply'.`)) return;
+
     setDeletedRows(prev => {
       const next = new Set(prev);
       selectedRows.forEach(idx => {
@@ -542,6 +558,62 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
     });
     setSelectedRows(new Set());
   }, [selectedRows, rows]);
+
+  const handleExport = useCallback((format: 'csv' | 'json' | 'sql') => {
+    try {
+      let content = "";
+      let fileName = `${tableName}_export.${format}`;
+      let mimeType = "text/plain";
+
+      if (format === 'csv') {
+        mimeType = "text/csv";
+        const header = columns.join(",");
+        const body = rows.map(r => r.map(v => {
+          if (v === null) return "NULL";
+          const s = String(v);
+          if (s.includes(",") || s.includes('"') || s.includes("\n")) {
+            return `"${s.replace(/"/g, '""')}"`;
+          }
+          return s;
+        }).join(",")).join("\n");
+        content = header + "\n" + body;
+      } else if (format === 'json') {
+        mimeType = "application/json";
+        const data = rows.map(r => {
+          const obj: Record<string, string | number | null> = {};
+          columns.forEach((col, i) => obj[col] = r[i]);
+          return obj;
+        });
+        content = JSON.stringify(data, null, 2);
+      } else if (format === 'sql') {
+        const body = rows.map(r => {
+          const colNames = columns.map(c => escId(c)).join(", ");
+          const colVals = r.map(v => v === null ? 'NULL' : `'${String(v).replace(/'/g, "''")}'`).join(", ");
+          return `INSERT INTO ${escId(tableName)} (${colNames}) VALUES (${colVals});`;
+        }).join("\n");
+        content = body;
+      }
+
+      const blob = new Blob([content], { type: mimeType });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = fileName;
+      a.click();
+      URL.revokeObjectURL(url);
+
+      useAppStore.getState().addToast({
+        title: "Export Successful",
+        description: `Exported ${rows.length} rows to ${format.toUpperCase()}.`,
+      });
+    } catch (e) {
+      useAppStore.getState().addToast({
+        title: "Export Failed",
+        description: String(e),
+        variant: "destructive",
+      });
+    }
+  }, [rows, columns, tableName]);
 
   const handleDiscardChanges = useCallback(() => {
     setEditedCells({});
@@ -765,6 +837,24 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
 
         <div className="w-px h-4 bg-border mx-1" />
 
+        {/* Export */}
+        <div className="relative group/export">
+          <button
+            className="flex items-center gap-1 px-2 py-1 rounded hover:bg-accent transition-colors text-xs"
+            title="Export data"
+          >
+            <Save className="w-3.5 h-3.5" />
+            Export
+          </button>
+          <div className="absolute top-full left-0 z-50 mt-1 w-32 hidden group-hover/export:block bg-popover border rounded-md shadow-lg p-1">
+            <button className="w-full text-left px-2 py-1 hover:bg-accent rounded text-xs" onClick={() => handleExport('csv')}>CSV</button>
+            <button className="w-full text-left px-2 py-1 hover:bg-accent rounded text-xs" onClick={() => handleExport('json')}>JSON</button>
+            <button className="w-full text-left px-2 py-1 hover:bg-accent rounded text-xs" onClick={() => handleExport('sql')}>SQL INSERTs</button>
+          </div>
+        </div>
+
+        <div className="w-px h-4 bg-border mx-1" />
+
         {/* Filter toggle */}
         <button
           className={cn(
@@ -924,7 +1014,12 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
                     colInfo={colInfo}
                     sortDirection={sortEntry?.direction}
                     sortIndex={sorts.length > 1 ? sortIndex : -1}
-                    onClick={(e) => handleSort(col, e.ctrlKey || e.metaKey)}
+                    onSort={(e) => handleSort(col, e.ctrlKey || e.metaKey)}
+                    filterValue={columnFilters[col] || ""}
+                    onFilter={(val) => {
+                      setColumnFilters(prev => ({ ...prev, [col]: val }));
+                      setPage(0);
+                    }}
                   />
                 );
               })}
@@ -1057,99 +1152,282 @@ const SortableHeader = memo(function SortableHeader({
   colInfo,
   sortDirection,
   sortIndex,
-  onClick,
+  onSort,
+  filterValue,
+  onFilter,
 }: {
   name: string;
   colInfo?: ColumnInfo;
   sortDirection?: "ASC" | "DESC";
   sortIndex: number;
-  onClick: (e: React.MouseEvent) => void;
+  onSort: (e: React.MouseEvent) => void;
+  filterValue: string;
+  onFilter: (val: string) => void;
 }) {
   const isPK = colInfo?.key === "PRI";
+  const [showFilter, setShowFilter] = useState(false);
+  const filterRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!showFilter) return;
+    const handleClick = (e: MouseEvent) => {
+      if (filterRef.current && !filterRef.current.contains(e.target as Node)) {
+        setShowFilter(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [showFilter]);
 
   return (
     <th
       className={cn(
-        "text-left px-1.5 py-1.5 text-[10px] font-medium tracking-wider border-b border-r bg-muted/70 whitespace-nowrap cursor-pointer hover:bg-accent/40 transition-colors select-none group",
+        "text-left px-1.5 py-1.5 text-[10px] font-medium tracking-wider border-b border-r bg-muted/70 whitespace-nowrap select-none group relative",
         sortDirection && "bg-primary/10",
       )}
-      onClick={onClick}
-      title={`Click to sort • Ctrl+Click for multi-sort${colInfo ? `\nType: ${colInfo.col_type}` : ""}`}
+      title={colInfo ? `Type: ${colInfo.col_type}` : ""}
     >
       <div className="flex items-center gap-1">
-        {isPK && (
-          <span className="text-yellow-500 text-[9px]" title="Primary Key">
-            🔑
-          </span>
-        )}
-        <span
-          className={cn(
-            sortDirection ? "text-primary" : "text-muted-foreground/70",
-          )}
+        <div
+          className="flex-1 flex items-center gap-1 cursor-pointer hover:text-foreground transition-colors"
+          onClick={onSort}
+          title="Click to sort • Ctrl+Click for multi-sort"
         >
-          {name}
-        </span>
-        <span className="ml-auto flex items-center gap-0.5">
-          {sortDirection === "ASC" && (
-            <ChevronUp className="w-3 h-3 text-primary" />
-          )}
-          {sortDirection === "DESC" && (
-            <ChevronDown className="w-3 h-3 text-primary" />
-          )}
-          {!sortDirection && (
-            <ChevronsUpDown className="w-3 h-3 text-muted-foreground/20 group-hover:text-muted-foreground/50 transition-colors" />
-          )}
-          {sortIndex >= 0 && (
-            <span className="text-[8px] text-primary/70 font-bold">
-              {sortIndex + 1}
+          {isPK && (
+            <span className="text-yellow-500 text-[9px]" title="Primary Key">
+              🔑
             </span>
           )}
-        </span>
+          <span
+            className={cn(
+              sortDirection ? "text-primary" : "text-muted-foreground/70",
+            )}
+          >
+            {name}
+          </span>
+          <span className="flex items-center gap-0.5">
+            {sortDirection === "ASC" && (
+              <ChevronUp className="w-3 h-3 text-primary" />
+            )}
+            {sortDirection === "DESC" && (
+              <ChevronDown className="w-3 h-3 text-primary" />
+            )}
+            {!sortDirection && (
+              <ChevronsUpDown className="w-3 h-3 text-muted-foreground/20 group-hover:text-muted-foreground/50 transition-colors" />
+            )}
+            {sortIndex >= 0 && (
+              <span className="text-[8px] text-primary/70 font-bold">
+                {sortIndex + 1}
+              </span>
+            )}
+          </span>
+        </div>
+
+        <button
+          className={cn(
+            "p-0.5 rounded hover:bg-accent transition-colors",
+            (filterValue || showFilter) ? "text-primary" : "text-muted-foreground/0 group-hover:text-muted-foreground/50"
+          )}
+          onClick={(e) => {
+            e.stopPropagation();
+            setShowFilter(!showFilter);
+          }}
+        >
+          <Filter className="w-3 h-3" />
+        </button>
+
+        {showFilter && (
+          <div
+            ref={filterRef}
+            className="absolute top-full left-0 z-50 mt-1 w-48 bg-popover border rounded-md shadow-lg p-2"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex flex-col gap-2">
+              <span className="text-[10px] font-bold text-muted-foreground uppercase">Filter {name}</span>
+              <input
+                autoFocus
+                type="text"
+                placeholder="Contains..."
+                className="w-full h-7 px-2 bg-secondary/50 border rounded text-xs focus:outline-none focus:ring-1 focus:ring-primary"
+                value={filterValue}
+                onChange={(e) => onFilter(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === 'Escape') setShowFilter(false);
+                }}
+              />
+              {filterValue && (
+                <button
+                  className="text-[10px] text-primary hover:underline text-left"
+                  onClick={() => {
+                    onFilter("");
+                    setShowFilter(false);
+                  }}
+                >
+                  Clear Filter
+                </button>
+              )}
+            </div>
+          </div>
+        )}
       </div>
     </th>
   );
 });
 
-const DataRow = memo(function DataRow({
-  row,
-  rowNumber,
-  columns,
+const NewDataRow = memo(function NewDataRow({
+  newRow,
   visibleColumns,
   columnInfos,
+  onEditCell,
 }: {
-  row: (string | number | null)[];
-  rowNumber: number;
+  newRow: Record<string, string | null>;
+  rowIdx: number;
   columns: string[];
   visibleColumns: string[];
   columnInfos: ColumnInfo[];
+  onEditCell: (colName: string, val: string | null) => void;
 }) {
   return (
-    <tr className="border-b hover:bg-accent/15 transition-colors">
-      <td className="text-center px-1 py-0 border-r h-7 text-muted-foreground/40 tabular-nums text-[10px] bg-muted/20">
-        {rowNumber}
+    <tr className="border-b bg-green-500/5 hover:bg-green-500/10 transition-colors">
+      <td className="text-center px-1 py-0 border-r h-7 bg-green-500/10">
+        <Plus className="w-3 h-3 text-green-500 mx-auto" />
+      </td>
+      <td className="text-center px-1 py-0 border-r h-7 text-green-500 font-bold tabular-nums text-[10px] bg-green-500/10">
+        *
       </td>
       {visibleColumns.map((col) => {
-        const colIdx = columns.indexOf(col);
-        const value = colIdx >= 0 ? row[colIdx] : null;
+        const value = newRow[col] ?? null;
         const colInfo = columnInfos.find((ci) => ci.name === col);
 
-        return <DataCell key={col} value={value} colInfo={colInfo} />;
+        return (
+          <EditableCell
+            key={col}
+            value={value}
+            colInfo={colInfo}
+            isEdited={value !== null}
+            onSave={(val) => onEditCell(col, val)}
+          />
+        );
       })}
     </tr>
   );
 });
 
-const DataCell = memo(function DataCell({
+const DataRow = memo(function DataRow({
+  row,
+  rowIdx,
+  rowNumber,
+  columns,
+  visibleColumns,
+  columnInfos,
+  isSelected,
+  onToggleSelect,
+  editedCells,
+  onEditCell,
+}: {
+  row: (string | number | null)[];
+  rowIdx: number;
+  rowNumber: number;
+  columns: string[];
+  visibleColumns: string[];
+  columnInfos: ColumnInfo[];
+  isSelected: boolean;
+  onToggleSelect: () => void;
+  editedCells: Record<string, string | null>;
+  onEditCell: (colName: string, val: string | null) => void;
+}) {
+  return (
+    <tr
+      className={cn(
+        "border-b transition-colors",
+        isSelected ? "bg-primary/10 hover:bg-primary/15" : "hover:bg-accent/15"
+      )}
+    >
+      <td className="text-center px-1 py-0 border-r h-7 whitespace-nowrap">
+        <input
+          type="checkbox"
+          className="w-3 h-3 rounded-sm opacity-50 hover:opacity-100 cursor-pointer"
+          style={{ accentColor: 'var(--primary)' }}
+          checked={isSelected}
+          onChange={onToggleSelect}
+        />
+      </td>
+      <td className="text-center px-1 py-0 border-r h-7 text-muted-foreground/40 tabular-nums text-[10px] bg-muted/20">
+        {rowNumber}
+      </td>
+      {visibleColumns.map((col) => {
+        const colIdx = columns.indexOf(col);
+        const originalValue = colIdx >= 0 ? row[colIdx] : null;
+        const editKey = `${rowIdx}:${col}`;
+        const isEdited = editKey in editedCells;
+        const value = isEdited ? editedCells[editKey] : originalValue;
+        const colInfo = columnInfos.find((ci) => ci.name === col);
+
+        return (
+          <EditableCell
+            key={col}
+            value={value}
+            colInfo={colInfo}
+            isEdited={isEdited}
+            onSave={(val) => onEditCell(col, val)}
+          />
+        );
+      })}
+    </tr>
+  );
+});
+
+const EditableCell = memo(function EditableCell({
   value,
   colInfo,
+  isEdited,
+  onSave,
 }: {
   value: string | number | null;
   colInfo?: ColumnInfo;
+  isEdited: boolean;
+  onSave: (val: string | null) => void;
 }) {
-  if (value === null) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [localValue, setLocalValue] = useState<string>(value === null ? "" : String(value));
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (isEditing) {
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    }
+  }, [isEditing]);
+
+  const handleBlur = () => {
+    setIsEditing(false);
+    const finalVal = localValue === "" && colInfo?.nullable ? null : localValue;
+    if (String(finalVal) !== String(value)) {
+      onSave(finalVal as string | null);
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter") {
+      handleBlur();
+    } else if (e.key === "Escape") {
+      setLocalValue(value === null ? "" : String(value));
+      setIsEditing(false);
+    }
+  };
+
+  if (isEditing) {
     return (
-      <td className="px-1.5 py-0 border-r h-7 max-w-60 truncate">
-        <span className="text-muted-foreground/30 italic">NULL</span>
+      <td className="p-0 border-r h-7 min-w-[80px]">
+        <input
+          ref={inputRef}
+          type="text"
+          className="w-full h-full px-1.5 py-0 bg-background text-xs font-mono focus:outline-none focus:ring-1 focus:ring-inset focus:ring-primary"
+          value={localValue}
+          onChange={(e) => setLocalValue(e.target.value)}
+          onBlur={handleBlur}
+          onKeyDown={handleKeyDown}
+        />
       </td>
     );
   }
@@ -1163,12 +1441,25 @@ const DataCell = memo(function DataCell({
   return (
     <td
       className={cn(
-        "px-1.5 py-0 border-r h-7 max-w-80 truncate font-mono",
+        "px-1.5 py-0 border-r h-7 max-w-80 truncate font-mono relative group transition-colors",
         isNumeric && "text-right tabular-nums",
+        isEdited && "bg-orange-500/10"
       )}
-      title={String(value)}
+      onDoubleClick={() => {
+        setLocalValue(value === null ? "" : String(value));
+        setIsEditing(true);
+      }}
+      title={value === null ? "NULL" : String(value)}
     >
-      {String(value)}
+      {value === null ? (
+        <span className="text-muted-foreground/30 italic">NULL</span>
+      ) : (
+        String(value)
+      )}
+      {isEdited && (
+        <div className="absolute top-0 right-0 w-0 h-0 border-t-[4px] border-t-orange-500 border-l-[4px] border-l-transparent" />
+      )}
+      <div className="absolute inset-0 bg-primary/5 opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity" />
     </td>
   );
 });
