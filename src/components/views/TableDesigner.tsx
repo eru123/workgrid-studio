@@ -117,6 +117,10 @@ interface ColumnDef {
   virtuality: string;
 }
 
+interface DisplayColumnDef extends ColumnDef {
+  _diffState?: "added" | "modified" | "deleted";
+}
+
 interface IndexDef {
   id: string;
   name: string;
@@ -955,6 +959,7 @@ export function TableDesigner({ tabId, leafId, profileId, database, tableName }:
     y: number;
     columnId: string;
   } | null>(null);
+  const [showSaveModal, setShowSaveModal] = useState(false);
 
   useEffect(() => {
     if (!ctxMenu) return;
@@ -1594,8 +1599,8 @@ export function TableDesigner({ tabId, leafId, profileId, database, tableName }:
     return createTableSql(database, currentSnapshot);
   }, [isEditMode, loadedSnapshot, database, currentSnapshot]);
 
-  // ── Save handler ──────────────────────────────────────────
-  const handleSave = async () => {
+  // ── Save handlers ─────────────────────────────────────────
+  const handleSave = () => {
     if (loadingSchema) return;
 
     const trimmedName = name.trim();
@@ -1635,6 +1640,29 @@ export function TableDesigner({ tabId, leafId, profileId, database, tableName }:
         setError(sql.replace(/^--\s*/, ""));
         return;
       }
+    }
+
+    setShowSaveModal(true);
+  };
+
+  const executeSave = async () => {
+    setShowSaveModal(false);
+    const trimmedName = name.trim();
+    const nextSnapshot = makeSnapshot({
+      name: trimmedName,
+      tableComment,
+      columns,
+      indexes,
+      foreignKeys,
+      checkConstraints,
+      options,
+    });
+
+    let sql = "";
+    if (isEditMode) {
+      sql = alterTableSql(database, loadedSnapshot!, nextSnapshot) || "";
+    } else {
+      sql = createTableSql(database, nextSnapshot);
     }
 
     setSaving(true);
@@ -1766,6 +1794,37 @@ export function TableDesigner({ tabId, leafId, profileId, database, tableName }:
     () => columns.filter((c) => c.name.trim()).map((c) => c.name),
     [columns],
   );
+
+  const displayColumns = useMemo<DisplayColumnDef[]>(() => {
+    if (!isEditMode || !loadedSnapshot) {
+      return columns.map((c) => ({ ...c, _diffState: "added" }));
+    }
+    const currentMap = new Map(columns.map((c) => [c.id, c]));
+    const loadedMap = new Map(loadedSnapshot.columns.map((c) => [c.id, c]));
+
+    const out: DisplayColumnDef[] = [];
+
+    for (const col of columns) {
+      let state: "added" | "modified" | undefined = undefined;
+      const old = loadedMap.get(col.id);
+      if (!old) {
+        state = "added";
+      } else if (
+        normalizedColumnSignature(col) !== normalizedColumnSignature(old)
+      ) {
+        state = "modified";
+      }
+      out.push({ ...col, _diffState: state });
+    }
+
+    for (const old of loadedSnapshot.columns) {
+      if (!currentMap.has(old.id)) {
+        out.push({ ...old, _diffState: "deleted" });
+      }
+    }
+
+    return out;
+  }, [isEditMode, loadedSnapshot, columns]);
   const saveDisabled =
     saving ||
     loadingSchema ||
@@ -2383,7 +2442,7 @@ export function TableDesigner({ tabId, leafId, profileId, database, tableName }:
         <div className="w-8 h-0.5 rounded bg-muted-foreground/20 group-hover:bg-primary/50 transition-colors" />
       </div>
 
-      {/* ═══ Columns grid — always visible ═══════════════ */}
+      {/* ─── Columns grid — always visible ─────────────────────── */}
       <div className="flex flex-col flex-1 overflow-hidden">
         {/* Columns toolbar */}
         <div className="flex items-center gap-1 px-3 py-1.5 border-b shrink-0 bg-muted/20">
@@ -2437,7 +2496,7 @@ export function TableDesigner({ tabId, leafId, profileId, database, tableName }:
               </tr>
             </thead>
             <tbody>
-              {columns.length === 0 && (
+              {displayColumns.length === 0 && (
                 <tr>
                   <td
                     colSpan={12}
@@ -2447,7 +2506,7 @@ export function TableDesigner({ tabId, leafId, profileId, database, tableName }:
                   </td>
                 </tr>
               )}
-              {columns.map((col, i) => (
+              {displayColumns.map((col, i) => (
                 <ColumnRow
                   key={col.id}
                   col={col}
@@ -2554,6 +2613,43 @@ export function TableDesigner({ tabId, leafId, profileId, database, tableName }:
               </ContextSubmenu>
             );
           })()}
+        </div>
+      )}
+
+      {/* ── Save Modal ── */}
+      {showSaveModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm p-4">
+          <div className="w-[600px] max-w-full bg-popover text-popover-foreground border rounded-lg shadow-lg flex flex-col overflow-hidden">
+            <div className="px-4 py-3 border-b font-medium flex items-center gap-2">
+              <Code className="w-4 h-4" />
+              {isEditMode
+                ? "Review schema changes"
+                : "Review complete table schema"}
+            </div>
+            <div className="p-4 overflow-auto max-h-[60vh] bg-secondary/20">
+              <pre
+                className="text-[11px] font-mono whitespace-pre-wrap leading-relaxed select-text"
+                dangerouslySetInnerHTML={{ __html: highlightSQL(previewSQL) }}
+              />
+            </div>
+            <div className="px-4 py-3 border-t bg-muted/40 flex justify-end gap-2">
+              <button
+                className="px-4 py-2 text-xs rounded border hover:bg-accent transition-colors disabled:opacity-50"
+                onClick={() => setShowSaveModal(false)}
+                disabled={saving}
+              >
+                Cancel
+              </button>
+              <button
+                className="px-4 py-2 text-xs rounded bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-2"
+                onClick={executeSave}
+                disabled={saving}
+              >
+                {saving && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                {isEditMode ? "Apply Changes" : "Create Table"}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
@@ -2685,7 +2781,7 @@ const ColumnRow = memo(function ColumnRow({
   collations,
   onContextMenu,
 }: {
-  col: ColumnDef;
+  col: DisplayColumnDef;
   index: number;
   isSelected: boolean;
   onSelect: (id: string) => void;
@@ -2752,11 +2848,17 @@ const ColumnRow = memo(function ColumnRow({
     [onUpdate, col.id],
   );
 
+  const isDeleted = col._diffState === "deleted";
+
   return (
     <tr
       className={cn(
         "border-b cursor-pointer transition-colors",
-        isSelected ? "bg-accent/60" : "hover:bg-accent/20",
+        isSelected && !isDeleted ? "bg-accent/60" : "hover:bg-accent/20",
+        col._diffState === "added" && "bg-green-500/10 hover:bg-green-500/20",
+        col._diffState === "modified" && "bg-blue-500/10 hover:bg-blue-500/20",
+        isDeleted &&
+        "bg-red-500/10 hover:bg-red-500/20 line-through opacity-60 pointer-events-none",
       )}
       onClick={handleClick}
       onContextMenu={handleContextMenu}
