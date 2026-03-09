@@ -63,6 +63,13 @@ export function useProfileManager() {
             sslCertFile: profile.sslCertFile,
             sslKeyFile: profile.sslKeyFile,
             sslRejectUnauthorized: profile.sslRejectUnauthorized,
+            ssh: profile.ssh,
+            sshHost: profile.sshHost,
+            sshPort: profile.sshPort,
+            sshUser: profile.sshUser,
+            sshPassword: profile.sshPassword,
+            sshKeyFile: profile.sshKeyFile,
+            sshPassphrase: profile.sshPassphrase,
         });
         setEditingId(profile.id);
         setViewMode("edit");
@@ -134,6 +141,13 @@ export function useProfileManager() {
                     ssl_key_file: profile.sslKeyFile || null,
                     ssl_reject_unauthorized: profile.sslRejectUnauthorized ?? false,
                     db_type: profile.type,
+                    ssh: profile.ssh,
+                    ssh_host: profile.sshHost || "",
+                    ssh_port: profile.sshPort || 22,
+                    ssh_user: profile.sshUser || "",
+                    ssh_password: profile.sshPassword || null,
+                    ssh_key_file: profile.sshKeyFile || null,
+                    ssh_passphrase: profile.sshPassphrase || null,
                 });
                 setConnectionStatus(id, "connected");
                 addConnection(id, profile.name, profile.color);

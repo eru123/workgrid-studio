@@ -15,6 +15,14 @@ export interface ConnectParams {
     ssl_key_file: string | null;
     ssl_reject_unauthorized: boolean;
     db_type: string;
+    // SSH Tunneling
+    ssh: boolean;
+    ssh_host: string;
+    ssh_port: number;
+    ssh_user: string;
+    ssh_password: string | null;
+    ssh_key_file: string | null;
+    ssh_passphrase: string | null;
 }
 
 export interface ColumnInfo {

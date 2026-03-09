@@ -5,9 +5,11 @@ use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::sync::Mutex;
 use std::collections::HashMap;
+use std::net::{TcpStream, TcpListener};
+use ssh2::Session;
 
 use mysql_async::prelude::*;
-use mysql_async::{Opts, OptsBuilder, Pool};
+use mysql_async::{Opts, Conn, OptsBuilder, Pool, SslOpts};
 use serde::{Deserialize, Serialize};
 
 // Crypto & HTTP imports
@@ -210,6 +212,15 @@ pub struct ConnectParams {
     pub ssl_reject_unauthorized: bool,
     #[serde(default)]
     pub db_type: String,
+    // SSH Tunneling
+    #[serde(default)]
+    pub ssh: bool,
+    pub ssh_host: Option<String>,
+    pub ssh_port: Option<u16>,
+    pub ssh_user: Option<String>,
+    pub ssh_password: Option<String>,
+    pub ssh_key_file: Option<String>,
+    pub ssh_passphrase: Option<String>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -222,16 +233,92 @@ pub struct ColumnInfo {
     pub extra: String,
 }
 
+fn establish_ssh_tunnel(pid: &str, params: &ConnectParams) -> Result<u16, String> {
+    let ssh_host = params.ssh_host.as_ref().ok_or("SSH host not provided")?;
+    let ssh_port = params.ssh_port.unwrap_or(22);
+    let ssh_user = params.ssh_user.as_ref().ok_or("SSH user not provided")?;
+    
+    // Connect to SSH server
+    let tcp = TcpStream::connect(format!("{}:{}", ssh_host, ssh_port))
+        .map_err(|e| format!("Failed to connect to SSH host: {}", e))?;
+    
+    let mut sess = Session::new().map_err(|e| format!("Failed to create SSH session: {}", e))?;
+    sess.set_tcp_stream(tcp);
+    sess.handshake().map_err(|e| format!("SSH handshake failed: {}", e))?;
+
+    // Authenticate
+    if let Some(key_path) = &params.ssh_key_file {
+        let key_file = std::path::Path::new(key_path);
+        sess.userauth_pubkey_file(
+            ssh_user,
+            None,
+            key_file,
+            params.ssh_passphrase.as_deref(),
+        ).map_err(|e| format!("SSH key authentication failed: {}", e))?;
+    } else if let Some(password) = &params.ssh_password {
+        sess.userauth_password(ssh_user, password)
+            .map_err(|e| format!("SSH password authentication failed: {}", e))?;
+    } else {
+        return Err("No SSH authentication method provided".to_string());
+    }
+
+    if !sess.authenticated() {
+        return Err("SSH authentication failed".to_string());
+    }
+
+    // Start local listener for port forwarding
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .map_err(|e| format!("Failed to bind local port for SSH tunnel: {}", e))?;
+    let local_port = listener.local_addr().unwrap().port();
+    
+    let target_host = params.host.clone();
+    let target_port = params.port;
+    let pid_clone = pid.to_string();
+
+    // Spawn a thread to handle the tunnel bridge
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            match stream {
+                Ok(mut local_stream) => {
+                    match sess.channel_direct_tcpip(&target_host, target_port, None) {
+                        Ok(mut channel) => {
+                            let mut channel_read = channel.stream(0);
+                            let mut channel_write = channel.clone();
+                            let mut local_read = local_stream.try_clone().unwrap();
+                            let mut local_write = local_stream;
+                            
+                            std::thread::spawn(move || {
+                                let _ = std::io::copy(&mut local_read, &mut channel_write);
+                            });
+                            let _ = std::io::copy(&mut channel_read, &mut local_write);
+                        }
+                        Err(e) => {
+                            log_error(&pid_clone, &format!("SSH tunnel failed to open channel: {}", e));
+                        }
+                    }
+                }
+                Err(e) => {
+                    log_error(&pid_clone, &format!("SSH tunnel bridge accept error: {}", e));
+                }
+            }
+        }
+    });
+
+    Ok(local_port)
+}
+
 // ─── DB State ───────────────────────────────────────────────────────
 
 pub struct DbState {
-    pools: Mutex<HashMap<String, Pool>>,
+    pub pools: Mutex<HashMap<String, Pool>>,
+    pub tunnels: Mutex<HashMap<String, u16>>, // profile_id -> local_port
 }
 
 impl DbState {
     pub fn new() -> Self {
         Self {
             pools: Mutex::new(HashMap::new()),
+            tunnels: Mutex::new(HashMap::new()),
         }
     }
 }
@@ -243,6 +330,7 @@ async fn db_connect(
     state: State<'_, DbState>,
     params: ConnectParams,
 ) -> Result<String, String> {
+    let mut params = params;
     let pid = params.profile_id.clone();
     let db_type = params.db_type.as_str();
 
@@ -256,16 +344,63 @@ async fn db_connect(
         return Err(msg);
     }
 
+    // Encrypt password if not already encrypted
+    if !params.password.starts_with("wkgrd:") && !params.password.is_empty() {
+        let key = state.get_encryption_key();
+        params.password = encrypt_password(&params.password, &key)?;
+    }
+    
+    // Encrypt SSH password/passphrase if needed
+    if params.ssh {
+        if let Some(ssh_pass) = params.ssh_password.as_mut() {
+            if !ssh_pass.starts_with("wkgrd:") && !ssh_pass.is_empty() {
+                let key = state.get_encryption_key();
+                *ssh_pass = encrypt_password(ssh_pass, &key)?;
+            }
+        }
+        if let Some(ssh_passphrase) = params.ssh_passphrase.as_mut() {
+            if !ssh_passphrase.starts_with("wkgrd:") && !ssh_passphrase.is_empty() {
+                let key = state.get_encryption_key();
+                *ssh_passphrase = encrypt_password(ssh_passphrase, &key)?;
+            }
+        }
+    }
+
+    // Decrypt passwords for the actual connection
+    let mut conn_params = params.clone();
+    let key = state.get_encryption_key();
+    conn_params.password = decrypt_password(&params.password, &key)?;
+    
+    if params.ssh {
+        if let Some(ssh_pass) = conn_params.ssh_password.as_mut() {
+            *ssh_pass = decrypt_password(ssh_pass, &key)?;
+        }
+        if let Some(ssh_passphrase) = conn_params.ssh_passphrase.as_mut() {
+            *ssh_passphrase = decrypt_password(ssh_passphrase, &key)?;
+        }
+        
+        // Establish SSH Tunnel
+        let local_port = establish_ssh_tunnel(&pid, &conn_params)?;
+        log_info(&pid, &format!("SSH Tunnel established: localhost:{}", local_port));
+        
+        // Redirect connection to local port
+        conn_params.host = "127.0.0.1".to_string();
+        conn_params.port = local_port;
+        
+        let mut tunnels = state.tunnels.lock().map_err(|e| e.to_string())?;
+        tunnels.insert(pid.clone(), local_port);
+    }
+
     let target = format!("{}@{}:{}", params.user, params.host, params.port);
     log_info(&pid, &format!("Connecting to {} ({}) ...", target, if db_type.is_empty() { "mysql" } else { db_type }));
 
     let mut builder = OptsBuilder::default()
-        .ip_or_hostname(params.host.clone())
-        .tcp_port(params.port)
-        .user(Some(params.user.clone()))
-        .pass(Some(params.password.clone()));
+        .ip_or_hostname(conn_params.host.clone())
+        .tcp_port(conn_params.port)
+        .user(Some(conn_params.user.clone()))
+        .pass(Some(conn_params.password.clone()));
 
-    if let Some(ref db) = params.database {
+    if let Some(ref db) = conn_params.database {
         if !db.is_empty() {
             builder = builder.db_name(Some(db.clone()));
         }

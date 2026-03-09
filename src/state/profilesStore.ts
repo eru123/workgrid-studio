@@ -61,6 +61,14 @@ export interface SavedProfile {
   sslCertFile?: string;
   sslKeyFile?: string;
   sslRejectUnauthorized?: boolean;
+  // SSH Tunneling
+  ssh: boolean;
+  sshHost: string;
+  sshPort: number;
+  sshUser: string;
+  sshPassword?: string;
+  sshKeyFile?: string;
+  sshPassphrase?: string;
   lastConnectedAt: number | null;
   createdAt: number;
   preferences?: ProfilePreferences;
@@ -90,6 +98,13 @@ export function createDefaultFormData(type?: DatabaseType): ProfileFormData {
     filePath: "",
     ssl: false,
     sslRejectUnauthorized: false,
+    ssh: false,
+    sshHost: "",
+    sshPort: 22,
+    sshUser: "",
+    sshPassword: "",
+    sshKeyFile: "",
+    sshPassphrase: "",
   };
 }
 

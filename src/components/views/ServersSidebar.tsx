@@ -646,6 +646,128 @@ export function ServersSidebar() {
                         </div>
                       </div>
                     )}
+
+                    {/* SSH Toggle */}
+                    <div className="flex items-center gap-3 pt-2">
+                      <button
+                        onClick={() => updateField("ssh", !formData.ssh)}
+                        className={cn(
+                          "relative w-10 h-5 rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-background space-x-0 ring-primary/50",
+                          formData.ssh ? "bg-primary" : "bg-secondary",
+                        )}
+                      >
+                        <div
+                          className={cn(
+                            "absolute top-[2px] w-4 h-4 rounded-full bg-white transition-transform shadow-sm",
+                            formData.ssh
+                              ? "translate-x-[22px]"
+                              : "translate-x-[2px]",
+                          )}
+                        />
+                      </button>
+                      <span className="text-xs font-medium">
+                        Use SSH Tunneling
+                      </span>
+                    </div>
+
+                    {/* SSH Tunnel Fields */}
+                    {formData.ssh && (
+                      <div className="space-y-4 pt-3 border-t mt-1 border-border/50">
+                        <div className="grid grid-cols-3 gap-3">
+                          <div className="col-span-2">
+                            <label className="text-xs font-medium text-muted-foreground block mb-1.5">
+                              SSH Hostname
+                            </label>
+                            <input
+                              type="text"
+                              value={formData.sshHost}
+                              onChange={(e) => updateField("sshHost", e.target.value)}
+                              placeholder="ssh.example.com"
+                              className="w-full h-9 rounded-md border bg-secondary/50 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-xs font-medium text-muted-foreground block mb-1.5">
+                              SSH Port
+                            </label>
+                            <input
+                              type="number"
+                              value={formData.sshPort ?? ""}
+                              onChange={(e) =>
+                                updateField(
+                                  "sshPort",
+                                  e.target.value ? Number(e.target.value) : 22,
+                                )
+                              }
+                              placeholder="22"
+                              className="w-full h-9 rounded-md border bg-secondary/50 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all"
+                            />
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="text-xs font-medium text-muted-foreground block mb-1.5">
+                            SSH Username
+                          </label>
+                          <input
+                            type="text"
+                            value={formData.sshUser}
+                            onChange={(e) => updateField("sshUser", e.target.value)}
+                            placeholder="user"
+                            className="w-full h-9 rounded-md border bg-secondary/50 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all"
+                          />
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <label className="text-xs font-medium text-muted-foreground block mb-1.5">
+                              SSH Key File (Optional)
+                            </label>
+                            <div className="flex gap-2">
+                              <input
+                                type="text"
+                                value={formData.sshKeyFile || ""}
+                                onChange={(e) => updateField("sshKeyFile", e.target.value)}
+                                placeholder="/path/to/id_rsa"
+                                className="flex-1 h-9 rounded-md border bg-secondary/50 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all font-mono"
+                              />
+                              <button
+                                onClick={async () => {
+                                  const selected = await open({
+                                    multiple: false,
+                                    directory: false,
+                                    filters: [{ name: "Key", extensions: ["*", "pem", "key"] }],
+                                  });
+                                  if (typeof selected === "string") {
+                                    updateField("sshKeyFile", selected);
+                                  }
+                                }}
+                                className="h-9 px-3 rounded-md border bg-secondary font-medium hover:bg-secondary/80 hover:text-foreground text-xs transition-all"
+                              >
+                                Browse
+                              </button>
+                            </div>
+                          </div>
+                          <div>
+                            <label className="text-xs font-medium text-muted-foreground block mb-1.5">
+                              {formData.sshKeyFile ? "Key Passphrase" : "SSH Password"}
+                            </label>
+                            <input
+                              type="password"
+                              value={formData.sshKeyFile ? formData.sshPassphrase : formData.sshPassword}
+                              onChange={(e) =>
+                                updateField(
+                                  formData.sshKeyFile ? "sshPassphrase" : "sshPassword",
+                                  e.target.value,
+                                )
+                              }
+                              placeholder="••••••••"
+                              className="w-full h-9 rounded-md border bg-secondary/50 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -668,8 +790,7 @@ export function ServersSidebar() {
               </div>
             </div>
           </div>
-        )
-      }
+        )}
     </div>
   );
 }
