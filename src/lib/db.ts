@@ -23,6 +23,9 @@ export interface ConnectParams {
     ssh_password: string | null;
     ssh_key_file: string | null;
     ssh_passphrase: string | null;
+    ssh_strict_key_checking: boolean;
+    ssh_keep_alive_interval: number;
+    ssh_compression: boolean;
 }
 
 export interface ColumnInfo {

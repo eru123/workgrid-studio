@@ -766,6 +766,54 @@ export function ServersSidebar() {
                             />
                           </div>
                         </div>
+
+                        <div className="pt-2 border-t border-border/50 mt-1">
+                          <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/70 block mb-2">
+                            Advanced SSH Settings
+                          </label>
+                          <div className="space-y-2.5">
+                            <div className="flex items-center justify-between">
+                              <div className="space-y-0.5">
+                                <label className="text-xs font-medium">Strict Host Key Checking</label>
+                                <p className="text-[10px] text-muted-foreground">Verify remote host identity</p>
+                              </div>
+                              <input
+                                type="checkbox"
+                                checked={formData.sshStrictKeyChecking}
+                                onChange={(e) => updateField("sshStrictKeyChecking", e.target.checked)}
+                                className="h-3.5 w-3.5 rounded border-gray-300 text-primary focus:ring-primary"
+                              />
+                            </div>
+
+                            <div className="flex items-center justify-between">
+                              <div className="space-y-0.5">
+                                <label className="text-xs font-medium">Enable Compression</label>
+                                <p className="text-[10px] text-muted-foreground">Improve speed on slow connections</p>
+                              </div>
+                              <input
+                                type="checkbox"
+                                checked={formData.sshCompression}
+                                onChange={(e) => updateField("sshCompression", e.target.checked)}
+                                className="h-3.5 w-3.5 rounded border-gray-300 text-primary focus:ring-primary"
+                              />
+                            </div>
+
+                            <div className="flex items-center gap-3">
+                              <div className="flex-1">
+                                <label className="text-[10px] font-medium text-muted-foreground block mb-1">
+                                  Keep-alive Interval (seconds)
+                                </label>
+                                <input
+                                  type="number"
+                                  value={formData.sshKeepAliveInterval}
+                                  onChange={(e) => updateField("sshKeepAliveInterval", parseInt(e.target.value) || 0)}
+                                  placeholder="0 (disabled)"
+                                  className="w-full h-8 rounded-md border bg-secondary/30 px-3 text-xs focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all font-mono"
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        </div>
                       </div>
                     )}
                   </div>

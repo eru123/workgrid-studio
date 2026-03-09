@@ -70,6 +70,9 @@ export function useProfileManager() {
             sshPassword: profile.sshPassword,
             sshKeyFile: profile.sshKeyFile,
             sshPassphrase: profile.sshPassphrase,
+            sshStrictKeyChecking: profile.sshStrictKeyChecking ?? false,
+            sshKeepAliveInterval: profile.sshKeepAliveInterval ?? 0,
+            sshCompression: profile.sshCompression ?? true,
         });
         setEditingId(profile.id);
         setViewMode("edit");
@@ -148,6 +151,9 @@ export function useProfileManager() {
                     ssh_password: profile.sshPassword || null,
                     ssh_key_file: profile.sshKeyFile || null,
                     ssh_passphrase: profile.sshPassphrase || null,
+                    ssh_strict_key_checking: profile.sshStrictKeyChecking ?? false,
+                    ssh_keep_alive_interval: profile.sshKeepAliveInterval ?? 0,
+                    ssh_compression: profile.sshCompression ?? true,
                 });
                 setConnectionStatus(id, "connected");
                 addConnection(id, profile.name, profile.color);

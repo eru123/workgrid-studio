@@ -69,6 +69,9 @@ export interface SavedProfile {
   sshPassword?: string;
   sshKeyFile?: string;
   sshPassphrase?: string;
+  sshStrictKeyChecking?: boolean;
+  sshKeepAliveInterval?: number;
+  sshCompression?: boolean;
   lastConnectedAt: number | null;
   createdAt: number;
   preferences?: ProfilePreferences;
@@ -105,6 +108,9 @@ export function createDefaultFormData(type?: DatabaseType): ProfileFormData {
     sshPassword: "",
     sshKeyFile: "",
     sshPassphrase: "",
+    sshStrictKeyChecking: false,
+    sshKeepAliveInterval: 0,
+    sshCompression: true,
   };
 }
 
