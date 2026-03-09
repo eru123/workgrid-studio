@@ -45,6 +45,7 @@ import {
   History
 } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
+import { FindToolbar } from "@/components/ui/FindToolbar";
 
 // ═══════════════════════════════════════════════════════════════════════
 //  Types
@@ -276,6 +277,12 @@ export function QueryTab({
   const [isFormatting, setIsFormatting] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
 
+  // ── Find-in-Results ─────────────────────────────────────
+  const [isFindOpen, setIsFindOpen] = useState(false);
+  const [findQuery, setFindQuery] = useState("");
+  const [findMatches, setFindMatches] = useState<{ rowIdx: number; colIdx: number }[]>([]);
+  const [currentMatchIdx, setCurrentMatchIdx] = useState(0);
+
   const addHistoryItem = useQueryHistoryStore((s) => s.addHistoryItem);
   const history = useQueryHistoryStore((s) => s.history);
   const clearHistory = useQueryHistoryStore((s) => s.clearHistory);
@@ -495,6 +502,73 @@ export function QueryTab({
       });
     }
   }, [tabId, updateTab]);
+
+  // ── Find Logic ──────────────────────────────────────────
+  useEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f") {
+        if (results.length > 0) {
+          e.preventDefault();
+          setIsFindOpen(true);
+        }
+      }
+    };
+    window.addEventListener("keydown", handleGlobalKeyDown);
+    return () => window.removeEventListener("keydown", handleGlobalKeyDown);
+  }, [results.length]);
+
+  const searchActiveResult = results[activeResultIdx];
+
+  const handleSearch = useCallback((q: string) => {
+    setFindQuery(q);
+    if (!q || !searchActiveResult) {
+      setFindMatches([]);
+      return;
+    }
+
+    const matches: { rowIdx: number; colIdx: number }[] = [];
+    const lowerQ = q.toLowerCase();
+
+    searchActiveResult.rows.forEach((row, rowIdx) => {
+      row.forEach((val, colIdx) => {
+        if (val !== null && String(val).toLowerCase().includes(lowerQ)) {
+          matches.push({ rowIdx, colIdx });
+        }
+      });
+    });
+
+    setFindMatches(matches);
+    setCurrentMatchIdx(0);
+
+    if (matches.length > 0) {
+      scrollToMatch(0, matches);
+    }
+  }, [searchActiveResult]);
+
+  const scrollToMatch = (idx: number, matches = findMatches) => {
+    const match = matches[idx];
+    if (!match) return;
+
+    const cellId = `qcell-${match.rowIdx}-${match.colIdx}`;
+    const el = document.getElementById(cellId);
+    if (el) {
+      el.scrollIntoView({ block: "center", inline: "center" });
+    }
+  };
+
+  const findNext = () => {
+    if (findMatches.length === 0) return;
+    const nextIdx = (currentMatchIdx + 1) % findMatches.length;
+    setCurrentMatchIdx(nextIdx);
+    scrollToMatch(nextIdx);
+  };
+
+  const findPrev = () => {
+    if (findMatches.length === 0) return;
+    const prevIdx = (currentMatchIdx - 1 + findMatches.length) % findMatches.length;
+    setCurrentMatchIdx(prevIdx);
+    scrollToMatch(prevIdx);
+  };
 
   // Ctrl+S listener
   useEffect(() => {
@@ -1793,6 +1867,19 @@ export function QueryTab({
         {/* Results grid */}
         {!running && activeResult && activeResult.columns.length > 0 ? (
           <div className="flex-1 min-h-0 relative">
+            <FindToolbar
+              isOpen={isFindOpen}
+              onClose={() => {
+                setIsFindOpen(false);
+                setFindQuery("");
+                setFindMatches([]);
+              }}
+              onSearch={handleSearch}
+              onNext={findNext}
+              onPrev={findPrev}
+              totalMatches={findMatches.length}
+              currentMatch={currentMatchIdx}
+            />
             <div className="absolute inset-0 overflow-auto">
               <table className="min-w-max text-xs border-collapse">
                 <thead>
@@ -1819,23 +1906,32 @@ export function QueryTab({
                       <td className="text-center px-2 py-1 border-r text-muted-foreground/40 select-none">
                         {ri + 1}
                       </td>
-                      {row.map((val, ci) => (
-                        <td
-                          key={ci}
-                          className={cn(
-                            "px-2 py-1 border-r font-mono max-w-75",
-                            val === null
-                              ? "text-muted-foreground/40 italic"
-                              : "",
-                            wordWrap
-                              ? "whitespace-pre-wrap break-all"
-                              : "whitespace-nowrap truncate",
-                          )}
-                          title={val === null ? "NULL" : String(val)}
-                        >
-                          {val === null ? "NULL" : String(val)}
-                        </td>
-                      ))}
+                      {row.map((val, ci) => {
+                        const isMatch = findQuery && val !== null && String(val).toLowerCase().includes(findQuery.toLowerCase());
+                        const match = findMatches[currentMatchIdx];
+                        const isCurrent = match?.rowIdx === ri && match?.colIdx === ci;
+
+                        return (
+                          <td
+                            key={ci}
+                            id={`qcell-${ri}-${ci}`}
+                            className={cn(
+                              "px-2 py-1 border-r font-mono max-w-75 transition-all",
+                              val === null
+                                ? "text-muted-foreground/40 italic"
+                                : "",
+                              wordWrap
+                                ? "whitespace-pre-wrap break-all"
+                                : "whitespace-nowrap truncate",
+                              isCurrent && "ring-2 ring-primary ring-inset z-10 bg-primary/20",
+                              !isCurrent && isMatch && "bg-yellow-500/30",
+                            )}
+                            title={val === null ? "NULL" : String(val)}
+                          >
+                            {val === null ? "NULL" : String(val)}
+                          </td>
+                        );
+                      })}
                     </tr>
                   ))}
                 </tbody>

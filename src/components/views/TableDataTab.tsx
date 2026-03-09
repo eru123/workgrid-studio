@@ -3,6 +3,7 @@ import { dbQuery, dbExecuteQuery, dbListColumns } from "@/lib/db";
 import type { ColumnInfo, QueryResultSet } from "@/lib/db";
 import { cn } from "@/lib/utils/cn";
 import { useAppStore } from "@/state/appStore";
+import { FindToolbar } from "@/components/ui/FindToolbar";
 import { AutocompleteInput } from "@/components/ui/AutocompleteInput";
 import { highlightSQL } from "@/lib/sqlHighlight";
 import {
@@ -342,6 +343,12 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
   const [appliedWhere, setAppliedWhere] = useState("");
   const [showFilter, setShowFilter] = useState(false);
 
+  // ── Find-in-Results ─────────────────────────────────────
+  const [isFindOpen, setIsFindOpen] = useState(false);
+  const [findQuery, setFindQuery] = useState("");
+  const [findMatches, setFindMatches] = useState<{ rowIdx: number; colName: string }[]>([]);
+  const [currentMatchIdx, setCurrentMatchIdx] = useState(0);
+
   // ── Fetch column metadata ───────────────────────────────
   useEffect(() => {
     let cancelled = false;
@@ -535,6 +542,72 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
     document.addEventListener("mousedown", handleClick);
     return () => document.removeEventListener("mousedown", handleClick);
   }, [showColumnPicker]);
+
+  // ── Find Logic ──────────────────────────────────────────
+  useEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f") {
+        e.preventDefault();
+        setIsFindOpen(true);
+      }
+    };
+    window.addEventListener("keydown", handleGlobalKeyDown);
+    return () => window.removeEventListener("keydown", handleGlobalKeyDown);
+  }, []);
+
+  const handleSearch = useCallback((q: string) => {
+    setFindQuery(q);
+    if (!q) {
+      setFindMatches([]);
+      return;
+    }
+
+    const matches: { rowIdx: number; colName: string }[] = [];
+    const lowerQ = q.toLowerCase();
+
+    // Search in current page results
+    rows.forEach((row, rowIdx) => {
+      visibleColumns.forEach((colName) => {
+        const colIdx = columns.indexOf(colName);
+        const val = row[colIdx];
+        if (val !== null && String(val).toLowerCase().includes(lowerQ)) {
+          matches.push({ rowIdx, colName });
+        }
+      });
+    });
+
+    setFindMatches(matches);
+    setCurrentMatchIdx(0);
+
+    if (matches.length > 0) {
+      scrollToMatch(0, matches);
+    }
+  }, [rows, visibleColumns, columns]);
+
+  const scrollToMatch = (idx: number, matches = findMatches) => {
+    const match = matches[idx];
+    if (!match) return;
+
+    const cellId = `cell-${match.rowIdx}-${match.colName}`;
+    const el = document.getElementById(cellId);
+    if (el) {
+      el.scrollIntoView({ block: "center", inline: "center" });
+    }
+  };
+
+  const findNext = () => {
+    if (findMatches.length === 0) return;
+    const nextIdx = (currentMatchIdx + 1) % findMatches.length;
+    setCurrentMatchIdx(nextIdx);
+    scrollToMatch(nextIdx);
+  };
+
+  const findPrev = () => {
+    if (findMatches.length === 0) return;
+    const prevIdx = (currentMatchIdx - 1 + findMatches.length) % findMatches.length;
+    setCurrentMatchIdx(prevIdx);
+    scrollToMatch(prevIdx);
+  };
 
   // ── Edit handlers ───────────────────────────────────────
   const handleAddRow = useCallback(() => {
@@ -926,6 +999,20 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
         </span>
       </div>
 
+      <FindToolbar
+        isOpen={isFindOpen}
+        onClose={() => {
+          setIsFindOpen(false);
+          setFindQuery("");
+          setFindMatches([]);
+        }}
+        onSearch={handleSearch}
+        onNext={findNext}
+        onPrev={findPrev}
+        totalMatches={findMatches.length}
+        currentMatch={currentMatchIdx}
+      />
+
       {/* ─── Filter Bar ────────────────────────────── */}
       {showFilter && (
         <div className="px-3 py-1.5 border-b bg-muted/10 shrink-0">
@@ -1051,6 +1138,12 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
                     return next;
                   });
                 }}
+                findQuery={findQuery}
+                hasMatch={(col) => findMatches.some(m => m.rowIdx === -(idx + 1) && m.colName === col)}
+                isCurrentMatch={(col) => {
+                  const m = findMatches[currentMatchIdx];
+                  return m?.rowIdx === -(idx + 1) && m?.colName === col;
+                }}
               />
             ))}
             {rows.map((row, rowIdx) => {
@@ -1070,6 +1163,12 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
                   onToggleSelect={() => toggleRowSelection(rowIdx)}
                   editedCells={editedCells}
                   onEditCell={(colName, val) => setEditedCells(prev => ({ ...prev, [`${rowIdx}:${colName}`]: val }))}
+                  findQuery={findQuery}
+                  hasMatch={(col) => findMatches.some(m => m.rowIdx === rowIdx && m.colName === col)}
+                  isCurrentMatch={(col) => {
+                    const m = findMatches[currentMatchIdx];
+                    return m?.rowIdx === rowIdx && m?.colName === col;
+                  }}
                 />
               );
             })}
@@ -1276,9 +1375,13 @@ const SortableHeader = memo(function SortableHeader({
 
 const NewDataRow = memo(function NewDataRow({
   newRow,
+  rowIdx,
   visibleColumns,
   columnInfos,
   onEditCell,
+  findQuery,
+  isCurrentMatch,
+  hasMatch,
 }: {
   newRow: Record<string, string | null>;
   rowIdx: number;
@@ -1286,6 +1389,9 @@ const NewDataRow = memo(function NewDataRow({
   visibleColumns: string[];
   columnInfos: ColumnInfo[];
   onEditCell: (colName: string, val: string | null) => void;
+  findQuery?: string;
+  isCurrentMatch?: (colName: string) => boolean;
+  hasMatch?: (colName: string) => boolean;
 }) {
   return (
     <tr className="border-b bg-green-500/5 hover:bg-green-500/10 transition-colors">
@@ -1302,10 +1408,14 @@ const NewDataRow = memo(function NewDataRow({
         return (
           <EditableCell
             key={col}
+            cellId={`cell-${-(rowIdx + 1)}-${col}`}
             value={value}
             colInfo={colInfo}
             isEdited={value !== null}
             onSave={(val) => onEditCell(col, val)}
+            findQuery={findQuery}
+            isMatch={hasMatch?.(col)}
+            isCurrent={isCurrentMatch?.(col)}
           />
         );
       })}
@@ -1324,6 +1434,9 @@ const DataRow = memo(function DataRow({
   onToggleSelect,
   editedCells,
   onEditCell,
+  findQuery,
+  isCurrentMatch,
+  hasMatch,
 }: {
   row: (string | number | null)[];
   rowIdx: number;
@@ -1335,6 +1448,9 @@ const DataRow = memo(function DataRow({
   onToggleSelect: () => void;
   editedCells: Record<string, string | null>;
   onEditCell: (colName: string, val: string | null) => void;
+  findQuery?: string;
+  isCurrentMatch?: (colName: string) => boolean;
+  hasMatch?: (colName: string) => boolean;
 }) {
   return (
     <tr
@@ -1366,10 +1482,14 @@ const DataRow = memo(function DataRow({
         return (
           <EditableCell
             key={col}
+            cellId={`cell-${rowIdx}-${col}`}
             value={value}
             colInfo={colInfo}
             isEdited={isEdited}
             onSave={(val) => onEditCell(col, val)}
+            findQuery={findQuery}
+            isMatch={hasMatch?.(col)}
+            isCurrent={isCurrentMatch?.(col)}
           />
         );
       })}
@@ -1378,15 +1498,23 @@ const DataRow = memo(function DataRow({
 });
 
 const EditableCell = memo(function EditableCell({
+  cellId,
   value,
   colInfo,
   isEdited,
   onSave,
+  findQuery,
+  isMatch,
+  isCurrent,
 }: {
+  cellId?: string;
   value: string | number | null;
   colInfo?: ColumnInfo;
   isEdited: boolean;
   onSave: (val: string | null) => void;
+  findQuery?: string;
+  isMatch?: boolean;
+  isCurrent?: boolean;
 }) {
   const [isEditing, setIsEditing] = useState(false);
   const [localValue, setLocalValue] = useState<string>(value === null ? "" : String(value));
@@ -1440,15 +1568,15 @@ const EditableCell = memo(function EditableCell({
 
   return (
     <td
+      id={cellId}
       className={cn(
-        "px-1.5 py-0 border-r h-7 max-w-80 truncate font-mono relative group transition-colors",
+        "px-2 py-0 border-r h-7 min-w-[80px] relative group/cell",
         isNumeric && "text-right tabular-nums",
-        isEdited && "bg-orange-500/10"
+        isEdited && "bg-amber-500/10",
+        isCurrent && "ring-2 ring-primary ring-inset z-10 bg-primary/20",
+        !isCurrent && isMatch && "bg-yellow-500/30",
       )}
-      onDoubleClick={() => {
-        setLocalValue(value === null ? "" : String(value));
-        setIsEditing(true);
-      }}
+      onDoubleClick={() => setIsEditing(true)}
       title={value === null ? "NULL" : String(value)}
     >
       {value === null ? (

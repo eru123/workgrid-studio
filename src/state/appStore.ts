@@ -11,8 +11,10 @@ interface AppState {
     focusedContainerId: string | null;
     toasts: Toast[];
     hotkeysEnabled: boolean;
+    isCommandPaletteOpen: boolean;
     setFocusedContainerId: (id: string | null) => void;
     setHotkeysEnabled: (enabled: boolean) => void;
+    setCommandPaletteOpen: (open: boolean) => void;
     addToast: (toast: Omit<Toast, "id">) => void;
     dismissToast: (id: string) => void;
 }
@@ -21,8 +23,10 @@ export const useAppStore = create<AppState>((set) => ({
     focusedContainerId: null,
     toasts: [],
     hotkeysEnabled: true,
+    isCommandPaletteOpen: false,
     setFocusedContainerId: (id) => set({ focusedContainerId: id }),
     setHotkeysEnabled: (enabled) => set({ hotkeysEnabled: enabled }),
+    setCommandPaletteOpen: (open) => set({ isCommandPaletteOpen: open }),
     addToast: (toast) =>
         set((state) => ({
             toasts: [...state.toasts, { ...toast, id: crypto.randomUUID() }],

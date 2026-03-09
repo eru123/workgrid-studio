@@ -18,6 +18,8 @@ import {
   Circle,
   Code,
   Loader2,
+  Undo,
+  Redo,
 } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 import { AutocompleteInput } from "@/components/ui/AutocompleteInput";
@@ -961,6 +963,144 @@ export function TableDesigner({ tabId, leafId, profileId, database, tableName }:
   } | null>(null);
   const [showSaveModal, setShowSaveModal] = useState(false);
 
+  // ── Undo / Redo Logic ───────────────────────────────────
+  const [history, setHistory] = useState<TableDesignerSnapshot[]>([]);
+  const [historyIndex, setHistoryIndex] = useState(-1);
+  const isHistoryActionRef = useRef(false);
+  const lastRecordedRef = useRef<string | null>(null);
+
+  const applySnapshot = useCallback((snapshot: TableDesignerSnapshot) => {
+    isHistoryActionRef.current = true;
+    setName(snapshot.name);
+    setTableComment(snapshot.tableComment);
+    setColumns(snapshot.columns.map(c => ({ ...c })));
+    setIndexes(snapshot.indexes.map(i => ({ ...i, columns: [...i.columns] })));
+    setForeignKeys(snapshot.foreignKeys.map(f => ({ ...f, columns: [...f.columns], refColumns: [...f.refColumns] })));
+    setCheckConstraints(snapshot.checkConstraints.map(c => ({ ...c })));
+    setOptions({ ...snapshot.options });
+    // Clear selection if IDs might have changed (though snapshot should keep them)
+    // setSelectedColumn(snapshot.columns[0]?.id || null);
+
+    lastRecordedRef.current = snapshotSignature(snapshot);
+    setTimeout(() => {
+      isHistoryActionRef.current = false;
+    }, 50);
+  }, []);
+
+  const recordHistory = useCallback((snapshot: TableDesignerSnapshot) => {
+    const sig = snapshotSignature(snapshot);
+    if (sig === lastRecordedRef.current) return;
+
+    setHistory((prev) => {
+      const newHistory = prev.slice(0, historyIndex + 1);
+      newHistory.push(snapshot);
+      if (newHistory.length > 50) newHistory.shift(); // Max 50 levels
+      return newHistory;
+    });
+    setHistoryIndex((prev) => {
+      const next = prev + 1;
+      return next > 49 ? 49 : next;
+    });
+    lastRecordedRef.current = sig;
+  }, [historyIndex]);
+
+  const undo = useCallback(() => {
+    if (historyIndex <= 0) return;
+    const nextIdx = historyIndex - 1;
+    const snap = history[nextIdx];
+    if (snap) {
+      setHistoryIndex(nextIdx);
+      applySnapshot(snap);
+    }
+  }, [history, historyIndex, applySnapshot]);
+
+  const redo = useCallback(() => {
+    if (historyIndex >= history.length - 1) return;
+    const nextIdx = historyIndex + 1;
+    const snap = history[nextIdx];
+    if (snap) {
+      setHistoryIndex(nextIdx);
+      applySnapshot(snap);
+    }
+  }, [history, historyIndex, applySnapshot]);
+
+  // Record initial state once loaded
+  useEffect(() => {
+    if (loadedSnapshot && history.length === 0) {
+      setHistory([loadedSnapshot]);
+      setHistoryIndex(0);
+      lastRecordedRef.current = snapshotSignature(loadedSnapshot);
+    } else if (!isEditMode && columns.length === 0 && history.length === 0 && !loadingSchema) {
+      // For new table, record initial empty state
+      const initial = makeSnapshot({
+        name: "",
+        tableComment: "",
+        columns: [],
+        indexes: [],
+        foreignKeys: [],
+        checkConstraints: [],
+        options: { ...EMPTY_TABLE_OPTIONS }
+      });
+      setHistory([initial]);
+      setHistoryIndex(0);
+      lastRecordedRef.current = snapshotSignature(initial);
+    }
+  }, [loadedSnapshot, isEditMode, columns.length, history.length, loadingSchema]);
+
+  // Debounced auto-recording
+  useEffect(() => {
+    if (isHistoryActionRef.current || loadingSchema) return;
+
+    const timer = setTimeout(() => {
+      const current = makeSnapshot({
+        name,
+        tableComment,
+        columns,
+        indexes,
+        foreignKeys,
+        checkConstraints,
+        options,
+      });
+      recordHistory(current);
+    }, 1000); // 1s debounce to avoid flooding history with every keystroke
+
+    return () => clearTimeout(timer);
+  }, [name, tableComment, columns, indexes, foreignKeys, checkConstraints, options, recordHistory, loadingSchema]);
+
+  // Keyboard Shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Only handle if this tab might be focused (heuristic: check if appStore says so or just global if it's the active tab)
+      // Since TableDesigner is a tab, we assume if it's rendered, it wants shortcuts, 
+      // but we should check if an input is NOT focused if we want to be safe, 
+      // however Ctrl+Z is usually handled by the browser/input unless we prevent default.
+
+      const isZ = e.key.toLowerCase() === "z";
+      const isY = e.key.toLowerCase() === "y";
+      const isCtrl = e.ctrlKey || e.metaKey;
+      const isShift = e.shiftKey;
+
+      if (isCtrl && isZ) {
+        if (isShift) {
+          e.preventDefault();
+          redo();
+        } else {
+          // If we are in a textarea/input, we might want to let the native undo happen?
+          // But for schema changes (adding rows etc), native undo doesn't work.
+          // For now, let's take over Ctrl+Z globally within this component.
+          e.preventDefault();
+          undo();
+        }
+      } else if (isCtrl && isY) {
+        e.preventDefault();
+        redo();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [undo, redo]);
+
   useEffect(() => {
     if (!ctxMenu) return;
     const close = () => setCtxMenu(null);
@@ -1861,16 +2001,47 @@ export function TableDesigner({ tabId, leafId, profileId, database, tableName }:
             {t.label}
           </button>
         ))}
+        <div className="flex-1" />
+        <div className="flex items-center gap-1 px-2 border-l">
+          <button
+            title="Undo (Ctrl+Z)"
+            disabled={historyIndex <= 0}
+            className={cn(
+              "p-1.5 rounded transition-colors",
+              historyIndex <= 0
+                ? "text-muted-foreground/30"
+                : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
+            )}
+            onClick={undo}
+          >
+            <Undo className="w-3.5 h-3.5" />
+          </button>
+          <button
+            title="Redo (Ctrl+Shift+Z)"
+            disabled={historyIndex >= history.length - 1}
+            className={cn(
+              "p-1.5 rounded transition-colors",
+              historyIndex >= history.length - 1
+                ? "text-muted-foreground/30"
+                : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
+            )}
+            onClick={redo}
+          >
+            <Redo className="w-3.5 h-3.5" />
+          </button>
+        </div>
       </div>
 
-      {loadingSchema && (
-        <div className="absolute inset-0 z-30 flex items-center justify-center bg-background/70 backdrop-blur-[1px]">
-          <div className="inline-flex items-center gap-2 rounded border bg-secondary/70 px-3 py-2 text-xs text-foreground">
-            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-            Loading table structure...
+      {
+        loadingSchema && (
+          <div className="absolute inset-0 z-30 flex items-center justify-center bg-background/70 backdrop-blur-[1px]">
+            <div className="inline-flex items-center gap-2 rounded border bg-secondary/70 px-3 py-2 text-xs text-foreground">
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              Loading table structure...
+            </div>
           </div>
-        </div>
-      )}
+        )
+      }
 
       {/* ─── Upper area: Sub-tab content ─────────────── */}
       <div
@@ -2532,18 +2703,20 @@ export function TableDesigner({ tabId, leafId, profileId, database, tableName }:
       </div>
 
       {/* ─── Status / Error bar ──────────────────────── */}
-      {(error || success) && (
-        <div
-          className={cn(
-            "px-3 py-1.5 text-xs border-t shrink-0",
-            error
-              ? "bg-red-500/10 text-red-400"
-              : "bg-green-500/10 text-green-400",
-          )}
-        >
-          {error || success}
-        </div>
-      )}
+      {
+        (error || success) && (
+          <div
+            className={cn(
+              "px-3 py-1.5 text-xs border-t shrink-0",
+              error
+                ? "bg-red-500/10 text-red-400"
+                : "bg-green-500/10 text-green-400",
+            )}
+          >
+            {error || success}
+          </div>
+        )
+      }
 
       {/* ─── Bottom toolbar ─────────────────────────── */}
       <div className="flex items-center gap-2 px-3 py-2 border-t bg-muted/20 shrink-0">
@@ -2570,89 +2743,93 @@ export function TableDesigner({ tabId, leafId, profileId, database, tableName }:
         </button>
       </div>
 
-      {ctxMenu && (
-        <div
-          className="fixed z-100 min-w-48 bg-popover text-popover-foreground border rounded-md shadow-md p-1 text-xs"
-          style={{ top: ctxMenu.y, left: ctxMenu.x }}
-        >
-          <ContextSubmenu
-            label="Create new index"
-            icon={<Zap className="w-3.5 h-3.5" />}
+      {
+        ctxMenu && (
+          <div
+            className="fixed z-100 min-w-48 bg-popover text-popover-foreground border rounded-md shadow-md p-1 text-xs"
+            style={{ top: ctxMenu.y, left: ctxMenu.x }}
           >
-            {INDEX_TYPES.map((type) => (
-              <button
-                key={type}
-                className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2"
-                onClick={() => handleCreateNewIndex(ctxMenu.columnId, type)}
-              >
-                {type}
-              </button>
-            ))}
-          </ContextSubmenu>
-          {(() => {
-            const col = columns.find((c) => c.id === ctxMenu.columnId);
-            const colName = col ? col.name.trim() : "";
-            const availableIndexes = indexes.filter(
-              (idx) => !idx.columns.includes(colName),
-            );
-            if (!colName || availableIndexes.length === 0) return null;
-            return (
-              <ContextSubmenu
-                label="Add to index"
-                icon={<Plus className="w-3.5 h-3.5" />}
-              >
-                {availableIndexes.map((idx) => (
-                  <button
-                    key={idx.id}
-                    className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2"
-                    onClick={() => handleAddToIndex(ctxMenu.columnId, idx.id)}
-                  >
-                    {idx.name || `(unnamed ${idx.type})`}
-                  </button>
-                ))}
-              </ContextSubmenu>
-            );
-          })()}
-        </div>
-      )}
+            <ContextSubmenu
+              label="Create new index"
+              icon={<Zap className="w-3.5 h-3.5" />}
+            >
+              {INDEX_TYPES.map((type) => (
+                <button
+                  key={type}
+                  className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2"
+                  onClick={() => handleCreateNewIndex(ctxMenu.columnId, type)}
+                >
+                  {type}
+                </button>
+              ))}
+            </ContextSubmenu>
+            {(() => {
+              const col = columns.find((c) => c.id === ctxMenu.columnId);
+              const colName = col ? col.name.trim() : "";
+              const availableIndexes = indexes.filter(
+                (idx) => !idx.columns.includes(colName),
+              );
+              if (!colName || availableIndexes.length === 0) return null;
+              return (
+                <ContextSubmenu
+                  label="Add to index"
+                  icon={<Plus className="w-3.5 h-3.5" />}
+                >
+                  {availableIndexes.map((idx) => (
+                    <button
+                      key={idx.id}
+                      className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2"
+                      onClick={() => handleAddToIndex(ctxMenu.columnId, idx.id)}
+                    >
+                      {idx.name || `(unnamed ${idx.type})`}
+                    </button>
+                  ))}
+                </ContextSubmenu>
+              );
+            })()}
+          </div>
+        )
+      }
 
       {/* ── Save Modal ── */}
-      {showSaveModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm p-4">
-          <div className="w-[600px] max-w-full bg-popover text-popover-foreground border rounded-lg shadow-lg flex flex-col overflow-hidden">
-            <div className="px-4 py-3 border-b font-medium flex items-center gap-2">
-              <Code className="w-4 h-4" />
-              {isEditMode
-                ? "Review schema changes"
-                : "Review complete table schema"}
-            </div>
-            <div className="p-4 overflow-auto max-h-[60vh] bg-secondary/20">
-              <pre
-                className="text-[11px] font-mono whitespace-pre-wrap leading-relaxed select-text"
-                dangerouslySetInnerHTML={{ __html: highlightSQL(previewSQL) }}
-              />
-            </div>
-            <div className="px-4 py-3 border-t bg-muted/40 flex justify-end gap-2">
-              <button
-                className="px-4 py-2 text-xs rounded border hover:bg-accent transition-colors disabled:opacity-50"
-                onClick={() => setShowSaveModal(false)}
-                disabled={saving}
-              >
-                Cancel
-              </button>
-              <button
-                className="px-4 py-2 text-xs rounded bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-2"
-                onClick={executeSave}
-                disabled={saving}
-              >
-                {saving && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                {isEditMode ? "Apply Changes" : "Create Table"}
-              </button>
+      {
+        showSaveModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm p-4">
+            <div className="w-[600px] max-w-full bg-popover text-popover-foreground border rounded-lg shadow-lg flex flex-col overflow-hidden">
+              <div className="px-4 py-3 border-b font-medium flex items-center gap-2">
+                <Code className="w-4 h-4" />
+                {isEditMode
+                  ? "Review schema changes"
+                  : "Review complete table schema"}
+              </div>
+              <div className="p-4 overflow-auto max-h-[60vh] bg-secondary/20">
+                <pre
+                  className="text-[11px] font-mono whitespace-pre-wrap leading-relaxed select-text"
+                  dangerouslySetInnerHTML={{ __html: highlightSQL(previewSQL) }}
+                />
+              </div>
+              <div className="px-4 py-3 border-t bg-muted/40 flex justify-end gap-2">
+                <button
+                  className="px-4 py-2 text-xs rounded border hover:bg-accent transition-colors disabled:opacity-50"
+                  onClick={() => setShowSaveModal(false)}
+                  disabled={saving}
+                >
+                  Cancel
+                </button>
+                <button
+                  className="px-4 py-2 text-xs rounded bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-2"
+                  onClick={executeSave}
+                  disabled={saving}
+                >
+                  {saving && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                  {isEditMode ? "Apply Changes" : "Create Table"}
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
-    </div>
+        )
+      }
+    </div >
   );
 }
 
