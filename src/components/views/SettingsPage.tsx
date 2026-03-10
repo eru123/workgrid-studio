@@ -1,10 +1,51 @@
+import { useState } from "react";
 import { useProfilesStore } from "@/state/profilesStore";
+import { useAppStore } from "@/state/appStore";
+import { useAppVersion } from "@/hooks/useAppVersion";
 import { cn } from "@/lib/utils/cn";
-import { Monitor, Moon, Sun, Type } from "lucide-react";
+import { Monitor, Moon, Sun, Type, RefreshCw, CheckCircle2, AlertCircle, Download } from "lucide-react";
+import { check } from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
 
 export function SettingsPage() {
     const globalPrefs = useProfilesStore((s) => s.globalPreferences);
     const setGlobalPrefs = useProfilesStore((s) => s.setGlobalPreferences);
+    const addToast = useAppStore((s) => s.addToast);
+    const appVersion = useAppVersion();
+
+    type UpdateState = "idle" | "checking" | "available" | "downloading" | "up-to-date" | "error";
+    const [updateState, setUpdateState] = useState<UpdateState>("idle");
+    const [updateVersion, setUpdateVersion] = useState<string | null>(null);
+
+    const handleCheckForUpdates = async () => {
+        setUpdateState("checking");
+        try {
+            const update = await check();
+            if (update?.available) {
+                setUpdateVersion(update.currentVersion ?? null);
+                setUpdateState("available");
+            } else {
+                setUpdateState("up-to-date");
+            }
+        } catch (e) {
+            setUpdateState("error");
+            addToast({ title: "Update check failed", description: String(e), variant: "destructive" });
+        }
+    };
+
+    const handleInstallUpdate = async () => {
+        setUpdateState("downloading");
+        try {
+            const update = await check();
+            if (update?.available) {
+                await update.downloadAndInstall();
+                await relaunch();
+            }
+        } catch (e) {
+            setUpdateState("error");
+            addToast({ title: "Update failed", description: String(e), variant: "destructive" });
+        }
+    };
 
     return (
         <div className="flex flex-col w-full h-full bg-background text-foreground text-sm overflow-hidden">
@@ -67,6 +108,72 @@ export function SettingsPage() {
                                 value={globalPrefs.fontSize || 13}
                                 onChange={(e) => setGlobalPrefs({ ...globalPrefs, fontSize: parseInt(e.target.value) })}
                             />
+                        </div>
+                    </div>
+                </section>
+
+                {/* About & Updates Section */}
+                <section className="flex flex-col gap-4">
+                    <div className="border-b pb-2">
+                        <h3 className="font-medium text-lg">About</h3>
+                        <p className="text-muted-foreground text-xs">Version information and updates.</p>
+                    </div>
+
+                    <div className="flex items-center justify-between p-4 bg-muted/20 rounded-lg border">
+                        <div>
+                            <p className="font-medium">WorkGrid Studio</p>
+                            <p className="text-muted-foreground text-[11px] mt-0.5 font-mono">v{appVersion}</p>
+                        </div>
+
+                        <div className="flex items-center gap-3">
+                            {updateState === "up-to-date" && (
+                                <span className="flex items-center gap-1.5 text-xs text-green-500">
+                                    <CheckCircle2 className="w-4 h-4" />
+                                    Up to date
+                                </span>
+                            )}
+                            {updateState === "error" && (
+                                <span className="flex items-center gap-1.5 text-xs text-destructive">
+                                    <AlertCircle className="w-4 h-4" />
+                                    Check failed
+                                </span>
+                            )}
+                            {updateState === "available" && (
+                                <span className="text-xs text-yellow-500">
+                                    v{updateVersion} available
+                                </span>
+                            )}
+
+                            {(updateState === "idle" || updateState === "up-to-date" || updateState === "error") && (
+                                <button
+                                    onClick={handleCheckForUpdates}
+                                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded border bg-card hover:bg-accent transition-colors"
+                                >
+                                    <RefreshCw className="w-3.5 h-3.5" />
+                                    Check for Updates
+                                </button>
+                            )}
+                            {updateState === "checking" && (
+                                <button disabled className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded border bg-card text-muted-foreground">
+                                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                                    Checking…
+                                </button>
+                            )}
+                            {updateState === "available" && (
+                                <button
+                                    onClick={handleInstallUpdate}
+                                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+                                >
+                                    <Download className="w-3.5 h-3.5" />
+                                    Install Update
+                                </button>
+                            )}
+                            {updateState === "downloading" && (
+                                <button disabled className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded bg-primary text-primary-foreground opacity-70">
+                                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                                    Installing…
+                                </button>
+                            )}
                         </div>
                     </div>
                 </section>

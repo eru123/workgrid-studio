@@ -27,6 +27,7 @@
     },
     "fs:allow-stat",
     "window-state:default",
-    "updater:default"
+    "updater:default",
+    "process:default"
   ]
 }
