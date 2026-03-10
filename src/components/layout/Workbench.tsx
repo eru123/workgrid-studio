@@ -7,8 +7,9 @@ import { useAppVersion } from "@/hooks/useAppVersion";
 import { Sash } from "./Sash";
 import { EditorNode } from "./EditorNode";
 import { ExplorerTree } from "@/components/views/ExplorerTree";
-import { readProfileLog, clearProfileLog, getAiLogs, clearAiLogs, AiLogEntry } from "@/lib/db";
+import { readProfileLog, clearProfileLog, getAiLogs, clearAiLogs, AiLogEntry, dbPing } from "@/lib/db";
 import { cn } from "@/lib/utils/cn";
+import { useProfileManager } from "@/hooks/useProfileManager";
 import {
   FolderTree,
   CheckSquare,
@@ -75,6 +76,8 @@ export function Workbench() {
     },
     [bottomPanelSplitRatio, setBottomPanelSplitRatio]
   );
+  
+  const { handleConnect } = useProfileManager();
 
   // Theme Toggle Logic
   const globalPrefs = useProfilesStore((s) => s.globalPreferences);
@@ -94,6 +97,26 @@ export function Workbench() {
     useProfilesStore.getState().loadProfiles();
     useModelsStore.getState().loadProviders();
   }, []);
+
+  // Connection Keep-Alive Loop
+  useEffect(() => {
+    const pinger = setInterval(async () => {
+      const { profiles, setConnectionStatus } = useProfilesStore.getState();
+      const connected = profiles.filter((p) => p.connectionStatus === "connected");
+      for (const p of connected) {
+        try {
+          await dbPing(p.id);
+        } catch {
+          console.warn(`[Keep-Alive] Ping failed for ${p.id}, marking error and reconnecting...`);
+          setConnectionStatus(p.id, "error");
+          // Attempt a silent reconnect via the manager
+          await handleConnect(p.id);
+        }
+      }
+    }, 15_000); // 15 seconds
+    
+    return () => clearInterval(pinger);
+  }, [handleConnect]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {

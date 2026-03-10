@@ -30,3 +30,4 @@ dist-ssr
 src-tauri/err.txt
 src-tauri/check.txt
 src-tauri/errors.txt
+src-tauri/error.txt

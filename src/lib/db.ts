@@ -47,6 +47,10 @@ export async function dbDisconnect(profileId: string): Promise<string> {
     return invoke<string>("db_disconnect", { profileId });
 }
 
+export async function dbPing(profileId: string): Promise<number> {
+    return invoke<number>("db_ping", { profileId });
+}
+
 export async function dbListDatabases(profileId: string): Promise<string[]> {
     return invoke<string[]>("db_list_databases", { profileId });
 }

@@ -510,10 +510,12 @@ async fn db_connect(
         builder = builder.ssl_opts(Some(ssl_opts));
     }
 
-    let opts: Opts = builder.into();
     let pool_opts = PoolOpts::new()
         .with_constraints(PoolConstraints::new(0, 5).unwrap());
-    let pool = Pool::new_manual(pool_opts, opts);
+    builder = builder.pool_opts(Some(pool_opts));
+
+    let opts: Opts = builder.into();
+    let pool = Pool::new(opts);
 
     match pool.get_conn().await {
         Ok(conn) => {
@@ -572,6 +574,34 @@ async fn db_disconnect(
 
     log_info(&profile_id, "Disconnected");
     Ok("Disconnected".to_string())
+}
+
+#[tauri::command]
+async fn db_ping(
+    state: State<'_, DbState>,
+    profile_id: String,
+) -> Result<u128, String> {
+    let pool = get_pool(&state, &profile_id)?;
+    let start = std::time::Instant::now();
+
+    let mut conn = pool.get_conn().await.map_err(|e| {
+        let msg = format!("Ping connection error: {}", e);
+        // Don't log as error strictly for pings to avoid spamming the error console
+        // log_error(&profile_id, &msg); 
+        msg
+    })?;
+
+    match conn.query::<u8, _>("SELECT 1").await {
+        Ok(_) => {
+            drop(conn);
+            let elapsed = start.elapsed().as_millis();
+            Ok(elapsed)
+        }
+        Err(e) => {
+            let msg = format!("Ping query error: {}", e);
+            Err(msg)
+        }
+    }
 }
 
 #[tauri::command]
@@ -1811,7 +1841,8 @@ pub fn run() {
             clear_ai_logs,
             db_get_schema_ddl,
             encrypt_password,
-            decrypt_password
+            decrypt_password,
+            db_ping
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

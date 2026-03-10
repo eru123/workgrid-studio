@@ -896,6 +896,8 @@ function ProfileNode({
   const setError = useSchemaStore((s) => s.setError);
   const clearError = useSchemaStore((s) => s.clearError);
   const openTab = useLayoutStore((s) => s.openTab);
+  
+  const connectionStatus = useProfilesStore((s) => s.profiles.find((p) => p.id === profileId)?.connectionStatus);
 
   const nodeKey = `profile-${profileId}`;
   const isOpen = expanded[nodeKey] ?? true;
@@ -958,7 +960,17 @@ function ProfileNode({
         onContextMenu={onContextMenuServer}
         icon={(() => {
           const Icon = DB_ICONS[type] || Database;
-          return <Icon className="w-3.5 h-3.5" style={{ color }} />;
+          return (
+            <div className="relative">
+              <Icon className="w-3.5 h-3.5" style={{ color }} />
+              {connectionStatus === "connected" && (
+                 <span className="absolute -bottom-0.5 -right-0.5 w-[6px] h-[6px] bg-green-500 rounded-full border border-background shadow-sm shadow-green-500/50" />
+              )}
+              {connectionStatus === "error" && (
+                 <span className="absolute -bottom-0.5 -right-0.5 w-[6px] h-[6px] bg-red-500 rounded-full border border-background shadow-sm shadow-red-500/50" />
+              )}
+            </div>
+          );
         })()}
         label={name}
         badge={filteredDatabases ? String(filteredDatabases.length) : undefined}
