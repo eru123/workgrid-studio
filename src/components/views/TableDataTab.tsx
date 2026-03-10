@@ -579,11 +579,46 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
         if (!row) return;
         const val = colIdx >= 0 ? row[colIdx] : null;
         navigator.clipboard.writeText(val === null ? "NULL" : String(val)).catch(() => {});
+        return;
       }
+
+      // Arrow key / Tab navigation
+      if (!selectedCellKey) return;
+      const isArrow = ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key);
+      const isTab = e.key === "Tab";
+      if (!isArrow && !isTab) return;
+
+      const colonIdx = selectedCellKey.indexOf(":");
+      let rowIdx = Number(selectedCellKey.slice(0, colonIdx));
+      const colName = selectedCellKey.slice(colonIdx + 1);
+      let colIdx = visibleColumns.indexOf(colName);
+      if (colIdx === -1) return;
+
+      if (e.key === "ArrowRight" || (isTab && !e.shiftKey)) {
+        e.preventDefault();
+        if (colIdx < visibleColumns.length - 1) colIdx++;
+        else if (rowIdx < rows.length - 1) { rowIdx++; colIdx = 0; }
+      } else if (e.key === "ArrowLeft" || (isTab && e.shiftKey)) {
+        e.preventDefault();
+        if (colIdx > 0) colIdx--;
+        else if (rowIdx > 0) { rowIdx--; colIdx = visibleColumns.length - 1; }
+      } else if (e.key === "ArrowDown") {
+        e.preventDefault();
+        if (rowIdx < rows.length - 1) rowIdx++;
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        if (rowIdx > 0) rowIdx--;
+      }
+
+      const newKey = `${rowIdx}:${visibleColumns[colIdx]}`;
+      setSelectedCellKey(newKey);
+      // Scroll the cell into view
+      const cellEl = document.getElementById(`cell-${rowIdx}-${visibleColumns[colIdx]}`);
+      cellEl?.scrollIntoView({ block: "nearest", inline: "nearest" });
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [selectedCellKey, columns, rows]);
+  }, [selectedCellKey, columns, rows, visibleColumns]);
 
   const handleSearch = useCallback((q: string) => {
     if (!q) {

@@ -586,14 +586,46 @@ export function QueryTab({
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      const active = results[activeResultIdx];
+
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "c" && selectedCell) {
-        const active = results[activeResultIdx];
         if (!active) return;
         const row = active.rows[selectedCell.rowIdx];
         if (!row) return;
         const val = row[selectedCell.colIdx];
         navigator.clipboard.writeText(val === null ? "NULL" : String(val)).catch(() => {});
+        return;
       }
+
+      // Arrow key / Tab navigation for result grid
+      if (!selectedCell || !active) return;
+      const isArrow = ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key);
+      const isTab = e.key === "Tab";
+      if (!isArrow && !isTab) return;
+
+      let { rowIdx, colIdx } = selectedCell;
+      const numRows = active.rows.length;
+      const numCols = active.columns.length;
+
+      if (e.key === "ArrowRight" || (isTab && !e.shiftKey)) {
+        e.preventDefault();
+        if (colIdx < numCols - 1) colIdx++;
+        else if (rowIdx < numRows - 1) { rowIdx++; colIdx = 0; }
+      } else if (e.key === "ArrowLeft" || (isTab && e.shiftKey)) {
+        e.preventDefault();
+        if (colIdx > 0) colIdx--;
+        else if (rowIdx > 0) { rowIdx--; colIdx = numCols - 1; }
+      } else if (e.key === "ArrowDown") {
+        e.preventDefault();
+        if (rowIdx < numRows - 1) rowIdx++;
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        if (rowIdx > 0) rowIdx--;
+      }
+
+      setSelectedCell({ rowIdx, colIdx });
+      const cellEl = document.getElementById(`qcell-${rowIdx}-${colIdx}`);
+      cellEl?.scrollIntoView({ block: "nearest", inline: "nearest" });
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
