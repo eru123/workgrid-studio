@@ -54,6 +54,7 @@ export interface EditorTab {
   title: string;
   type: EditorTabType;
   dirty?: boolean;
+  pinned?: boolean;
   /** Arbitrary metadata for domain-specific tabs */
   meta?: Record<string, string>;
 }
@@ -119,10 +120,8 @@ interface LayoutState {
   closeAllTabs: (leafId: string) => void;
 
   setActiveTab: (tabId: string, leafId: string) => void;
-  updateTab: (
-    tabId: string,
-    updates: Partial<Pick<EditorTab, "title" | "meta" | "dirty">>,
-  ) => void;
+  updateTab: (tabId: string, updates: Partial<Pick<EditorTab, "title" | "meta" | "dirty" | "pinned">>) => void;
+  togglePinTab: (tabId: string, leafId: string) => void;
 
   // Editor tree operations
   splitLeaf: (leafId: string, direction: SplitDirection) => void;
@@ -304,7 +303,7 @@ export const useLayoutStore = create<LayoutState>((set) => ({
       const leaf = findLeafById(state.editorTree, leafId);
       if (!leaf) return state;
       const tabToClose = leaf.tabs.find((t) => t.id === tabId);
-      if (!tabToClose) return state;
+      if (!tabToClose || tabToClose.pinned) return state;
 
       const newStack = [{ tab: tabToClose, leafId }, ...state.closedTabsStack].slice(0, 20);
 
@@ -387,6 +386,13 @@ export const useLayoutStore = create<LayoutState>((set) => ({
   updateTab: (tabId, updates) =>
     set((state) => ({
       editorTree: updateTabInTree(state.editorTree, tabId, updates),
+    })),
+
+  togglePinTab: (tabId, _leafId) =>
+    set((state) => ({
+      editorTree: updateTabInTree(state.editorTree, tabId, {
+        pinned: !findTabInTree(state.editorTree, tabId)?.pinned,
+      }),
     })),
 
   moveTab: (tabId, sourceLeafId, targetLeafId, targetIndex) =>
@@ -563,11 +569,17 @@ function updateNode(
   return tree;
 }
 
+// Helper: find a tab by id across the entire tree
+function findTabInTree(tree: SplitTree, tabId: string): EditorTab | undefined {
+  if (tree.type === "leaf") return tree.tabs.find((t) => t.id === tabId);
+  return findTabInTree(tree.a, tabId) ?? findTabInTree(tree.b, tabId);
+}
+
 // Helper: update a tab's properties across the entire tree
 function updateTabInTree(
   tree: SplitTree,
   tabId: string,
-  updates: Partial<Pick<EditorTab, "title" | "meta" | "dirty">>,
+  updates: Partial<Pick<EditorTab, "title" | "meta" | "dirty" | "pinned">>,
 ): SplitTree {
   if (tree.type === "leaf") {
     const hasTab = tree.tabs.some((t) => t.id === tabId);

@@ -1,4 +1,16 @@
 import { useState, useEffect, useMemo, useCallback, useRef, memo } from "react";
+
+// ── Session-level persistence cache (survives tab switches, reset on page reload) ──
+interface TableSessionState {
+  colWidths: Record<string, number>;
+  sorts: { column: string; direction: "ASC" | "DESC" }[];
+  whereClause: string;
+  frozenCols: Set<string>;
+}
+const tableSessionCache = new Map<string, TableSessionState>();
+function getSessionKey(profileId: string, database: string, tableName: string) {
+  return `${profileId}::${database}::${tableName}`;
+}
 import { dbQuery, dbExecuteQuery, dbListColumns } from "@/lib/db";
 import type { ColumnInfo, QueryResultSet } from "@/lib/db";
 import { cn } from "@/lib/utils/cn";
@@ -306,6 +318,10 @@ function buildWhereSuggestions(
 // ═══════════════════════════════════════════════════════════════════════
 
 export function TableDataTab({ profileId, database, tableName }: Props) {
+  // ── Restore persisted session state ─────────────────────
+  const sessionKey = getSessionKey(profileId, database, tableName);
+  const cached = tableSessionCache.get(sessionKey);
+
   // ── Column metadata ─────────────────────────────────────
   const [columnInfos, setColumnInfos] = useState<ColumnInfo[]>([]);
   const [loadingMeta, setLoadingMeta] = useState(true);
@@ -321,8 +337,8 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(100);
 
-  // ── Sorting ─────────────────────────────────────────────
-  const [sorts, setSorts] = useState<SortColumn[]>([]);
+  // ── Sorting — restored from session cache ────────────────
+  const [sorts, setSorts] = useState<SortColumn[]>(cached?.sorts ?? []);
 
   // ── Column visibility ───────────────────────────────────
   const [hiddenColumns, setHiddenColumns] = useState<Set<string>>(new Set());
@@ -341,9 +357,9 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
   const hasEdits = Object.keys(editedCells).length > 0 || addedRows.length > 0 || deletedRows.size > 0;
   const tableHasPK = !loadingMeta && columnInfos.some(c => c.key === "PRI");
 
-  // ── Filter ──────────────────────────────────────────────
-  const [whereClause, setWhereClause] = useState("");
-  const [appliedWhere, setAppliedWhere] = useState("");
+  // ── Filter — restored from session cache ─────────────────
+  const [whereClause, setWhereClause] = useState(cached?.whereClause ?? "");
+  const [appliedWhere, setAppliedWhere] = useState(cached?.whereClause ?? "");
   const [showFilter, setShowFilter] = useState(false);
 
   // ── Find-in-Results ─────────────────────────────────────
@@ -351,8 +367,16 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
   const [findMatches, setFindMatches] = useState<{ rowIdx: number; colName: string }[]>([]);
   const [currentMatchIdx, setCurrentMatchIdx] = useState(0);
 
-  // ── Column widths (resizing) ─────────────────────────────
-  const [colWidths, setColWidths] = useState<Record<string, number>>({});
+  // ── Column widths — restored from session cache ──────────
+  const [colWidths, setColWidths] = useState<Record<string, number>>(cached?.colWidths ?? {});
+
+  // ── Frozen columns — restored from session cache ─────────
+  const [frozenCols, setFrozenCols] = useState<Set<string>>(cached?.frozenCols ?? new Set());
+
+  // ── Persist session state on change ─────────────────────
+  useEffect(() => {
+    tableSessionCache.set(sessionKey, { colWidths, sorts, whereClause: appliedWhere, frozenCols });
+  }, [sessionKey, colWidths, sorts, appliedWhere, frozenCols]);
 
   // ── Cell selection & context menu ──────────────────────
   const [selectedCellKey, setSelectedCellKey] = useState<string | null>(null);
@@ -1202,9 +1226,9 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
         )}
 
         <table className="w-full text-xs border-collapse">
-          <thead className="sticky top-0 z-10">
+          <thead className="sticky top-0 z-30">
             <tr className="bg-muted/70 backdrop-blur-sm">
-              <th className="text-center px-1.5 py-1.5 border-b border-r bg-muted/70 whitespace-nowrap w-8">
+              <th className="sticky left-0 z-30 text-center px-1.5 py-1.5 border-b border-r bg-muted/70 whitespace-nowrap w-8">
                 <input
                   type="checkbox"
                   className="w-3 h-3 rounded-sm opacity-50 hover:opacity-100 cursor-pointer"
@@ -1214,32 +1238,46 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
                 />
               </th>
               {/* Row number column */}
-              <th className="text-center px-1.5 py-1.5 text-[10px] font-medium text-muted-foreground/70 tracking-wider border-b border-r bg-muted/70 whitespace-nowrap w-10">
+              <th className="sticky left-[32px] z-30 text-center px-1.5 py-1.5 text-[10px] font-medium text-muted-foreground/70 tracking-wider border-b border-r bg-muted/70 whitespace-nowrap w-10">
                 #
               </th>
-              {visibleColumns.map((col) => {
-                const sortEntry = sorts.find((s) => s.column === col);
-                const sortIndex = sorts.findIndex((s) => s.column === col);
-                const colInfo = columnInfos.find((ci) => ci.name === col);
+              {(() => {
+                // checkbox col ≈32px + row number col ≈40px
+                let leftOffset = 72;
+                return visibleColumns.map((col) => {
+                  const isFrozen = frozenCols.has(col);
+                  const colLeft = isFrozen ? leftOffset : undefined;
+                  if (isFrozen) leftOffset += colWidths[col] ?? 120;
+                  const sortEntry = sorts.find((s) => s.column === col);
+                  const sortIndex = sorts.findIndex((s) => s.column === col);
+                  const colInfo = columnInfos.find((ci) => ci.name === col);
 
-                return (
-                  <SortableHeader
-                    key={col}
-                    name={col}
-                    colInfo={colInfo}
-                    sortDirection={sortEntry?.direction}
-                    sortIndex={sorts.length > 1 ? sortIndex : -1}
-                    onSort={(e) => handleSort(col, e.ctrlKey || e.metaKey)}
-                    filterValue={columnFilters[col] || ""}
-                    onFilter={(val) => {
-                      setColumnFilters(prev => ({ ...prev, [col]: val }));
-                      setPage(0);
-                    }}
-                    width={colWidths[col]}
-                    onResize={(w) => setColWidths(prev => ({ ...prev, [col]: w }))}
-                  />
-                );
-              })}
+                  return (
+                    <SortableHeader
+                      key={col}
+                      name={col}
+                      colInfo={colInfo}
+                      sortDirection={sortEntry?.direction}
+                      sortIndex={sorts.length > 1 ? sortIndex : -1}
+                      onSort={(e) => handleSort(col, e.ctrlKey || e.metaKey)}
+                      filterValue={columnFilters[col] || ""}
+                      onFilter={(val) => {
+                        setColumnFilters(prev => ({ ...prev, [col]: val }));
+                        setPage(0);
+                      }}
+                      width={colWidths[col]}
+                      onResize={(w) => setColWidths(prev => ({ ...prev, [col]: w }))}
+                      frozen={isFrozen}
+                      frozenLeft={colLeft}
+                      onToggleFreeze={() => setFrozenCols(prev => {
+                        const next = new Set(prev);
+                        if (next.has(col)) next.delete(col); else next.add(col);
+                        return next;
+                      })}
+                    />
+                  );
+                });
+              })()}
             </tr>
           </thead>
           <tbody>
@@ -1304,6 +1342,8 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
                     setSelectedCellKey(`${rowIdx}:${colName}`);
                     setCellContextMenu({ x: e.clientX, y: e.clientY, rowIdx, colName, value });
                   }}
+                  frozenCols={frozenCols}
+                  colWidths={colWidths}
                 />
               );
             })}
@@ -1391,6 +1431,9 @@ const SortableHeader = memo(function SortableHeader({
   onFilter,
   width,
   onResize,
+  frozen,
+  frozenLeft,
+  onToggleFreeze,
 }: {
   name: string;
   colInfo?: ColumnInfo;
@@ -1401,6 +1444,9 @@ const SortableHeader = memo(function SortableHeader({
   onFilter: (val: string) => void;
   width?: number;
   onResize?: (w: number) => void;
+  frozen?: boolean;
+  frozenLeft?: number;
+  onToggleFreeze?: () => void;
 }) {
   const isPK = colInfo?.key === "PRI";
   const [showFilter, setShowFilter] = useState(false);
@@ -1441,8 +1487,12 @@ const SortableHeader = memo(function SortableHeader({
       className={cn(
         "text-left px-1.5 py-1.5 text-[10px] font-medium tracking-wider border-b border-r bg-muted/70 whitespace-nowrap select-none group relative",
         sortDirection && "bg-primary/10",
+        frozen && "sticky z-30 shadow-[2px_0_4px_rgba(0,0,0,0.08)]",
       )}
-      style={width ? { width, minWidth: width } : undefined}
+      style={{
+        ...(width ? { width, minWidth: width } : undefined),
+        ...(frozen && frozenLeft !== undefined ? { left: frozenLeft } : undefined),
+      }}
       title={colInfo ? `Type: ${colInfo.col_type}` : ""}
     >
       <div className="flex items-center gap-1">
@@ -1486,13 +1536,23 @@ const SortableHeader = memo(function SortableHeader({
             "p-0.5 rounded hover:bg-accent transition-colors",
             (filterValue || showFilter) ? "text-primary" : "text-muted-foreground/0 group-hover:text-muted-foreground/50"
           )}
-          onClick={(e) => {
-            e.stopPropagation();
-            setShowFilter(!showFilter);
-          }}
+          onClick={(e) => { e.stopPropagation(); setShowFilter(!showFilter); }}
+          title="Filter column"
         >
           <Filter className="w-3 h-3" />
         </button>
+        {onToggleFreeze && (
+          <button
+            className={cn(
+              "p-0.5 rounded hover:bg-accent transition-colors",
+              frozen ? "text-primary" : "text-muted-foreground/0 group-hover:text-muted-foreground/50"
+            )}
+            onClick={(e) => { e.stopPropagation(); onToggleFreeze(); }}
+            title={frozen ? "Unfreeze column" : "Freeze column (pin left)"}
+          >
+            <ArrowUpDown className="w-3 h-3 rotate-90" />
+          </button>
+        )}
 
         {showFilter && (
           <div
@@ -1600,6 +1660,8 @@ const DataRow = memo(function DataRow({
   selectedCellKey,
   onCellSelect,
   onCellContextMenu,
+  frozenCols,
+  colWidths,
 }: {
   row: (string | number | null)[];
   rowIdx: number;
@@ -1616,6 +1678,8 @@ const DataRow = memo(function DataRow({
   selectedCellKey?: string | null;
   onCellSelect?: (colName: string) => void;
   onCellContextMenu?: (e: React.MouseEvent, colName: string, value: string | number | null) => void;
+  frozenCols?: Set<string>;
+  colWidths?: Record<string, number>;
 }) {
   return (
     <tr
@@ -1624,7 +1688,7 @@ const DataRow = memo(function DataRow({
         isSelected ? "bg-primary/10 hover:bg-primary/15" : "hover:bg-accent/15"
       )}
     >
-      <td className="text-center px-1 py-0 border-r h-7 whitespace-nowrap">
+      <td className="sticky left-0 z-10 text-center px-1 py-0 border-r h-7 whitespace-nowrap bg-background">
         <input
           type="checkbox"
           className="w-3 h-3 rounded-sm opacity-50 hover:opacity-100 cursor-pointer"
@@ -1633,33 +1697,42 @@ const DataRow = memo(function DataRow({
           onChange={onToggleSelect}
         />
       </td>
-      <td className="text-center px-1 py-0 border-r h-7 text-muted-foreground/40 tabular-nums text-[10px] bg-muted/20">
+      <td className="sticky left-[32px] z-10 text-center px-1 py-0 border-r h-7 text-muted-foreground/40 tabular-nums text-[10px] bg-muted/20">
         {rowNumber}
       </td>
-      {visibleColumns.map((col) => {
-        const colIdx = columns.indexOf(col);
-        const originalValue = colIdx >= 0 ? row[colIdx] : null;
-        const editKey = `${rowIdx}:${col}`;
-        const isEdited = editKey in editedCells;
-        const value = isEdited ? editedCells[editKey] : originalValue;
-        const colInfo = columnInfos.find((ci) => ci.name === col);
+      {(() => {
+        // checkbox col ≈32px + row# col ≈40px
+        let leftOffset = 72;
+        return visibleColumns.map((col) => {
+          const colIdx = columns.indexOf(col);
+          const originalValue = colIdx >= 0 ? row[colIdx] : null;
+          const editKey = `${rowIdx}:${col}`;
+          const isEdited = editKey in editedCells;
+          const value = isEdited ? editedCells[editKey] : originalValue;
+          const colInfo = columnInfos.find((ci) => ci.name === col);
+          const isFrozen = frozenCols?.has(col) ?? false;
+          const colLeft = isFrozen ? leftOffset : undefined;
+          if (isFrozen) leftOffset += colWidths?.[col] ?? 120;
 
-        return (
-          <EditableCell
-            key={col}
-            cellId={`cell-${rowIdx}-${col}`}
-            value={value}
-            colInfo={colInfo}
-            isEdited={isEdited}
-            onSave={(val) => onEditCell(col, val)}
-            isMatch={hasMatch?.(col)}
-            isCurrent={isCurrentMatch?.(col)}
-            isSelected={selectedCellKey === `${rowIdx}:${col}`}
-            onSelect={() => onCellSelect?.(col)}
-            onCellContextMenu={(e) => onCellContextMenu?.(e, col, value ?? null)}
-          />
-        );
-      })}
+          return (
+            <EditableCell
+              key={col}
+              cellId={`cell-${rowIdx}-${col}`}
+              value={value}
+              colInfo={colInfo}
+              isEdited={isEdited}
+              onSave={(val) => onEditCell(col, val)}
+              isMatch={hasMatch?.(col)}
+              isCurrent={isCurrentMatch?.(col)}
+              isSelected={selectedCellKey === `${rowIdx}:${col}`}
+              onSelect={() => onCellSelect?.(col)}
+              onCellContextMenu={(e) => onCellContextMenu?.(e, col, value ?? null)}
+              frozen={isFrozen}
+              frozenLeft={colLeft}
+            />
+          );
+        });
+      })()}
     </tr>
   );
 });
@@ -1675,6 +1748,8 @@ const EditableCell = memo(function EditableCell({
   isSelected,
   onSelect,
   onCellContextMenu,
+  frozen,
+  frozenLeft,
 }: {
   cellId?: string;
   value: string | number | null;
@@ -1686,6 +1761,8 @@ const EditableCell = memo(function EditableCell({
   isSelected?: boolean;
   onSelect?: () => void;
   onCellContextMenu?: (e: React.MouseEvent) => void;
+  frozen?: boolean;
+  frozenLeft?: number;
 }) {
   const [isEditing, setIsEditing] = useState(false);
   const [localValue, setLocalValue] = useState<string>(value === null ? "" : String(value));
@@ -1715,9 +1792,12 @@ const EditableCell = memo(function EditableCell({
     }
   };
 
+  const stickyStyle = frozen && frozenLeft !== undefined ? { left: frozenLeft } : undefined;
+  const stickyClass = frozen ? "sticky z-10 shadow-[2px_0_4px_rgba(0,0,0,0.08)]" : undefined;
+
   if (isEditing) {
     return (
-      <td className="p-0 border-r h-7 min-w-[80px]">
+      <td className={cn("p-0 border-r h-7 min-w-[80px] bg-background", stickyClass)} style={stickyStyle}>
         <input
           ref={inputRef}
           type="text"
@@ -1741,13 +1821,15 @@ const EditableCell = memo(function EditableCell({
     <td
       id={cellId}
       className={cn(
-        "px-2 py-0 border-r h-7 min-w-[80px] relative group/cell cursor-default",
+        "px-2 py-0 border-r h-7 min-w-[80px] relative group/cell cursor-default bg-background",
         isNumeric && "text-right tabular-nums",
         isEdited && "bg-amber-500/10",
         isCurrent && "ring-2 ring-primary ring-inset z-10 bg-primary/20",
         !isCurrent && isMatch && "bg-yellow-500/30",
         isSelected && !isCurrent && "ring-1 ring-primary/60 bg-primary/8",
+        stickyClass,
       )}
+      style={stickyStyle}
       onClick={onSelect}
       onDoubleClick={() => setIsEditing(true)}
       onContextMenu={onCellContextMenu}

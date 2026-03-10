@@ -1,6 +1,9 @@
 import { create } from "zustand";
 import { dbListDatabases, dbListTables } from "@/lib/db";
 
+const AUTO_REFRESH_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+const autoRefreshTimers = new Map<string, ReturnType<typeof setInterval>>();
+
 // Minimal schema types — data is loaded lazily on expand
 export interface ColumnInfo {
     name: string;
@@ -55,12 +58,24 @@ export const useSchemaStore = create<SchemaState>((set) => ({
     loadingColumns: {},
     errors: {},
 
-    addConnection: (profileId, name, color) =>
+    addConnection: (profileId, name, color) => {
         set((state) => ({
             connectedProfiles: { ...state.connectedProfiles, [profileId]: { name, color } },
-        })),
+        }));
+        // Start 5-minute auto-refresh for this profile
+        if (!autoRefreshTimers.has(profileId)) {
+            const timer = setInterval(() => {
+                useSchemaStore.getState().refreshDatabases(profileId);
+            }, AUTO_REFRESH_INTERVAL_MS);
+            autoRefreshTimers.set(profileId, timer);
+        }
+    },
 
-    removeConnection: (profileId) =>
+    removeConnection: (profileId) => {
+        // Stop auto-refresh timer
+        const timer = autoRefreshTimers.get(profileId);
+        if (timer) { clearInterval(timer); autoRefreshTimers.delete(profileId); }
+
         set((state) => {
             const next = { ...state };
             const cp = { ...next.connectedProfiles };
@@ -84,7 +99,8 @@ export const useSchemaStore = create<SchemaState>((set) => ({
             }
 
             return { connectedProfiles: cp, databases: dbs, tables, columns, errors };
-        }),
+        });
+    },
 
     setDatabases: (profileId, dbs) =>
         set((state) => ({

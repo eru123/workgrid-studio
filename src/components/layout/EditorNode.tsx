@@ -14,6 +14,8 @@ import {
   Loader2,
   Rows3,
   Circle,
+  Pin,
+  PinOff,
 } from "lucide-react";
 import { useSchemaStore } from "@/state/schemaStore";
 import { WelcomeTab } from "@/components/views/WelcomeTab";
@@ -124,27 +126,33 @@ const TabContent = memo(function TabContent({ tab, leafId }: { tab: EditorTab, l
   return <Suspense fallback={<TabLoadingFallback />}>{content}</Suspense>;
 });
 
+const TAB_TYPE_LABELS: Record<EditorTab["type"], string> = {
+  sql: "SQL Query (Ctrl+N)",
+  "database-view": "Database View",
+  "table-designer": "Table Designer",
+  "table-data": "Table Data",
+  models: "AI Models",
+  tasks: "Tasks",
+  settings: "Settings",
+};
+
 function tabIcon(type: EditorTab["type"], isActive: boolean) {
   const cls = cn(
     "w-3.5 h-3.5 shrink-0",
     isActive ? "text-primary" : "text-muted-foreground/60",
   );
+  const label = TAB_TYPE_LABELS[type] ?? type;
+  let icon;
   switch (type) {
-    case "sql":
-      return <Terminal className={cls} />;
-    case "database-view":
-      return <Database className={cls} />;
-    case "table-designer":
-      return <Table2 className={cls} />;
-    case "table-data":
-      return <Rows3 className={cls} />;
-    case "models":
-      return <Boxes className={cls} />;
-    case "tasks":
-      return <ListChecks className={cls} />;
-    default:
-      return <FileText className={cls} />;
+    case "sql":          icon = <Terminal className={cls} />; break;
+    case "database-view": icon = <Database className={cls} />; break;
+    case "table-designer": icon = <Table2 className={cls} />; break;
+    case "table-data":   icon = <Rows3 className={cls} />; break;
+    case "models":       icon = <Boxes className={cls} />; break;
+    case "tasks":        icon = <ListChecks className={cls} />; break;
+    default:             icon = <FileText className={cls} />;
   }
+  return <span title={label} className="shrink-0">{icon}</span>;
 }
 
 // Module-level state for drag payload to bypass WebView dataTransfer filtering robustly
@@ -163,6 +171,7 @@ export function EditorNode({ tree }: { tree: SplitTree }) {
   const setActiveTab = useLayoutStore((s) => s.setActiveTab);
   const moveTab = useLayoutStore((s) => s.moveTab);
   const updateTab = useLayoutStore((s) => s.updateTab);
+  const togglePinTab = useLayoutStore((s) => s.togglePinTab);
   const connectedProfiles = useSchemaStore((s) => s.connectedProfiles);
   const activeLeafId = useLayoutStore((s) => s.activeLeafId);
   const isSplit = useLayoutStore((s) => s.editorTree.type !== "leaf");
@@ -376,29 +385,47 @@ export function EditorNode({ tree }: { tree: SplitTree }) {
                       {tab.title}
                     </span>
                   )}
+                  {/* Pin button — visible on hover or when pinned */}
                   <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (tab.dirty && !window.confirm("You have unsaved changes. Are you sure you want to close this tab?")) {
-                        return;
-                      }
-                      closeTab(tab.id, tree.id);
-                    }}
+                    onClick={(e) => { e.stopPropagation(); togglePinTab(tab.id, tree.id); }}
                     className={cn(
-                      "ml-0.5 p-0.5 rounded hover:bg-muted/80 transition-opacity group/close",
-                      tab.dirty ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+                      "ml-0.5 p-0.5 rounded hover:bg-muted/80 transition-opacity",
+                      tab.pinned ? "opacity-100 text-primary" : "opacity-0 group-hover:opacity-60"
                     )}
-                    aria-label="Close tab"
+                    aria-label={tab.pinned ? "Unpin tab" : "Pin tab"}
+                    title={tab.pinned ? "Unpin tab" : "Pin tab"}
                   >
-                    {tab.dirty ? (
-                      <>
-                        <Circle className="w-2 h-2 fill-current opacity-80 group-hover/close:hidden" />
-                        <X className="w-3 h-3 hidden group-hover/close:block" />
-                      </>
-                    ) : (
-                      <X className="w-3 h-3" />
-                    )}
+                    {tab.pinned
+                      ? <Pin className="w-2.5 h-2.5" />
+                      : <PinOff className="w-2.5 h-2.5" />
+                    }
                   </button>
+                  {/* Close button — hidden for pinned tabs */}
+                  {!tab.pinned && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (tab.dirty && !window.confirm("You have unsaved changes. Are you sure you want to close this tab?")) {
+                          return;
+                        }
+                        closeTab(tab.id, tree.id);
+                      }}
+                      className={cn(
+                        "ml-0.5 p-0.5 rounded hover:bg-muted/80 transition-opacity group/close",
+                        tab.dirty ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+                      )}
+                      aria-label="Close tab"
+                    >
+                      {tab.dirty ? (
+                        <>
+                          <Circle className="w-2 h-2 fill-current opacity-80 group-hover/close:hidden" />
+                          <X className="w-3 h-3 hidden group-hover/close:block" />
+                        </>
+                      ) : (
+                        <X className="w-3 h-3" />
+                      )}
+                    </button>
+                  )}
                 </div>
               );
             })}
@@ -462,10 +489,25 @@ export function EditorNode({ tree }: { tree: SplitTree }) {
               left: contextMenu.x,
             }}
           >
+            {/* Pin / Unpin */}
+            <button
+              className="w-full text-left px-2 py-1.5 hover:bg-accent rounded text-foreground flex items-center gap-2"
+              onClick={() => {
+                togglePinTab(contextMenu.tabId, tree.id);
+                setContextMenu(null);
+              }}
+            >
+              {tree.tabs.find(t => t.id === contextMenu.tabId)?.pinned
+                ? <><PinOff className="w-3 h-3" /> Unpin Tab</>
+                : <><Pin className="w-3 h-3" /> Pin Tab</>
+              }
+            </button>
+            <div className="h-px bg-border my-1" />
             <button
               className="w-full text-left px-2 py-1.5 hover:bg-accent rounded text-foreground flex justify-between items-center"
               onClick={() => {
                 const tab = tree.tabs.find(t => t.id === contextMenu.tabId);
+                if (tab?.pinned) { setContextMenu(null); return; }
                 if (tab?.dirty && !window.confirm("You have unsaved changes. Are you sure you want to close this tab?")) {
                   setContextMenu(null);
                   return;
