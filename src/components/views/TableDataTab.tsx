@@ -349,6 +349,9 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
   const [findMatches, setFindMatches] = useState<{ rowIdx: number; colName: string }[]>([]);
   const [currentMatchIdx, setCurrentMatchIdx] = useState(0);
 
+  // ── Column widths (resizing) ─────────────────────────────
+  const [colWidths, setColWidths] = useState<Record<string, number>>({});
+
   // ── Cell selection & context menu ──────────────────────
   const [selectedCellKey, setSelectedCellKey] = useState<string | null>(null);
   const [cellContextMenu, setCellContextMenu] = useState<{
@@ -1213,6 +1216,8 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
                       setColumnFilters(prev => ({ ...prev, [col]: val }));
                       setPage(0);
                     }}
+                    width={colWidths[col]}
+                    onResize={(w) => setColWidths(prev => ({ ...prev, [col]: w }))}
                   />
                 );
               })}
