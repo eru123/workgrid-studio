@@ -261,7 +261,7 @@ fn establish_ssh_tunnel(pid: &str, params: &ConnectParams) -> Result<u16, String
         // the implementation would require a known_hosts management system.
         // We'll proceed with the handshake key.
         if let Some(host_key) = sess.host_key() {
-            log_info(pid, &format!("SSH Host Key ({}): {:?}", host_key.0, host_key.1));
+            log_info(pid, &format!("SSH Host Key ({:?}): {:?}", host_key.1, host_key.0));
         }
     }
 
@@ -270,7 +270,7 @@ fn establish_ssh_tunnel(pid: &str, params: &ConnectParams) -> Result<u16, String
         sess.set_compress(true);
     }
     if params.ssh_keep_alive_interval > 0 {
-        sess.set_keepalive(params.ssh_keep_alive_interval);
+        sess.set_keepalive(true, params.ssh_keep_alive_interval);
     }
 
     // Authenticate
@@ -373,37 +373,33 @@ async fn db_connect(
 
     // Encrypt password if not already encrypted
     if !params.password.starts_with("wkgrd:") && !params.password.is_empty() {
-        let key = state.get_encryption_key();
-        params.password = encrypt_password(&params.password, &key)?;
+        params.password = encrypt_password(params.password.clone())?;
     }
     
     // Encrypt SSH password/passphrase if needed
     if params.ssh {
         if let Some(ssh_pass) = params.ssh_password.as_mut() {
             if !ssh_pass.starts_with("wkgrd:") && !ssh_pass.is_empty() {
-                let key = state.get_encryption_key();
-                *ssh_pass = encrypt_password(ssh_pass, &key)?;
+                *ssh_pass = encrypt_password(ssh_pass.clone())?;
             }
         }
         if let Some(ssh_passphrase) = params.ssh_passphrase.as_mut() {
             if !ssh_passphrase.starts_with("wkgrd:") && !ssh_passphrase.is_empty() {
-                let key = state.get_encryption_key();
-                *ssh_passphrase = encrypt_password(ssh_passphrase, &key)?;
+                *ssh_passphrase = encrypt_password(ssh_passphrase.clone())?;
             }
         }
     }
 
     // Decrypt passwords for the actual connection
     let mut conn_params = params.clone();
-    let key = state.get_encryption_key();
-    conn_params.password = decrypt_password(&params.password, &key)?;
+    conn_params.password = decrypt_password(params.password.clone())?;
     
     if params.ssh {
         if let Some(ssh_pass) = conn_params.ssh_password.as_mut() {
-            *ssh_pass = decrypt_password(ssh_pass, &key)?;
+            *ssh_pass = decrypt_password(ssh_pass.clone())?;
         }
         if let Some(ssh_passphrase) = conn_params.ssh_passphrase.as_mut() {
-            *ssh_passphrase = decrypt_password(ssh_passphrase, &key)?;
+            *ssh_passphrase = decrypt_password(ssh_passphrase.clone())?;
         }
         
         // Establish SSH Tunnel
