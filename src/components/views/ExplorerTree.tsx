@@ -993,6 +993,7 @@ function ProfileNode({
               database={db}
               expanded={expanded}
               toggle={toggle}
+              dbFilter={dbFilter}
               tableFilter={tableFilter}
               onSelectDatabase={onSelectDatabase}
               selectedDatabases={selectedDatabases}
@@ -1014,6 +1015,7 @@ function DatabaseNode({
   database,
   expanded,
   toggle,
+  dbFilter,
   tableFilter,
   onSelectDatabase,
   selectedDatabases,
@@ -1025,6 +1027,7 @@ function DatabaseNode({
   database: string;
   expanded: ExpandedSet;
   toggle: (key: string) => void;
+  dbFilter: string;
   tableFilter: string;
   onSelectDatabase: (cacheKey: string, multi: boolean) => void;
   selectedDatabases: Set<string>;
@@ -1114,6 +1117,7 @@ function DatabaseNode({
         icon={<Database className="w-3.5 h-3.5 text-yellow-500/80" />}
         label={database}
         badge={filteredTables ? String(filteredTables.length) : undefined}
+        highlight={dbFilter}
       />
 
       {isOpen && (
@@ -1144,6 +1148,7 @@ function DatabaseNode({
               table={table}
               expanded={expanded}
               toggle={toggle}
+              tableFilter={tableFilter}
               onContextMenu={(e) => onContextMenuTable(e, database, table)}
             />
           ))}
@@ -1161,6 +1166,7 @@ function TableNode({
   table,
   expanded,
   toggle,
+  tableFilter,
   onContextMenu,
 }: {
   profileId: string;
@@ -1168,6 +1174,7 @@ function TableNode({
   table: string;
   expanded: ExpandedSet;
   toggle: (key: string) => void;
+  tableFilter: string;
   onContextMenu: (e: React.MouseEvent) => void;
 }) {
   const cacheKey = `${profileId}::${database}::${table}`;
@@ -1222,6 +1229,7 @@ function TableNode({
         icon={<Table2 className="w-3.5 h-3.5 text-blue-400/80" />}
         label={table}
         badge={columns ? String(columns.length) : undefined}
+        highlight={tableFilter}
       />
 
       {isOpen && (
@@ -1260,6 +1268,7 @@ function TableNode({
                 )
               }
               label={col.name}
+              highlight={tableFilter}
               suffix={
                 <span className="text-[10px] text-muted-foreground/50 ml-1 font-mono truncate">
                   {col.col_type}
@@ -1270,6 +1279,35 @@ function TableNode({
             />
           ))}
         </>
+      )}
+    </>
+  );
+}
+
+// ─── Highlight matching text in a label ────────────────────────────────
+
+function HighlightedLabel({ label, query }: { label: string; query: string }) {
+  if (!query.trim()) return <>{label}</>;
+  let re: RegExp;
+  try {
+    re = new RegExp(`(${query})`, "gi");
+  } catch {
+    return <>{label}</>;
+  }
+  const parts = label.split(re);
+  return (
+    <>
+      {parts.map((part, i) =>
+        i % 2 === 1 ? (
+          <mark
+            key={i}
+            className="bg-yellow-400/40 text-foreground rounded-[2px] not-italic"
+          >
+            {part}
+          </mark>
+        ) : (
+          <span key={i}>{part}</span>
+        ),
       )}
     </>
   );
@@ -1291,6 +1329,7 @@ const TreeRow = memo(function TreeRow({
   bold,
   muted,
   selected,
+  highlight,
 }: {
   depth: number;
   isOpen?: boolean;
@@ -1305,6 +1344,7 @@ const TreeRow = memo(function TreeRow({
   bold?: boolean;
   muted?: boolean;
   selected?: boolean;
+  highlight?: string;
 }) {
   const isFolder = isOpen !== undefined;
 
@@ -1351,7 +1391,13 @@ const TreeRow = memo(function TreeRow({
           {icon}
         </span>
 
-        <span className="truncate">{label}</span>
+        <span className="truncate">
+          {highlight ? (
+            <HighlightedLabel label={label} query={highlight} />
+          ) : (
+            label
+          )}
+        </span>
 
         {suffix}
       </span>
