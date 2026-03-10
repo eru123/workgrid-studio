@@ -112,14 +112,23 @@ export function ExplorerTree() {
 
   if (connectedList.length === 0) {
     return (
-      <div className="p-6 text-center mt-6">
-        <Server className="w-10 h-10 text-muted-foreground/20 mx-auto mb-3" />
-        <p className="text-xs text-muted-foreground mb-1 font-medium">
-          No active connections
-        </p>
-        <p className="text-[10px] text-muted-foreground/60 mb-4">
-          Connect to a server to browse databases and tables.
-        </p>
+      <div className="flex flex-col items-center justify-center p-6 pt-10 text-center select-none gap-3">
+        {/* Illustration */}
+        <div className="relative w-16 h-16 mx-auto">
+          <div className="absolute inset-0 rounded-2xl bg-muted/40 border border-border/30" />
+          <Server className="absolute inset-0 m-auto w-8 h-8 text-muted-foreground/25" />
+          <div className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center">
+            <Plus className="w-3.5 h-3.5 text-primary/60" />
+          </div>
+        </div>
+        <div>
+          <p className="text-xs font-semibold text-foreground/70 mb-1">
+            No active connections
+          </p>
+          <p className="text-[10px] text-muted-foreground/60 leading-relaxed max-w-[160px]">
+            Connect to a MySQL or MariaDB server to start exploring.
+          </p>
+        </div>
         <button
           onClick={() => setActiveView("servers")}
           className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"

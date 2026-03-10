@@ -2037,11 +2037,16 @@ export function QueryTab({
           </div>
         ) : !running && !error ? (
           /* Never run yet */
-          <div className="flex-1 flex items-center justify-center text-muted-foreground/30">
-            <div className="text-center">
-              <AlertCircle className="w-6 h-6 mx-auto mb-2 opacity-30" />
-              <div>Run a query to see results here</div>
-              <div className="text-[10px] mt-1">Ctrl+Enter or F5</div>
+          <div className="flex-1 flex items-center justify-center select-none">
+            <div className="text-center flex flex-col items-center gap-3">
+              <div className="relative w-14 h-14">
+                <div className="absolute inset-0 rounded-xl bg-muted/40 border border-border/30" />
+                <Play className="absolute inset-0 m-auto w-6 h-6 text-muted-foreground/25" />
+              </div>
+              <div>
+                <p className="text-xs font-medium text-foreground/40">Run a query to see results</p>
+                <p className="text-[10px] text-muted-foreground/30 mt-0.5">Ctrl+Enter or F5</p>
+              </div>
             </div>
           </div>
         ) : null

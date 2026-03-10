@@ -90,11 +90,20 @@ export function ServersSidebar() {
         {!isLoaded ? (
           <ProfileListSkeleton />
         ) : profiles.length === 0 ? (
-          <div className="p-6 text-center mt-10">
-            <Server className="w-10 h-10 text-muted-foreground/30 mx-auto mb-3" />
-            <p className="text-xs text-muted-foreground mb-4">
-              No connections yet
-            </p>
+          <div className="flex flex-col items-center justify-center p-6 pt-10 text-center select-none gap-3">
+            <div className="relative w-16 h-16 mx-auto">
+              <div className="absolute inset-0 rounded-2xl bg-muted/40 border border-border/30" />
+              <Server className="absolute inset-0 m-auto w-8 h-8 text-muted-foreground/25" />
+              <div className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center">
+                <Plus className="w-3.5 h-3.5 text-primary/60" />
+              </div>
+            </div>
+            <div>
+              <p className="text-xs font-semibold text-foreground/70 mb-1">No connections yet</p>
+              <p className="text-[10px] text-muted-foreground/60 leading-relaxed max-w-[160px]">
+                Add your first database connection to get started.
+              </p>
+            </div>
             <button
               onClick={handleCreate}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded bg-primary text-primary-foreground hover:bg-primary/90"
