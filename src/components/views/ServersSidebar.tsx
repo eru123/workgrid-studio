@@ -7,6 +7,8 @@ import {
   DB_TYPE_DEFAULT_PORTS,
 } from "@/state/profilesStore";
 import { useProfileManager } from "@/hooks/useProfileManager";
+import { useProfilesStore } from "@/state/profilesStore";
+import { ProfileListSkeleton } from "@/components/ui/Skeleton";
 import { cn } from "@/lib/utils/cn";
 import {
   Plus,
@@ -32,6 +34,7 @@ const DB_ICONS: Record<DatabaseType, React.ElementType> = {
 };
 
 export function ServersSidebar() {
+  const isLoaded = useProfilesStore((s) => s._loaded);
   const {
     profiles,
     viewMode,
@@ -84,7 +87,9 @@ export function ServersSidebar() {
 
       {/* List View */}
       <div className="flex-1 overflow-y-auto w-full p-2 space-y-1">
-        {profiles.length === 0 ? (
+        {!isLoaded ? (
+          <ProfileListSkeleton />
+        ) : profiles.length === 0 ? (
           <div className="p-6 text-center mt-10">
             <Server className="w-10 h-10 text-muted-foreground/30 mx-auto mb-3" />
             <p className="text-xs text-muted-foreground mb-4">
