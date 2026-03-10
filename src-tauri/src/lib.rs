@@ -1754,11 +1754,6 @@ fn decrypt_password(encrypted: String) -> Result<String, String> {
     }
 }
 
-#[tauri::command]
-fn greet(name: &str) -> String {
-    format!("Hello, {}! You've been greeted from Rust!", name)
-}
-
 fn split_sql_statements(sql: &str) -> Vec<String> {
     let mut stmts = Vec::new();
     let mut current = String::new();
@@ -1908,7 +1903,6 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .manage(DbState::new())
         .invoke_handler(tauri::generate_handler![
-            greet,
             app_read_file,
             app_write_file,
             app_delete_file,
