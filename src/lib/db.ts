@@ -257,3 +257,13 @@ export async function getAiLogs(): Promise<AiLogEntry[]> {
 export async function clearAiLogs(): Promise<void> {
     return invoke<void>("clear_ai_logs");
 }
+
+// ─── Data Import ───────────────────────────────────────────────────
+
+export async function dbImportSql(profileId: string, database: string, filePath: string): Promise<string> {
+    return invoke<string>("db_import_sql", { profileId, database, filePath });
+}
+
+export async function dbImportCsv(profileId: string, database: string, table: string, filePath: string): Promise<string> {
+    return invoke<string>("db_import_csv", { profileId, database, table, filePath });
+}

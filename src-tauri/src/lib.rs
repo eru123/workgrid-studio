@@ -1801,6 +1801,103 @@ fn split_sql_statements(sql: &str) -> Vec<String> {
     stmts
 }
 
+#[tauri::command]
+async fn db_import_sql(
+    state: State<'_, DbState>,
+    profile_id: String,
+    database: String,
+    file_path: String,
+) -> Result<String, String> {
+    let pool = get_pool(&state, &profile_id)?;
+    let mut conn = pool.get_conn().await.map_err(|e| format!("Connection error: {}", e))?;
+
+    // Switch to target DB if provided
+    if !database.is_empty() {
+        conn.query_drop(format!("USE `{}`", database.replace("`", "``")))
+            .await
+            .map_err(|e| format!("USE database error: {}", e))?;
+    }
+
+    let sql_content = std::fs::read_to_string(&file_path)
+        .map_err(|e| format!("Failed to read SQL file: {}", e))?;
+
+    // Borrow parse code from split_sql_statements to execute iteratively
+    let stmts = split_sql_statements(&sql_content);
+    let total = stmts.len();
+    let mut executed = 0;
+
+    for stmt in stmts {
+        if let Err(e) = conn.query_drop(&stmt).await {
+            log_error(&profile_id, &format!("SQL execution error at stmt {}: {}", executed + 1, e));
+            return Err(format!("Execution failed at statement {}: {}", executed + 1, e));
+        }
+        executed += 1;
+    }
+
+    Ok(format!("Successfully imported {} statements.", total))
+}
+
+#[tauri::command]
+async fn db_import_csv(
+    state: State<'_, DbState>,
+    profile_id: String,
+    database: String,
+    table: String,
+    file_path: String,
+) -> Result<String, String> {
+    let pool = get_pool(&state, &profile_id)?;
+    let mut conn = pool.get_conn().await.map_err(|e| format!("Connection error: {}", e))?;
+
+    if !database.is_empty() {
+        conn.query_drop(format!("USE `{}`", database.replace("`", "``")))
+            .await
+            .map_err(|e| format!("USE database error: {}", e))?;
+    }
+
+    let mut rdr = csv::ReaderBuilder::new().from_path(&file_path)
+        .map_err(|e| format!("Failed to read CSV file: {}", e))?;
+    
+    let headers = rdr.headers().map_err(|e| format!("Failed to read headers: {}", e))?.clone();
+    let cols: Vec<String> = headers.iter().map(|h| format!("`{}`", h.replace("`", "``"))).collect();
+    let safe_table = format!("`{}`", table.replace("`", "``"));
+    let mut total_rows = 0;
+
+    // Use prepared statements for batched insertion
+    let mut batch = Vec::new();
+    let batch_size = 500;
+    
+    // Convert to placeholders e.g `(?, ?, ?)`
+    let placeholders = format!("({})", vec!["?"; cols.len()].join(", "));
+    let base_query = format!("INSERT INTO {} ({}) VALUES {}", safe_table, cols.join(", "), placeholders);
+
+    let stmt = conn.prep(&base_query).await.map_err(|e| format!("Prepare failed: {}", e))?;
+    
+    for result in rdr.records() {
+        let record = result.map_err(|e| format!("Failed to parse row: {}", e))?;
+        let values: Vec<mysql_async::Value> = record.iter().map(|v| match v {
+            "" => mysql_async::Value::NULL,
+            s => mysql_async::Value::Bytes(s.as_bytes().to_vec()),
+        }).collect();
+        
+        batch.push(values);
+        total_rows += 1;
+
+        if batch.len() >= batch_size {
+            conn.exec_batch(&stmt, batch.drain(..))
+                .await
+                .map_err(|e| format!("Batch insert failed at row {}: {}", total_rows, e))?;
+        }
+    }
+
+    if !batch.is_empty() {
+        conn.exec_batch(&stmt, batch)
+            .await
+            .map_err(|e| format!("Final batch insert failed: {}", e))?;
+    }
+
+    Ok(format!("Successfully imported {} rows to {}.", total_rows, table))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let _ = ensure_app_dirs();
@@ -1838,11 +1935,12 @@ pub fn run() {
             vault_delete,
             ai_generate_query,
             get_ai_logs,
-            clear_ai_logs,
             db_get_schema_ddl,
             encrypt_password,
             decrypt_password,
-            db_ping
+            db_ping,
+            db_import_sql,
+            db_import_csv
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

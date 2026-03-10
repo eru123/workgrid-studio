@@ -12,8 +12,12 @@ import {
   dbListColumns,
   dbDisconnect,
   dbExecuteQuery,
+  dbImportCsv,
+  dbImportSql,
 } from "@/lib/db";
 import { cn } from "@/lib/utils/cn";
+import { useAppStore } from "@/state/appStore";
+import { open } from "@tauri-apps/plugin-dialog";
 import {
   Database,
   Table2,
@@ -40,6 +44,7 @@ import {
   Plus,
   TableProperties,
   Rows3,
+  Import,
 } from "lucide-react";
 import { SiPostgresql, SiMysql, SiSqlite, SiMariadb } from "react-icons/si";
 
@@ -608,6 +613,38 @@ export function ExplorerTree() {
                       Refresh
                     </button>
                     <div className="h-px bg-border my-1 mx-1" />
+                    <button
+                      className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2"
+                      onClick={async () => {
+                        setContextMenu(null);
+                        const file = await open({
+                           multiple: false,
+                           filters: [{ name: 'SQL Script', extensions: ['sql'] }]
+                        });
+                        if (file) {
+                          useAppStore.getState().addToast({
+                            title: "Importing...",
+                            description: "Executing SQL file in background.",
+                          });
+                          try {
+                            const res = await dbImportSql(profileId, targetDbs[0], Array.isArray(file) ? file[0] : file);
+                            useAppStore.getState().addToast({
+                              title: "Import Success",
+                              description: res
+                            });
+                          } catch (err: any) {
+                            useAppStore.getState().addToast({
+                              title: "Import Failed",
+                              description: String(err),
+                              variant: "destructive"
+                            });
+                          }
+                        }
+                      }}
+                    >
+                      <Import className="w-3.5 h-3.5 text-muted-foreground" />{" "}
+                      Import SQL File...
+                    </button>
                     <ContextSubmenu
                       label="Create"
                       icon={
@@ -769,6 +806,38 @@ export function ExplorerTree() {
                 >
                   <Pencil className="w-3.5 h-3.5 text-muted-foreground" /> Edit
                   Table
+                </button>
+                <div className="h-px bg-border my-1 mx-1" />
+                <button
+                  className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2"
+                  onClick={async () => {
+                    setContextMenu(null);
+                    const file = await open({
+                       multiple: false,
+                       filters: [{ name: 'CSV File', extensions: ['csv'] }]
+                    });
+                    if (file) {
+                      useAppStore.getState().addToast({
+                        title: "Importing...",
+                        description: "Importing CSV data in background.",
+                      });
+                      try {
+                        const res = await dbImportCsv(profileId, targetDb, targetTable, Array.isArray(file) ? file[0] : file);
+                        useAppStore.getState().addToast({
+                          title: "Import Success",
+                          description: res
+                        });
+                      } catch (err: any) {
+                        useAppStore.getState().addToast({
+                          title: "Import Failed",
+                          description: String(err),
+                          variant: "destructive"
+                        });
+                      }
+                    }
+                  }}
+                >
+                  <Import className="w-3.5 h-3.5 text-muted-foreground" /> Import CSV...
                 </button>
               </div>
             );

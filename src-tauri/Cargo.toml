@@ -28,3 +28,4 @@ base64 = "0.22"
 uuid = { version = "1.22.0", features = ["v4"] }
 chrono = "0.4.44"
 ssh2 = "0.9"
+csv = "1.4.0"
