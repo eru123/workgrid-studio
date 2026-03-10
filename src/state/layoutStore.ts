@@ -49,6 +49,8 @@ interface LayoutState {
   isPrimarySidebarVisible: boolean;
   isSecondarySidebarVisible: boolean;
   isBottomPanelVisible: boolean;
+  isBottomPanelSplit: boolean;
+  bottomPanelSplitRatio: number;
 
   activeView: ActivityView;
   editorTree: SplitTree;
@@ -62,6 +64,8 @@ interface LayoutState {
   adjustPanelHeight: (delta: number) => void;
   toggleSidebar: () => void;
   togglePanel: () => void;
+  toggleBottomPanelSplit: () => void;
+  setBottomPanelSplitRatio: (ratio: number) => void;
   toggleSecondarySidebar: () => void;
   adjustSecondarySidebarWidth: (delta: number) => void;
 
@@ -118,6 +122,8 @@ export const useLayoutStore = create<LayoutState>((set) => ({
   isPrimarySidebarVisible: true,
   isSecondarySidebarVisible: false,
   isBottomPanelVisible: true,
+  isBottomPanelSplit: false,
+  bottomPanelSplitRatio: 0.5,
 
   activeView: "servers",
   editorTree: {
@@ -165,6 +171,10 @@ export const useLayoutStore = create<LayoutState>((set) => ({
     })),
   togglePanel: () =>
     set((state) => ({ isBottomPanelVisible: !state.isBottomPanelVisible })),
+  toggleBottomPanelSplit: () =>
+    set((state) => ({ isBottomPanelSplit: !state.isBottomPanelSplit })),
+  setBottomPanelSplitRatio: (ratio) =>
+    set({ bottomPanelSplitRatio: Math.max(0.1, Math.min(ratio, 0.9)) }),
   toggleSecondarySidebar: () =>
     set((state) => ({ isSecondarySidebarVisible: !state.isSecondarySidebarVisible })),
   adjustSecondarySidebarWidth: (delta) =>

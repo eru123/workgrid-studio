@@ -23,6 +23,8 @@ import {
   Trash2,
   RefreshCw,
   Sparkles,
+  Columns2,
+  ArrowDownToLine,
 } from "lucide-react";
 import { ServersSidebar } from "@/components/views/ServersSidebar";
 import { AiChatSidebar } from "@/components/views/AiChatSidebar";
@@ -44,6 +46,9 @@ export function Workbench() {
     (s) => s.isPrimarySidebarVisible,
   );
   const isBottomPanelVisible = useLayoutStore((s) => s.isBottomPanelVisible);
+  const isBottomPanelSplit = useLayoutStore((s) => s.isBottomPanelSplit);
+  const bottomPanelSplitRatio = useLayoutStore((s) => s.bottomPanelSplitRatio);
+  const setBottomPanelSplitRatio = useLayoutStore((s) => s.setBottomPanelSplitRatio);
   const bottomPanelHeight = useLayoutStore((s) => s.bottomPanelHeight);
   const activeView = useLayoutStore((s) => s.activeView);
   const editorTree = useLayoutStore((s) => s.editorTree);
@@ -57,6 +62,19 @@ export function Workbench() {
   const secondarySidebarWidth = useLayoutStore((s) => s.secondarySidebarWidth);
   const toggleSecondarySidebar = useLayoutStore((s) => s.toggleSecondarySidebar);
   const adjustSecondarySidebarWidth = useLayoutStore((s) => s.adjustSecondarySidebarWidth);
+  const bottomPanelRef = useRef<HTMLDivElement>(null);
+
+  const handleBottomPanelSplitDrag = useCallback(
+    (delta: number) => {
+      if (!bottomPanelRef.current) return;
+      const width = bottomPanelRef.current.clientWidth;
+      if (width === 0) return;
+      const currentWidth = width * bottomPanelSplitRatio;
+      const newWidth = currentWidth + delta;
+      setBottomPanelSplitRatio(newWidth / width);
+    },
+    [bottomPanelSplitRatio, setBottomPanelSplitRatio]
+  );
 
   // Theme Toggle Logic
   const globalPrefs = useProfilesStore((s) => s.globalPreferences);
@@ -271,7 +289,8 @@ export function Workbench() {
         {/* Bottom Panel */}
         {isBottomPanelVisible && (
           <div
-            className="relative bg-muted/10 border-t flex flex-col"
+            ref={bottomPanelRef}
+            className="relative bg-muted/10 border-t flex flex-row"
             style={{ height: bottomPanelHeight }}
           >
             <Sash
@@ -279,7 +298,28 @@ export function Workbench() {
               className="top-0 -translate-y-0.5"
               onDrag={(delta) => adjustPanelHeight(-delta)}
             />
-            <BottomPanel />
+            {isBottomPanelSplit ? (
+              <>
+                <div
+                  className="relative flex flex-col min-w-0"
+                  style={{ width: `${bottomPanelSplitRatio * 100}%` }}
+                >
+                  <BottomPanel />
+                  <Sash
+                    direction="vertical"
+                    className="right-0 translate-x-0.5"
+                    onDrag={handleBottomPanelSplitDrag}
+                  />
+                </div>
+                <div className="relative flex flex-col flex-1 min-w-0 border-l">
+                  <BottomPanel isSecondary />
+                </div>
+              </>
+            ) : (
+              <div className="flex-1 flex flex-col min-w-0 relative">
+                <BottomPanel />
+              </div>
+            )}
           </div>
         )}
 
@@ -354,19 +394,23 @@ function parseProblems(
     });
 }
 
-function BottomPanel() {
+function BottomPanel({ isSecondary }: { isSecondary?: boolean }) {
   const profiles = useProfilesStore((s) => s.profiles);
   const connectedProfiles = profiles.filter(
     (p) => p.connectionStatus === "connected",
   );
 
-  const [activeTab, setActiveTab] = useState<PanelTab>("output");
+  const isBottomPanelSplit = useLayoutStore((s) => s.isBottomPanelSplit);
+  const toggleBottomPanelSplit = useLayoutStore((s) => s.toggleBottomPanelSplit);
+
+  const [activeTab, setActiveTab] = useState<PanelTab>(isSecondary ? "logs" : "output");
   const [logFilter, setLogFilter] = useState<LogFilter>("mysql");
   const [selectedProfileId, setSelectedProfileId] = useState<string>("");
   const [logContent, setLogContent] = useState<string>("");
   const [problems, setProblems] = useState<ProblemItem[]>([]);
   const [aiLogs, setAiLogs] = useState<AiLogEntry[]>([]);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [autoScroll, setAutoScroll] = useState(true);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // Auto-select first connected profile
@@ -466,10 +510,10 @@ function BottomPanel() {
 
   // Auto-scroll to bottom when log content changes
   useEffect(() => {
-    if (scrollRef.current && activeTab === "logs") {
+    if (scrollRef.current && (activeTab === "logs" || activeTab === "ailogs") && autoScroll) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [logContent, activeTab]);
+  }, [logContent, aiLogs, activeTab, autoScroll]);
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
@@ -632,6 +676,52 @@ function BottomPanel() {
               }
             >
               <Trash2 className="w-3.5 h-3.5" />
+            </button>
+            
+            {/* Auto Scroll Toggle */}
+            {(activeTab === "logs" || activeTab === "ailogs") && (
+              <button
+                onClick={() => setAutoScroll(!autoScroll)}
+                className={cn(
+                  "p-1 transition-colors relative",
+                  autoScroll ? "text-primary hover:text-primary/80" : "text-muted-foreground hover:text-foreground"
+                )}
+                title="Toggle Auto-Scroll"
+              >
+                <ArrowDownToLine className="w-3.5 h-3.5" />
+                {autoScroll && (
+                  <span className="absolute bottom-1 right-1 w-1.5 h-1.5 bg-primary rounded-full shadow-sm shadow-foreground/20" />
+                )}
+              </button>
+            )}
+
+            {/* Split Panel Toggle */}
+            <button
+              onClick={toggleBottomPanelSplit}
+              className={cn(
+                "p-1 transition-colors",
+                isBottomPanelSplit && !isSecondary ? "text-primary hover:text-primary/80" : "text-muted-foreground hover:text-foreground"
+              )}
+              title={isBottomPanelSplit && !isSecondary ? "Close Split View" : "Split View"}
+            >
+              <Columns2 className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
+        
+        {/* If right-side controls aren't rendered, we still need the split button far right for 'output' tab */}
+        {!(activeTab === "logs" || activeTab === "problems" || activeTab === "ailogs") && (
+          <div className="ml-auto flex items-center gap-2">
+            {/* Split Panel Toggle */}
+            <button
+              onClick={toggleBottomPanelSplit}
+              className={cn(
+                "p-1 transition-colors",
+                isBottomPanelSplit && !isSecondary ? "text-primary hover:text-primary/80" : "text-muted-foreground hover:text-foreground"
+              )}
+              title={isBottomPanelSplit && !isSecondary ? "Close Split View" : "Split View"}
+            >
+              <Columns2 className="w-3.5 h-3.5" />
             </button>
           </div>
         )}
