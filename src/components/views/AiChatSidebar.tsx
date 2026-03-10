@@ -3,7 +3,7 @@ import { useLayoutStore } from "@/state/layoutStore";
 import { useModelsStore } from "@/state/modelsStore";
 import { useSchemaStore } from "@/state/schemaStore";
 import { useProfilesStore } from "@/state/profilesStore";
-import { aiGenerateQuery, dbGetSchemaDdl, vaultGet } from "@/lib/db";
+import { aiGenerateQuery, dbGetSchemaDdl } from "@/lib/db";
 import { cn } from "@/lib/utils/cn";
 import { Send, Loader2, Sparkles, Copy, ExternalLink, Trash2, ChevronDown } from "lucide-react";
 
@@ -38,7 +38,7 @@ export function AiChatSidebar() {
     // Model selection
     const providers = useModelsStore((s) => s.providers);
     const allModels = providers.flatMap((p) =>
-        p.models.map((m) => ({ providerId: p.id, providerName: p.name, providerType: p.type, baseUrl: p.baseUrl, modelId: m.id, modelName: m.name }))
+        p.models.map((m) => ({ providerId: p.id, providerName: p.name, providerType: p.type, baseUrl: p.baseUrl, apiKeyRef: p.apiKeyRef, modelId: m.id, modelName: m.name }))
     );
     const [selectedModelKey, setSelectedModelKey] = useState("");
 
@@ -105,12 +105,10 @@ export function AiChatSidebar() {
                 }
             }
 
-            const apiKey = await vaultGet(`ai_key_${activeModel.providerId}`);
-
             const result = await aiGenerateQuery(
                 activeModel.providerType,
                 activeModel.baseUrl || null,
-                apiKey,
+                activeModel.apiKeyRef || "",
                 activeModel.modelId,
                 input.trim(),
                 schemaContext,
