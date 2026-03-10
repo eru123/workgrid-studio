@@ -16,7 +16,7 @@ pub struct TunnelHandle {
 }
 
 use mysql_async::prelude::*;
-use mysql_async::{Opts, Conn, OptsBuilder, Pool, SslOpts};
+use mysql_async::{Opts, Conn, OptsBuilder, Pool, SslOpts, PoolOpts, PoolConstraints};
 use serde::{Deserialize, Serialize};
 
 // Crypto & HTTP imports
@@ -511,7 +511,9 @@ async fn db_connect(
     }
 
     let opts: Opts = builder.into();
-    let pool = Pool::new(opts);
+    let pool_opts = PoolOpts::new()
+        .with_constraints(PoolConstraints::new(0, 5).unwrap());
+    let pool = Pool::new_manual(pool_opts, opts);
 
     match pool.get_conn().await {
         Ok(conn) => {
@@ -546,16 +548,21 @@ async fn db_disconnect(
 ) -> Result<String, String> {
     log_info(&profile_id, "Disconnecting...");
 
-    let mut pools = state.pools.lock().map_err(|e| {
-        let msg = format!("Lock error: {}", e);
-        log_error(&profile_id, &msg);
-        msg
-    })?;
+    // Remove the pool while holding the lock, then drop the lock before awaiting disconnect.
+    // Holding a std::sync::Mutex guard across an .await point would block the thread.
+    let pool = {
+        let mut pools = state.pools.lock().map_err(|e| {
+            let msg = format!("Lock error: {}", e);
+            log_error(&profile_id, &msg);
+            msg
+        })?;
+        pools.remove(&profile_id)
+    }; // lock released here
 
-    if let Some(pool) = pools.remove(&profile_id) {
-        let _ = pool.disconnect();
+    if let Some(pool) = pool {
+        let _ = pool.disconnect().await;
     }
-    
+
     let mut tunnels = state.tunnels.lock().map_err(|e| e.to_string())?;
     if let Some(handle) = tunnels.remove(&profile_id) {
         handle.shutdown.store(true, Ordering::Relaxed);
