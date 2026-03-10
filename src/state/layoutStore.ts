@@ -1,4 +1,24 @@
 import { create } from "zustand";
+import { readData, writeData } from "@/lib/storage";
+
+const LAYOUT_PREFS_FILE = "layout-prefs.json";
+
+interface LayoutPrefs {
+  primarySidebarWidth: number;
+  secondarySidebarWidth: number;
+  bottomPanelHeight: number;
+  isPrimarySidebarVisible: boolean;
+  isSecondarySidebarVisible: boolean;
+  isBottomPanelVisible: boolean;
+}
+
+let prefsSaveTimer: ReturnType<typeof setTimeout> | null = null;
+function debouncedSavePrefs(prefs: LayoutPrefs) {
+  if (prefsSaveTimer) clearTimeout(prefsSaveTimer);
+  prefsSaveTimer = setTimeout(() => {
+    writeData(LAYOUT_PREFS_FILE, prefs).catch(() => {});
+  }, 500);
+}
 
 export type SplitDirection = "horizontal" | "vertical";
 

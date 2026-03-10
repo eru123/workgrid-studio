@@ -1370,6 +1370,8 @@ const SortableHeader = memo(function SortableHeader({
   onSort,
   filterValue,
   onFilter,
+  width,
+  onResize,
 }: {
   name: string;
   colInfo?: ColumnInfo;
@@ -1378,10 +1380,13 @@ const SortableHeader = memo(function SortableHeader({
   onSort: (e: React.MouseEvent) => void;
   filterValue: string;
   onFilter: (val: string) => void;
+  width?: number;
+  onResize?: (w: number) => void;
 }) {
   const isPK = colInfo?.key === "PRI";
   const [showFilter, setShowFilter] = useState(false);
   const filterRef = useRef<HTMLDivElement>(null);
+  const thRef = useRef<HTMLTableCellElement>(null);
 
   useEffect(() => {
     if (!showFilter) return;
@@ -1394,12 +1399,31 @@ const SortableHeader = memo(function SortableHeader({
     return () => document.removeEventListener("mousedown", handleClick);
   }, [showFilter]);
 
+  const handleResizeMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.clientX;
+    const startWidth = thRef.current?.offsetWidth ?? 80;
+    const onMouseMove = (ev: MouseEvent) => {
+      const newWidth = Math.max(60, startWidth + ev.clientX - startX);
+      onResize?.(newWidth);
+    };
+    const onMouseUp = () => {
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
+    };
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+  };
+
   return (
     <th
+      ref={thRef}
       className={cn(
         "text-left px-1.5 py-1.5 text-[10px] font-medium tracking-wider border-b border-r bg-muted/70 whitespace-nowrap select-none group relative",
         sortDirection && "bg-primary/10",
       )}
+      style={width ? { width, minWidth: width } : undefined}
       title={colInfo ? `Type: ${colInfo.col_type}` : ""}
     >
       <div className="flex items-center gap-1">
@@ -1485,6 +1509,11 @@ const SortableHeader = memo(function SortableHeader({
           </div>
         )}
       </div>
+      {/* Column resize handle */}
+      <div
+        className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-primary/40 active:bg-primary/60 z-20 opacity-0 group-hover:opacity-100 transition-opacity"
+        onMouseDown={handleResizeMouseDown}
+      />
     </th>
   );
 });

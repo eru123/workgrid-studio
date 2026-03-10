@@ -284,6 +284,9 @@ export function QueryTab({
   const [findMatches, setFindMatches] = useState<{ rowIdx: number; colIdx: number }[]>([]);
   const [currentMatchIdx, setCurrentMatchIdx] = useState(0);
 
+  // ── Column widths (resizing) ─────────────────────────────
+  const [colWidths, setColWidths] = useState<Record<number, number>>({});
+
   // ── Cell selection & context menu ──────────────────────
   const [selectedCell, setSelectedCell] = useState<{ rowIdx: number; colIdx: number } | null>(null);
   const [cellContextMenu, setCellContextMenu] = useState<{
@@ -1990,9 +1993,28 @@ export function QueryTab({
                     {activeResult.columns.map((col, ci) => (
                       <th
                         key={ci}
-                        className="text-left px-2 py-1.5 text-[10px] font-medium text-muted-foreground/70 border-b border-r bg-muted whitespace-nowrap"
+                        className="text-left px-2 py-1.5 text-[10px] font-medium text-muted-foreground/70 border-b border-r bg-muted whitespace-nowrap relative group/qth select-none"
+                        style={colWidths[ci] ? { width: colWidths[ci], minWidth: colWidths[ci] } : undefined}
                       >
                         {col}
+                        <div
+                          className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-primary/40 active:bg-primary/60 z-20 opacity-0 group-hover/qth:opacity-100 transition-opacity"
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            const startX = e.clientX;
+                            const th = e.currentTarget.parentElement as HTMLTableCellElement;
+                            const startWidth = th?.offsetWidth ?? 80;
+                            const onMove = (ev: MouseEvent) => {
+                              setColWidths(prev => ({ ...prev, [ci]: Math.max(60, startWidth + ev.clientX - startX) }));
+                            };
+                            const onUp = () => {
+                              window.removeEventListener("mousemove", onMove);
+                              window.removeEventListener("mouseup", onUp);
+                            };
+                            window.addEventListener("mousemove", onMove);
+                            window.addEventListener("mouseup", onUp);
+                          }}
+                        />
                       </th>
                     ))}
                   </tr>
