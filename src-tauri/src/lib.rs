@@ -4,9 +4,16 @@ use std::path::PathBuf;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::sync::Mutex;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::collections::HashMap;
 use std::net::{TcpStream, TcpListener};
 use ssh2::Session;
+
+pub struct TunnelHandle {
+    pub local_port: u16,
+    pub shutdown: Arc<AtomicBool>,
+}
 
 use mysql_async::prelude::*;
 use mysql_async::{Opts, Conn, OptsBuilder, Pool, SslOpts};
@@ -241,7 +248,7 @@ pub struct ColumnInfo {
     pub extra: String,
 }
 
-fn establish_ssh_tunnel(pid: &str, params: &ConnectParams) -> Result<u16, String> {
+fn establish_ssh_tunnel(pid: &str, params: &ConnectParams) -> Result<TunnelHandle, String> {
     let ssh_host = params.ssh_host.as_ref().ok_or("SSH host not provided")?;
     let ssh_port = params.ssh_port.unwrap_or(22);
     let ssh_user = params.ssh_user.as_ref().ok_or("SSH user not provided")?;
@@ -302,9 +309,15 @@ fn establish_ssh_tunnel(pid: &str, params: &ConnectParams) -> Result<u16, String
     let target_port = params.port;
     let pid_clone = pid.to_string();
 
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let shutdown_clone = shutdown.clone();
+
     // Spawn a thread to handle the tunnel bridge
     std::thread::spawn(move || {
         for stream in listener.incoming() {
+            if shutdown_clone.load(Ordering::Relaxed) {
+                break;
+            }
             match stream {
                 Ok(mut local_stream) => {
                     match sess.channel_direct_tcpip(&target_host, target_port, None) {
@@ -331,14 +344,14 @@ fn establish_ssh_tunnel(pid: &str, params: &ConnectParams) -> Result<u16, String
         }
     });
 
-    Ok(local_port)
+    Ok(TunnelHandle { local_port, shutdown })
 }
 
 // ─── DB State ───────────────────────────────────────────────────────
 
 pub struct DbState {
     pub pools: Mutex<HashMap<String, Pool>>,
-    pub tunnels: Mutex<HashMap<String, u16>>, // profile_id -> local_port
+    pub tunnels: Mutex<HashMap<String, TunnelHandle>>, // profile_id -> tunnel handle
 }
 
 impl DbState {
@@ -403,15 +416,23 @@ async fn db_connect(
         }
         
         // Establish SSH Tunnel
-        let local_port = establish_ssh_tunnel(&pid, &conn_params)?;
-        log_info(&pid, &format!("SSH Tunnel established: localhost:{}", local_port));
+        {
+            // Kill any pre-existing tunnel for this profile (reconnect scenario)
+            let mut tunnels = state.tunnels.lock().map_err(|e| e.to_string())?;
+            if let Some(old) = tunnels.remove(&pid) {
+                old.shutdown.store(true, Ordering::Relaxed);
+                let _ = TcpStream::connect(format!("127.0.0.1:{}", old.local_port));
+            }
+        }
+        let handle = establish_ssh_tunnel(&pid, &conn_params)?;
+        log_info(&pid, &format!("SSH Tunnel established: localhost:{}", handle.local_port));
         
         // Redirect connection to local port
         conn_params.host = "127.0.0.1".to_string();
-        conn_params.port = local_port;
+        conn_params.port = handle.local_port;
         
         let mut tunnels = state.tunnels.lock().map_err(|e| e.to_string())?;
-        tunnels.insert(pid.clone(), local_port);
+        tunnels.insert(pid.clone(), handle);
     }
 
     let target = format!("{}@{}:{}", params.user, params.host, params.port);
@@ -533,6 +554,13 @@ async fn db_disconnect(
 
     if let Some(pool) = pools.remove(&profile_id) {
         let _ = pool.disconnect();
+    }
+    
+    let mut tunnels = state.tunnels.lock().map_err(|e| e.to_string())?;
+    if let Some(handle) = tunnels.remove(&profile_id) {
+        handle.shutdown.store(true, Ordering::Relaxed);
+        // Unblock listener.incoming() with a dummy connection so the thread exits
+        let _ = TcpStream::connect(format!("127.0.0.1:{}", handle.local_port));
     }
 
     log_info(&profile_id, "Disconnected");

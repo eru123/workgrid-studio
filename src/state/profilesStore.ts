@@ -126,9 +126,11 @@ function debouncedSave(profiles: DatabaseProfile[]) {
       try {
         // Strip runtime-only fields and selectively encrypt passwords
         const toSave: SavedProfile[] = await Promise.all(
-          profiles.map(async ({ connectionStatus: _, password, ...rest }) => ({
+          profiles.map(async ({ connectionStatus: _, password, sshPassword, sshPassphrase, ...rest }) => ({
             ...rest,
-            password: password ? await encryptPassword(password) : "",
+            password:       password       ? await encryptPassword(password)       : "",
+            sshPassword:    sshPassword    ? await encryptPassword(sshPassword)    : sshPassword,
+            sshPassphrase:  sshPassphrase  ? await encryptPassword(sshPassphrase)  : sshPassphrase,
           }))
         );
         await writeData(PROFILES_FILE, toSave);
@@ -165,7 +167,9 @@ export const useProfilesStore = create<ProfilesState>((set, get) => ({
       const profiles: DatabaseProfile[] = await Promise.all(
         saved.map(async (s) => ({
           ...s,
-          password: s.password ? await decryptPassword(s.password) : "",
+          password:       s.password      ? await decryptPassword(s.password)      : "",
+          sshPassword:    s.sshPassword   ? await decryptPassword(s.sshPassword)   : s.sshPassword,
+          sshPassphrase:  s.sshPassphrase ? await decryptPassword(s.sshPassphrase) : s.sshPassphrase,
           connectionStatus: "disconnected" as ConnectionStatus,
         }))
       );
