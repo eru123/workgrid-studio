@@ -100,6 +100,7 @@ export function Workbench() {
     useProfilesStore.getState().loadProfiles();
     useModelsStore.getState().loadProviders();
     useTasksStore.getState().loadTasks();
+    useLayoutStore.getState().loadLayoutPrefs();
   }, []);
 
   // Connection Keep-Alive Loop

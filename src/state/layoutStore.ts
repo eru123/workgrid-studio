@@ -20,6 +20,24 @@ function debouncedSavePrefs(prefs: LayoutPrefs) {
   }, 500);
 }
 
+function stateToPrefs(state: {
+  primarySidebarWidth: number;
+  secondarySidebarWidth: number;
+  bottomPanelHeight: number;
+  isPrimarySidebarVisible: boolean;
+  isSecondarySidebarVisible: boolean;
+  isBottomPanelVisible: boolean;
+}): LayoutPrefs {
+  return {
+    primarySidebarWidth: state.primarySidebarWidth,
+    secondarySidebarWidth: state.secondarySidebarWidth,
+    bottomPanelHeight: state.bottomPanelHeight,
+    isPrimarySidebarVisible: state.isPrimarySidebarVisible,
+    isSecondarySidebarVisible: state.isSecondarySidebarVisible,
+    isBottomPanelVisible: state.isBottomPanelVisible,
+  };
+}
+
 export type SplitDirection = "horizontal" | "vertical";
 
 export type EditorTabType =
@@ -76,6 +94,7 @@ interface LayoutState {
   editorTree: SplitTree;
   activeLeafId: string | null;
 
+  loadLayoutPrefs: () => Promise<void>;
   setActiveView: (view: ActivityView) => void;
   setActiveLeaf: (leafId: string) => void;
   setSidebarWidth: (width: number) => void;
@@ -155,6 +174,22 @@ export const useLayoutStore = create<LayoutState>((set) => ({
   activeLeafId: "leaf-main",
   closedTabsStack: [],
 
+  loadLayoutPrefs: async () => {
+    try {
+      const prefs = await readData<LayoutPrefs>(LAYOUT_PREFS_FILE, {} as LayoutPrefs);
+      const updates: Partial<LayoutState> = {};
+      if (prefs.primarySidebarWidth) updates.primarySidebarWidth = prefs.primarySidebarWidth;
+      if (prefs.secondarySidebarWidth) updates.secondarySidebarWidth = prefs.secondarySidebarWidth;
+      if (prefs.bottomPanelHeight) updates.bottomPanelHeight = prefs.bottomPanelHeight;
+      if (prefs.isPrimarySidebarVisible !== undefined) updates.isPrimarySidebarVisible = prefs.isPrimarySidebarVisible;
+      if (prefs.isSecondarySidebarVisible !== undefined) updates.isSecondarySidebarVisible = prefs.isSecondarySidebarVisible;
+      if (prefs.isBottomPanelVisible !== undefined) updates.isBottomPanelVisible = prefs.isBottomPanelVisible;
+      if (Object.keys(updates).length > 0) set(updates);
+    } catch {
+      // Ignore — defaults apply
+    }
+  },
+
   setActiveView: (view) =>
     set((state) => ({
       activeView: view,
@@ -166,41 +201,55 @@ export const useLayoutStore = create<LayoutState>((set) => ({
 
   setActiveLeaf: (leafId) => set({ activeLeafId: leafId }),
 
-  setSidebarWidth: (width) =>
-    set({ primarySidebarWidth: Math.max(180, Math.min(width, 600)) }),
+  setSidebarWidth: (width) => {
+    const w = Math.max(180, Math.min(width, 600));
+    set((state) => { debouncedSavePrefs({ ...stateToPrefs(state), primarySidebarWidth: w }); return { primarySidebarWidth: w }; });
+  },
   adjustSidebarWidth: (delta) =>
-    set((state) => ({
-      primarySidebarWidth: Math.max(
-        180,
-        Math.min(state.primarySidebarWidth + delta, 600),
-      ),
-    })),
-  setPanelHeight: (height) =>
-    set({ bottomPanelHeight: Math.max(100, Math.min(height, 600)) }),
+    set((state) => {
+      const w = Math.max(180, Math.min(state.primarySidebarWidth + delta, 600));
+      debouncedSavePrefs({ ...stateToPrefs(state), primarySidebarWidth: w });
+      return { primarySidebarWidth: w };
+    }),
+  setPanelHeight: (height) => {
+    const h = Math.max(100, Math.min(height, 600));
+    set((state) => { debouncedSavePrefs({ ...stateToPrefs(state), bottomPanelHeight: h }); return { bottomPanelHeight: h }; });
+  },
   adjustPanelHeight: (delta) =>
-    set((state) => ({
-      bottomPanelHeight: Math.max(
-        100,
-        Math.min(state.bottomPanelHeight + delta, 600),
-      ),
-    })),
+    set((state) => {
+      const h = Math.max(100, Math.min(state.bottomPanelHeight + delta, 600));
+      debouncedSavePrefs({ ...stateToPrefs(state), bottomPanelHeight: h });
+      return { bottomPanelHeight: h };
+    }),
 
   toggleSidebar: () =>
-    set((state) => ({
-      isPrimarySidebarVisible: !state.isPrimarySidebarVisible,
-    })),
+    set((state) => {
+      const next = !state.isPrimarySidebarVisible;
+      debouncedSavePrefs({ ...stateToPrefs(state), isPrimarySidebarVisible: next });
+      return { isPrimarySidebarVisible: next };
+    }),
   togglePanel: () =>
-    set((state) => ({ isBottomPanelVisible: !state.isBottomPanelVisible })),
+    set((state) => {
+      const next = !state.isBottomPanelVisible;
+      debouncedSavePrefs({ ...stateToPrefs(state), isBottomPanelVisible: next });
+      return { isBottomPanelVisible: next };
+    }),
   toggleBottomPanelSplit: () =>
     set((state) => ({ isBottomPanelSplit: !state.isBottomPanelSplit })),
   setBottomPanelSplitRatio: (ratio) =>
     set({ bottomPanelSplitRatio: Math.max(0.1, Math.min(ratio, 0.9)) }),
   toggleSecondarySidebar: () =>
-    set((state) => ({ isSecondarySidebarVisible: !state.isSecondarySidebarVisible })),
+    set((state) => {
+      const next = !state.isSecondarySidebarVisible;
+      debouncedSavePrefs({ ...stateToPrefs(state), isSecondarySidebarVisible: next });
+      return { isSecondarySidebarVisible: next };
+    }),
   adjustSecondarySidebarWidth: (delta) =>
-    set((state) => ({
-      secondarySidebarWidth: Math.max(250, Math.min(state.secondarySidebarWidth + delta, 600)),
-    })),
+    set((state) => {
+      const w = Math.max(250, Math.min(state.secondarySidebarWidth + delta, 600));
+      debouncedSavePrefs({ ...stateToPrefs(state), secondarySidebarWidth: w });
+      return { secondarySidebarWidth: w };
+    }),
 
   openTab: (tabData, leafId) =>
     set((state) => {
