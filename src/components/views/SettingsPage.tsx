@@ -14,17 +14,21 @@ export function SettingsPage() {
     const appVersion = useAppVersion();
 
     type UpdateState = "idle" | "checking" | "available" | "downloading" | "up-to-date" | "error";
+    type Update = Awaited<ReturnType<typeof check>>;
     const [updateState, setUpdateState] = useState<UpdateState>("idle");
     const [updateVersion, setUpdateVersion] = useState<string | null>(null);
+    const [pendingUpdate, setPendingUpdate] = useState<Update>(null);
 
     const handleCheckForUpdates = async () => {
         setUpdateState("checking");
         try {
             const update = await check();
             if (update?.available) {
-                setUpdateVersion(update.currentVersion ?? null);
+                setUpdateVersion(update.version ?? null);
+                setPendingUpdate(update);
                 setUpdateState("available");
             } else {
+                setPendingUpdate(null);
                 setUpdateState("up-to-date");
             }
         } catch (e) {
@@ -34,13 +38,11 @@ export function SettingsPage() {
     };
 
     const handleInstallUpdate = async () => {
+        if (!pendingUpdate) return;
         setUpdateState("downloading");
         try {
-            const update = await check();
-            if (update?.available) {
-                await update.downloadAndInstall();
-                await relaunch();
-            }
+            await pendingUpdate.downloadAndInstall();
+            await relaunch();
         } catch (e) {
             setUpdateState("error");
             addToast({ title: "Update failed", description: String(e), variant: "destructive" });

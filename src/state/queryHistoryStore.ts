@@ -10,11 +10,15 @@ export interface QueryHistoryItem {
     timestamp: number;
     profileId: string;
     database?: string;
+    executionTimeMs?: number;
+    favorited?: boolean;
 }
 
 interface QueryHistoryState {
     history: QueryHistoryItem[];
     addHistoryItem: (item: Omit<QueryHistoryItem, "id" | "timestamp">) => void;
+    deleteHistoryItem: (id: string) => void;
+    toggleFavorite: (id: string) => void;
     clearHistory: (profileId?: string) => void;
 }
 
@@ -39,10 +43,25 @@ export const useQueryHistoryStore = create<QueryHistoryState>()(
                     (h) => !(h.profileId === item.profileId && h.query.trim() === item.query.trim())
                 );
                 const next = [newItem, ...filtered].slice(0, 100);
-
-                // Use the debounced save pattern from coding standards
                 debouncedSave(next);
+                return { history: next };
+            });
+        },
 
+        deleteHistoryItem: (id) => {
+            set((state) => {
+                const next = state.history.filter(h => h.id !== id);
+                debouncedSave(next);
+                return { history: next };
+            });
+        },
+
+        toggleFavorite: (id) => {
+            set((state) => {
+                const next = state.history.map(h =>
+                    h.id === id ? { ...h, favorited: !h.favorited } : h
+                );
+                debouncedSave(next);
                 return { history: next };
             });
         },
@@ -50,8 +69,8 @@ export const useQueryHistoryStore = create<QueryHistoryState>()(
         clearHistory: (profileId) => {
             set((state) => {
                 const next = profileId
-                    ? state.history.filter(h => h.profileId !== profileId)
-                    : [];
+                    ? state.history.filter(h => h.profileId !== profileId || h.favorited)
+                    : state.history.filter(h => h.favorited);
                 debouncedSave(next);
                 return { history: next };
             });

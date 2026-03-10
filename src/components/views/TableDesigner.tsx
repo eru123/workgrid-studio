@@ -27,6 +27,7 @@ import { ContextSubmenu } from "@/components/views/ContextSubmenu";
 import { highlightSQL } from "@/lib/sqlHighlight";
 import { useAppStore } from "@/state/appStore";
 import { useLayoutStore } from "@/state/layoutStore";
+import { useSchemaStore } from "@/state/schemaStore";
 
 // ═══════════════════════════════════════════════════════════════════════
 //  Types
@@ -1836,6 +1837,8 @@ export function TableDesigner({ tabId, leafId, profileId, database, tableName }:
       } else {
         setSuccess(`Table \`${trimmedName}\` created successfully.`);
       }
+      // Refresh schema cache and local table list
+      useSchemaStore.getState().refreshTables(profileId, database);
       dbListTables(profileId, database)
         .then(setTables)
         .catch(() => { });

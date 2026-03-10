@@ -3,6 +3,7 @@ import { dbQuery, dbExecuteQuery, dbListColumns } from "@/lib/db";
 import type { ColumnInfo, QueryResultSet } from "@/lib/db";
 import { cn } from "@/lib/utils/cn";
 import { useAppStore } from "@/state/appStore";
+import { useSchemaStore } from "@/state/schemaStore";
 import { FindToolbar } from "@/components/ui/FindToolbar";
 import { CellContextMenu } from "@/components/ui/CellContextMenu";
 import { AutocompleteInput } from "@/components/ui/AutocompleteInput";
@@ -338,6 +339,7 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
   const [columnFilters, setColumnFilters] = useState<Record<string, string>>({});
 
   const hasEdits = Object.keys(editedCells).length > 0 || addedRows.length > 0 || deletedRows.size > 0;
+  const tableHasPK = !loadingMeta && columnInfos.some(c => c.key === "PRI");
 
   // ── Filter ──────────────────────────────────────────────
   const [whereClause, setWhereClause] = useState("");
@@ -421,11 +423,19 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
       ]);
 
       const cnt = countRes[0]?.rows?.[0]?.[0];
-      setTotalRows(typeof cnt === "number" ? cnt : Number(cnt) || 0);
+      const totalCount = typeof cnt === "number" ? cnt : Number(cnt) || 0;
+      setTotalRows(totalCount);
 
       const result = dataRes[0] as QueryResultSet | undefined;
       setColumns(result?.columns ?? []);
       setRows(result?.rows ?? []);
+
+      // Update status bar with connection context
+      useAppStore.getState().setStatusBarInfo({
+        connectionName: useSchemaStore.getState().connectedProfiles[profileId]?.name,
+        database,
+        rowCount: totalCount,
+      });
     } catch (e) {
       setError(String(e));
       setRows([]);
@@ -1046,18 +1056,19 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
         {/* Edit Controls */}
         <div className="flex items-center gap-1 border-l pl-1">
           <button
-            className="flex items-center gap-1 px-2 py-1 rounded hover:bg-accent transition-colors text-xs text-muted-foreground hover:text-foreground"
-            onClick={handleAddRow}
-            title="Insert new row"
+            className={cn("flex items-center gap-1 px-2 py-1 rounded transition-colors text-xs",
+              tableHasPK ? "hover:bg-accent text-muted-foreground hover:text-foreground" : "opacity-30 pointer-events-none text-muted-foreground")}
+            onClick={tableHasPK ? handleAddRow : undefined}
+            title={tableHasPK ? "Insert new row" : "Table has no Primary Key — editing disabled"}
           >
             <Plus className="w-3.5 h-3.5" />
             Insert
           </button>
           <button
             className={cn("flex items-center gap-1 px-2 py-1 rounded transition-colors text-xs",
-              selectedRows.size > 0 ? "hover:bg-red-500/20 text-red-500" : "opacity-30 pointer-events-none text-muted-foreground")}
-            onClick={handleDeleteSelected}
-            title="Delete selected rows"
+              tableHasPK && selectedRows.size > 0 ? "hover:bg-red-500/20 text-red-500" : "opacity-30 pointer-events-none text-muted-foreground")}
+            onClick={tableHasPK && selectedRows.size > 0 ? handleDeleteSelected : undefined}
+            title={tableHasPK ? "Delete selected rows" : "Table has no Primary Key — editing disabled"}
           >
             <Trash2 className="w-3.5 h-3.5" />
             Delete
@@ -1160,6 +1171,14 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
               </button>
             )}
           </div>
+        </div>
+      )}
+
+      {/* ─── No Primary Key warning banner ─────────── */}
+      {!loadingMeta && columnInfos.length > 0 && !columnInfos.some(c => c.key === "PRI") && (
+        <div className="flex items-center gap-2 px-3 py-1.5 border-b bg-yellow-500/10 text-yellow-500 text-xs shrink-0">
+          <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+          <span>This table has no primary key — row editing and deletion are disabled.</span>
         </div>
       )}
 

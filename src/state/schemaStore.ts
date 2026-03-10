@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { dbListDatabases, dbListTables } from "@/lib/db";
 
 // Minimal schema types — data is loaded lazily on expand
 export interface ColumnInfo {
@@ -38,6 +39,10 @@ interface SchemaState {
     setLoading: (key: string, kind: "databases" | "tables" | "columns", loading: boolean) => void;
     setError: (key: string, error: string) => void;
     clearError: (key: string) => void;
+
+    // Refresh actions
+    refreshDatabases: (profileId: string) => Promise<void>;
+    refreshTables: (profileId: string, db: string) => Promise<void>;
 }
 
 export const useSchemaStore = create<SchemaState>((set) => ({
@@ -111,4 +116,33 @@ export const useSchemaStore = create<SchemaState>((set) => ({
             delete errors[key];
             return { errors };
         }),
+
+    refreshDatabases: async (profileId) => {
+        const store = useSchemaStore.getState();
+        store.setLoading(profileId, "databases", true);
+        store.clearError(`dbs-${profileId}`);
+        try {
+            const dbs = await dbListDatabases(profileId);
+            store.setDatabases(profileId, dbs);
+        } catch (e) {
+            store.setError(`dbs-${profileId}`, String(e));
+        } finally {
+            store.setLoading(profileId, "databases", false);
+        }
+    },
+
+    refreshTables: async (profileId, db) => {
+        const store = useSchemaStore.getState();
+        const cacheKey = `${profileId}::${db}`;
+        store.setLoading(cacheKey, "tables", true);
+        store.clearError(`tbl-${cacheKey}`);
+        try {
+            const tbls = await dbListTables(profileId, db);
+            store.setTables(profileId, db, tbls);
+        } catch (e) {
+            store.setError(`tbl-${cacheKey}`, String(e));
+        } finally {
+            store.setLoading(cacheKey, "tables", false);
+        }
+    },
 }));

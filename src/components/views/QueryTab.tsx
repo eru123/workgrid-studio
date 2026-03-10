@@ -42,7 +42,10 @@ import {
   Sparkles,
   Save as SaveIcon,
   FolderOpen,
-  History
+  History,
+  Star,
+  X,
+  Search,
 } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 import { FindToolbar } from "@/components/ui/FindToolbar";
@@ -296,6 +299,9 @@ export function QueryTab({
   const addHistoryItem = useQueryHistoryStore((s) => s.addHistoryItem);
   const history = useQueryHistoryStore((s) => s.history);
   const clearHistory = useQueryHistoryStore((s) => s.clearHistory);
+  const deleteHistoryItem = useQueryHistoryStore((s) => s.deleteHistoryItem);
+  const toggleFavorite = useQueryHistoryStore((s) => s.toggleFavorite);
+  const [historyFilter, setHistoryFilter] = useState("");
 
   // ── Autocomplete state ──────────────────────────────────────
   const [acVisible, setAcVisible] = useState(false);
@@ -726,8 +732,28 @@ export function QueryTab({
         addHistoryItem({
           query: queryText,
           profileId: selectedProfileId!,
-          database: selectedDb
+          database: selectedDb,
+          executionTimeMs: elapsed,
         });
+
+        // Update status bar
+        useAppStore.getState().setStatusBarInfo({
+          connectionName: connectedProfiles[selectedProfileId]?.name,
+          database: selectedDb || undefined,
+          executionTimeMs: elapsed,
+          rowCount: filteredResults[0]?.rows?.length,
+        });
+
+        // Invalidate schema cache after DDL operations
+        const isDdl = /\b(CREATE|ALTER|DROP|RENAME|TRUNCATE)\s+(TABLE|DATABASE|SCHEMA|VIEW|INDEX)\b/i.test(queryText);
+        if (isDdl && selectedProfileId) {
+          const schemaStore = useSchemaStore.getState();
+          if (selectedDb) {
+            schemaStore.refreshTables(selectedProfileId, selectedDb);
+          } else {
+            schemaStore.refreshDatabases(selectedProfileId);
+          }
+        }
       } catch (e) {
         if (token !== runTokenRef.current) return;
         const elapsed = performance.now() - startTime;
@@ -1592,41 +1618,85 @@ export function QueryTab({
             active={showHistory}
           />
           {showHistory && (
-            <div className="absolute top-full left-0 z-50 mt-1 w-80 max-h-96 bg-popover border rounded-md shadow-xl flex flex-col overflow-hidden animate-in fade-in slide-in-from-top-1">
-              <div className="flex items-center justify-between px-3 py-2 border-b bg-muted/30">
-                <span className="text-[10px] font-bold uppercase tracking-wider">Recent Queries</span>
+            <div className="absolute top-full left-0 z-50 mt-1 w-96 max-h-[480px] bg-popover border rounded-md shadow-xl flex flex-col overflow-hidden">
+              <div className="flex items-center justify-between px-3 py-2 border-b bg-muted/30 shrink-0">
+                <span className="text-[10px] font-bold uppercase tracking-wider">Query History</span>
                 <button
                   className="text-[10px] text-red-500 hover:underline"
-                  onClick={() => {
-                    if (window.confirm("Clear query history?")) clearHistory();
-                  }}
+                  onClick={() => { if (window.confirm("Clear non-favorited history?")) clearHistory(selectedProfileId || undefined); }}
                 >
-                  Clear All
+                  Clear
                 </button>
               </div>
-              <div className="flex-1 overflow-y-auto p-1 space-y-1 bg-background/50 backdrop-blur-sm">
-                {history.length === 0 ? (
-                  <div className="py-8 text-center text-muted-foreground/40 text-[10px]">No history yet</div>
-                ) : (
-                  history.filter(h => h.profileId === selectedProfileId).map((h) => (
-                    <button
-                      key={h.id}
-                      className="w-full text-left p-2 rounded hover:bg-accent group/hitem transition-colors border border-transparent hover:border-border"
-                      onClick={() => {
-                        setSql(h.query);
-                        setShowHistory(false);
-                      }}
-                    >
-                      <div className="text-[11px] font-mono line-clamp-2 text-foreground/80 group-hover/hitem:text-foreground">
-                        {h.query}
-                      </div>
-                      <div className="mt-1 flex items-center justify-between text-[9px] text-muted-foreground">
-                        <span>{h.database}</span>
-                        <span>{new Date(h.timestamp).toLocaleString()}</span>
-                      </div>
+              {/* Search filter */}
+              <div className="px-2 py-1.5 border-b shrink-0">
+                <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-muted/30 border">
+                  <Search className="w-3 h-3 text-muted-foreground shrink-0" />
+                  <input
+                    type="text"
+                    placeholder="Filter queries..."
+                    value={historyFilter}
+                    onChange={e => setHistoryFilter(e.target.value)}
+                    className="flex-1 bg-transparent text-xs outline-none placeholder:text-muted-foreground/50"
+                  />
+                  {historyFilter && (
+                    <button onClick={() => setHistoryFilter("")}>
+                      <X className="w-3 h-3 text-muted-foreground hover:text-foreground" />
                     </button>
-                  ))
-                )}
+                  )}
+                </div>
+              </div>
+              <div className="flex-1 overflow-y-auto p-1 space-y-0.5">
+                {(() => {
+                  const filtered = history
+                    .filter(h => h.profileId === selectedProfileId)
+                    .filter(h => !historyFilter || h.query.toLowerCase().includes(historyFilter.toLowerCase()) || (h.database ?? "").toLowerCase().includes(historyFilter.toLowerCase()));
+                  const sorted = [...filtered.filter(h => h.favorited), ...filtered.filter(h => !h.favorited)];
+                  if (sorted.length === 0) {
+                    return <div className="py-8 text-center text-muted-foreground/40 text-[10px]">{historyFilter ? "No matches" : "No history yet"}</div>;
+                  }
+                  return sorted.map((h) => (
+                    <div
+                      key={h.id}
+                      className="group/hitem relative flex items-start gap-1 p-2 rounded hover:bg-accent transition-colors border border-transparent hover:border-border"
+                    >
+                      <button
+                        className="flex-1 text-left min-w-0"
+                        onClick={() => { setSql(h.query); setShowHistory(false); }}
+                      >
+                        <div className="text-[11px] font-mono line-clamp-2 text-foreground/80 group-hover/hitem:text-foreground">
+                          {h.query}
+                        </div>
+                        <div className="mt-1 flex items-center gap-2 text-[9px] text-muted-foreground">
+                          {h.database && <span className="font-mono">{h.database}</span>}
+                          {h.executionTimeMs !== undefined && (
+                            <span className="flex items-center gap-0.5">
+                              <Clock className="w-2.5 h-2.5" />
+                              {h.executionTimeMs < 1000 ? `${Math.round(h.executionTimeMs)}ms` : `${(h.executionTimeMs / 1000).toFixed(2)}s`}
+                            </span>
+                          )}
+                          <span className="ml-auto">{new Date(h.timestamp).toLocaleString()}</span>
+                        </div>
+                      </button>
+                      <div className="flex items-center gap-0.5 opacity-0 group-hover/hitem:opacity-100 transition-opacity shrink-0 mt-0.5">
+                        <button
+                          className={cn("p-0.5 rounded hover:bg-muted transition-colors", h.favorited ? "text-yellow-400" : "text-muted-foreground")}
+                          title={h.favorited ? "Unpin" : "Pin"}
+                          onClick={() => toggleFavorite(h.id)}
+                        >
+                          <Star className="w-3 h-3" fill={h.favorited ? "currentColor" : "none"} />
+                        </button>
+                        <button
+                          className="p-0.5 rounded hover:bg-red-500/20 text-muted-foreground hover:text-red-400 transition-colors"
+                          title="Delete"
+                          onClick={() => deleteHistoryItem(h.id)}
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                    </div>
+                  ));
+                })()}
               </div>
             </div>
           )}

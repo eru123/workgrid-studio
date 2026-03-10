@@ -162,6 +162,7 @@ export function EditorNode({ tree }: { tree: SplitTree }) {
   const setActiveLeaf = useLayoutStore((s) => s.setActiveLeaf);
   const setActiveTab = useLayoutStore((s) => s.setActiveTab);
   const moveTab = useLayoutStore((s) => s.moveTab);
+  const updateTab = useLayoutStore((s) => s.updateTab);
   const connectedProfiles = useSchemaStore((s) => s.connectedProfiles);
   const activeLeafId = useLayoutStore((s) => s.activeLeafId);
   const isSplit = useLayoutStore((s) => s.editorTree.type !== "leaf");
@@ -174,6 +175,8 @@ export function EditorNode({ tree }: { tree: SplitTree }) {
 
   const [dragOverTabId, setDragOverTabId] = useState<string | null>(null);
   const [isDragOverPane, setIsDragOverPane] = useState<boolean>(false);
+  const [renamingTabId, setRenamingTabId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState("");
 
   const handleDragStart = (e: React.DragEvent, tabId: string, leafId: string) => {
     e.dataTransfer.effectAllowed = "move";
@@ -340,7 +343,39 @@ export function EditorNode({ tree }: { tree: SplitTree }) {
                   }}
                 >
                   {tabIcon(tab.type, isActive)}
-                  <span className="truncate max-w-30">{tab.title}</span>
+                  {renamingTabId === tab.id ? (
+                    <input
+                      autoFocus
+                      value={renameValue}
+                      className="max-w-30 bg-background border border-primary rounded px-1 text-xs outline-none"
+                      onChange={e => setRenameValue(e.target.value)}
+                      onBlur={() => {
+                        if (renameValue.trim()) updateTab(tab.id, { title: renameValue.trim() });
+                        setRenamingTabId(null);
+                      }}
+                      onKeyDown={e => {
+                        if (e.key === "Enter") {
+                          if (renameValue.trim()) updateTab(tab.id, { title: renameValue.trim() });
+                          setRenamingTabId(null);
+                        } else if (e.key === "Escape") {
+                          setRenamingTabId(null);
+                        }
+                        e.stopPropagation();
+                      }}
+                      onClick={e => e.stopPropagation()}
+                    />
+                  ) : (
+                    <span
+                      className="truncate max-w-30"
+                      onDoubleClick={e => {
+                        e.stopPropagation();
+                        setRenamingTabId(tab.id);
+                        setRenameValue(tab.title);
+                      }}
+                    >
+                      {tab.title}
+                    </span>
+                  )}
                   <button
                     onClick={(e) => {
                       e.stopPropagation();

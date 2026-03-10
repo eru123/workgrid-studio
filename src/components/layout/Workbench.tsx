@@ -11,6 +11,7 @@ import { ExplorerTree } from "@/components/views/ExplorerTree";
 import { readProfileLog, clearProfileLog, getAiLogs, clearAiLogs, AiLogEntry, dbPing } from "@/lib/db";
 import { cn } from "@/lib/utils/cn";
 import { useProfileManager } from "@/hooks/useProfileManager";
+import { useAppStore, StatusBarInfo } from "@/state/appStore";
 import {
   FolderTree,
   CheckSquare,
@@ -354,10 +355,7 @@ export function Workbench() {
         )}
 
         {/* Status Bar */}
-        <div className="h-6 bg-primary text-primary-foreground flex items-center px-4 text-xs gap-4 shrink-0">
-          <span>WorkGrid Studio</span>
-          <span className="ml-auto opacity-70">v{appVersion}</span>
-        </div>
+        <StatusBar appVersion={appVersion} />
       </div>
     </div>
   );
@@ -936,5 +934,45 @@ function BottomPanel({ isSecondary }: { isSecondary?: boolean }) {
         )}
       </div>
     </>
+  );
+}
+
+// ─── Status Bar ─────────────────────────────────────────────────────
+
+function StatusBar({ appVersion }: { appVersion: string }) {
+  const info = useAppStore((s) => s.statusBarInfo) as StatusBarInfo;
+
+  return (
+    <div className="h-6 bg-primary text-primary-foreground flex items-center px-4 text-xs gap-3 shrink-0 select-none">
+      <span className="font-medium">WorkGrid Studio</span>
+
+      {info.connectionName && (
+        <>
+          <span className="opacity-40">|</span>
+          <span className="opacity-80">{info.connectionName}</span>
+        </>
+      )}
+
+      {info.database && (
+        <>
+          <span className="opacity-40">/</span>
+          <span className="opacity-80 font-mono">{info.database}</span>
+        </>
+      )}
+
+      <span className="ml-auto flex items-center gap-3">
+        {info.rowCount !== undefined && (
+          <span className="opacity-70">{info.rowCount.toLocaleString()} rows</span>
+        )}
+        {info.executionTimeMs !== undefined && (
+          <span className="opacity-70">
+            {info.executionTimeMs < 1000
+              ? `${Math.round(info.executionTimeMs)}ms`
+              : `${(info.executionTimeMs / 1000).toFixed(2)}s`}
+          </span>
+        )}
+        <span className="opacity-60">v{appVersion}</span>
+      </span>
+    </div>
   );
 }
