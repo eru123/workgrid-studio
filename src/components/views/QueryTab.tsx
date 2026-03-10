@@ -46,6 +46,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 import { FindToolbar } from "@/components/ui/FindToolbar";
+import { CellContextMenu } from "@/components/ui/CellContextMenu";
 
 // ═══════════════════════════════════════════════════════════════════════
 //  Types
@@ -282,6 +283,12 @@ export function QueryTab({
   const [findQuery, setFindQuery] = useState("");
   const [findMatches, setFindMatches] = useState<{ rowIdx: number; colIdx: number }[]>([]);
   const [currentMatchIdx, setCurrentMatchIdx] = useState(0);
+
+  // ── Cell selection & context menu ──────────────────────
+  const [selectedCell, setSelectedCell] = useState<{ rowIdx: number; colIdx: number } | null>(null);
+  const [cellContextMenu, setCellContextMenu] = useState<{
+    x: number; y: number; rowIdx: number; colIdx: number; value: string | number | null;
+  } | null>(null);
 
   const addHistoryItem = useQueryHistoryStore((s) => s.addHistoryItem);
   const history = useQueryHistoryStore((s) => s.history);
@@ -569,6 +576,57 @@ export function QueryTab({
     setCurrentMatchIdx(prevIdx);
     scrollToMatch(prevIdx);
   };
+
+  useEffect(() => {
+    if (!cellContextMenu) return;
+    const close = () => setCellContextMenu(null);
+    window.addEventListener("click", close);
+    return () => window.removeEventListener("click", close);
+  }, [cellContextMenu]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "c" && selectedCell) {
+        const active = results[activeResultIdx];
+        if (!active) return;
+        const row = active.rows[selectedCell.rowIdx];
+        if (!row) return;
+        const val = row[selectedCell.colIdx];
+        navigator.clipboard.writeText(val === null ? "NULL" : String(val)).catch(() => {});
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [selectedCell, results, activeResultIdx]);
+
+  const copyCellContextValue = useCallback(() => {
+    if (!cellContextMenu) return;
+    const text = cellContextMenu.value === null ? "NULL" : String(cellContextMenu.value);
+    navigator.clipboard.writeText(text).catch(() => {});
+  }, [cellContextMenu]);
+
+  const copyRowValues = useCallback(() => {
+    if (!cellContextMenu) return;
+    const active = results[activeResultIdx];
+    if (!active) return;
+    const row = active.rows[cellContextMenu.rowIdx];
+    if (!row) return;
+    const text = row.map((v) => (v === null ? "NULL" : String(v))).join("\t");
+    navigator.clipboard.writeText(text).catch(() => {});
+  }, [cellContextMenu, results, activeResultIdx]);
+
+  const copyColumnValues = useCallback(() => {
+    if (!cellContextMenu) return;
+    const active = results[activeResultIdx];
+    if (!active) return;
+    const text = active.rows
+      .map((row) => {
+        const val = row[cellContextMenu.colIdx];
+        return val === null ? "NULL" : String(val);
+      })
+      .join("\n");
+    navigator.clipboard.writeText(text).catch(() => {});
+  }, [cellContextMenu, results, activeResultIdx]);
 
   // Ctrl+S listener
   useEffect(() => {
@@ -1880,6 +1938,16 @@ export function QueryTab({
               totalMatches={findMatches.length}
               currentMatch={currentMatchIdx}
             />
+            {cellContextMenu && (
+              <CellContextMenu
+                x={cellContextMenu.x}
+                y={cellContextMenu.y}
+                onCopyCell={copyCellContextValue}
+                onCopyRow={copyRowValues}
+                onCopyColumn={copyColumnValues}
+                onClose={() => setCellContextMenu(null)}
+              />
+            )}
             <div className="absolute inset-0 overflow-auto">
               <table className="min-w-max text-xs border-collapse">
                 <thead>
@@ -1910,13 +1978,14 @@ export function QueryTab({
                         const isMatch = findQuery && val !== null && String(val).toLowerCase().includes(findQuery.toLowerCase());
                         const match = findMatches[currentMatchIdx];
                         const isCurrent = match?.rowIdx === ri && match?.colIdx === ci;
+                        const isSelected = selectedCell?.rowIdx === ri && selectedCell?.colIdx === ci;
 
                         return (
                           <td
                             key={ci}
                             id={`qcell-${ri}-${ci}`}
                             className={cn(
-                              "px-2 py-1 border-r font-mono max-w-75 transition-all",
+                              "px-2 py-1 border-r font-mono max-w-75 transition-all cursor-default",
                               val === null
                                 ? "text-muted-foreground/40 italic"
                                 : "",
@@ -1925,8 +1994,15 @@ export function QueryTab({
                                 : "whitespace-nowrap truncate",
                               isCurrent && "ring-2 ring-primary ring-inset z-10 bg-primary/20",
                               !isCurrent && isMatch && "bg-yellow-500/30",
+                              isSelected && !isCurrent && "ring-1 ring-primary/60 bg-primary/8",
                             )}
                             title={val === null ? "NULL" : String(val)}
+                            onClick={() => setSelectedCell({ rowIdx: ri, colIdx: ci })}
+                            onContextMenu={(e) => {
+                              e.preventDefault();
+                              setSelectedCell({ rowIdx: ri, colIdx: ci });
+                              setCellContextMenu({ x: e.clientX, y: e.clientY, rowIdx: ri, colIdx: ci, value: val });
+                            }}
                           >
                             {val === null ? "NULL" : String(val)}
                           </td>

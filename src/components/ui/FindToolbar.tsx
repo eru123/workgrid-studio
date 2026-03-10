@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
 import { X, ChevronUp, ChevronDown, Search } from "lucide-react";
-import { cn } from "@/lib/utils/cn";
 
 interface FindToolbarProps {
     onSearch: (query: string) => void;

@@ -4,6 +4,7 @@ import type { ColumnInfo, QueryResultSet } from "@/lib/db";
 import { cn } from "@/lib/utils/cn";
 import { useAppStore } from "@/state/appStore";
 import { FindToolbar } from "@/components/ui/FindToolbar";
+import { CellContextMenu } from "@/components/ui/CellContextMenu";
 import { AutocompleteInput } from "@/components/ui/AutocompleteInput";
 import { highlightSQL } from "@/lib/sqlHighlight";
 import {
@@ -345,9 +346,14 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
 
   // ── Find-in-Results ─────────────────────────────────────
   const [isFindOpen, setIsFindOpen] = useState(false);
-  const [findQuery, setFindQuery] = useState("");
   const [findMatches, setFindMatches] = useState<{ rowIdx: number; colName: string }[]>([]);
   const [currentMatchIdx, setCurrentMatchIdx] = useState(0);
+
+  // ── Cell selection & context menu ──────────────────────
+  const [selectedCellKey, setSelectedCellKey] = useState<string | null>(null);
+  const [cellContextMenu, setCellContextMenu] = useState<{
+    x: number; y: number; rowIdx: number; colName: string; value: string | number | null;
+  } | null>(null);
 
   // ── Fetch column metadata ───────────────────────────────
   useEffect(() => {
@@ -555,8 +561,31 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
     return () => window.removeEventListener("keydown", handleGlobalKeyDown);
   }, []);
 
+  useEffect(() => {
+    if (!cellContextMenu) return;
+    const close = () => setCellContextMenu(null);
+    window.addEventListener("click", close);
+    return () => window.removeEventListener("click", close);
+  }, [cellContextMenu]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "c" && selectedCellKey) {
+        const colonIdx = selectedCellKey.indexOf(":");
+        const rowIdx = Number(selectedCellKey.slice(0, colonIdx));
+        const colName = selectedCellKey.slice(colonIdx + 1);
+        const colIdx = columns.indexOf(colName);
+        const row = rows[rowIdx];
+        if (!row) return;
+        const val = colIdx >= 0 ? row[colIdx] : null;
+        navigator.clipboard.writeText(val === null ? "NULL" : String(val)).catch(() => {});
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [selectedCellKey, columns, rows]);
+
   const handleSearch = useCallback((q: string) => {
-    setFindQuery(q);
     if (!q) {
       setFindMatches([]);
       return;
@@ -608,6 +637,38 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
     setCurrentMatchIdx(prevIdx);
     scrollToMatch(prevIdx);
   };
+
+  const copyCellContextValue = useCallback(() => {
+    if (!cellContextMenu) return;
+    const text = cellContextMenu.value === null ? "NULL" : String(cellContextMenu.value);
+    navigator.clipboard.writeText(text).catch(() => {});
+  }, [cellContextMenu]);
+
+  const copyRowValues = useCallback(() => {
+    if (!cellContextMenu) return;
+    const row = rows[cellContextMenu.rowIdx];
+    if (!row) return;
+    const text = visibleColumns
+      .map((col) => {
+        const idx = columns.indexOf(col);
+        const val = idx >= 0 ? row[idx] : null;
+        return val === null ? "NULL" : String(val);
+      })
+      .join("\t");
+    navigator.clipboard.writeText(text).catch(() => {});
+  }, [cellContextMenu, rows, columns, visibleColumns]);
+
+  const copyColumnValues = useCallback(() => {
+    if (!cellContextMenu) return;
+    const colIdx = columns.indexOf(cellContextMenu.colName);
+    const text = rows
+      .map((row) => {
+        const val = colIdx >= 0 ? row[colIdx] : null;
+        return val === null ? "NULL" : String(val);
+      })
+      .join("\n");
+    navigator.clipboard.writeText(text).catch(() => {});
+  }, [cellContextMenu, rows, columns]);
 
   // ── Edit handlers ───────────────────────────────────────
   const handleAddRow = useCallback(() => {
@@ -1003,7 +1064,6 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
         isOpen={isFindOpen}
         onClose={() => {
           setIsFindOpen(false);
-          setFindQuery("");
           setFindMatches([]);
         }}
         onSearch={handleSearch}
@@ -1012,6 +1072,17 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
         totalMatches={findMatches.length}
         currentMatch={currentMatchIdx}
       />
+
+      {cellContextMenu && (
+        <CellContextMenu
+          x={cellContextMenu.x}
+          y={cellContextMenu.y}
+          onCopyCell={copyCellContextValue}
+          onCopyRow={copyRowValues}
+          onCopyColumn={copyColumnValues}
+          onClose={() => setCellContextMenu(null)}
+        />
+      )}
 
       {/* ─── Filter Bar ────────────────────────────── */}
       {showFilter && (
@@ -1138,7 +1209,6 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
                     return next;
                   });
                 }}
-                findQuery={findQuery}
                 hasMatch={(col) => findMatches.some(m => m.rowIdx === -(idx + 1) && m.colName === col)}
                 isCurrentMatch={(col) => {
                   const m = findMatches[currentMatchIdx];
@@ -1163,11 +1233,17 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
                   onToggleSelect={() => toggleRowSelection(rowIdx)}
                   editedCells={editedCells}
                   onEditCell={(colName, val) => setEditedCells(prev => ({ ...prev, [`${rowIdx}:${colName}`]: val }))}
-                  findQuery={findQuery}
                   hasMatch={(col) => findMatches.some(m => m.rowIdx === rowIdx && m.colName === col)}
                   isCurrentMatch={(col) => {
                     const m = findMatches[currentMatchIdx];
                     return m?.rowIdx === rowIdx && m?.colName === col;
+                  }}
+                  selectedCellKey={selectedCellKey}
+                  onCellSelect={(colName) => setSelectedCellKey(`${rowIdx}:${colName}`)}
+                  onCellContextMenu={(e, colName, value) => {
+                    e.preventDefault();
+                    setSelectedCellKey(`${rowIdx}:${colName}`);
+                    setCellContextMenu({ x: e.clientX, y: e.clientY, rowIdx, colName, value });
                   }}
                 />
               );
@@ -1379,7 +1455,6 @@ const NewDataRow = memo(function NewDataRow({
   visibleColumns,
   columnInfos,
   onEditCell,
-  findQuery,
   isCurrentMatch,
   hasMatch,
 }: {
@@ -1389,7 +1464,6 @@ const NewDataRow = memo(function NewDataRow({
   visibleColumns: string[];
   columnInfos: ColumnInfo[];
   onEditCell: (colName: string, val: string | null) => void;
-  findQuery?: string;
   isCurrentMatch?: (colName: string) => boolean;
   hasMatch?: (colName: string) => boolean;
 }) {
@@ -1413,7 +1487,6 @@ const NewDataRow = memo(function NewDataRow({
             colInfo={colInfo}
             isEdited={value !== null}
             onSave={(val) => onEditCell(col, val)}
-            findQuery={findQuery}
             isMatch={hasMatch?.(col)}
             isCurrent={isCurrentMatch?.(col)}
           />
@@ -1434,9 +1507,11 @@ const DataRow = memo(function DataRow({
   onToggleSelect,
   editedCells,
   onEditCell,
-  findQuery,
   isCurrentMatch,
   hasMatch,
+  selectedCellKey,
+  onCellSelect,
+  onCellContextMenu,
 }: {
   row: (string | number | null)[];
   rowIdx: number;
@@ -1448,9 +1523,11 @@ const DataRow = memo(function DataRow({
   onToggleSelect: () => void;
   editedCells: Record<string, string | null>;
   onEditCell: (colName: string, val: string | null) => void;
-  findQuery?: string;
   isCurrentMatch?: (colName: string) => boolean;
   hasMatch?: (colName: string) => boolean;
+  selectedCellKey?: string | null;
+  onCellSelect?: (colName: string) => void;
+  onCellContextMenu?: (e: React.MouseEvent, colName: string, value: string | number | null) => void;
 }) {
   return (
     <tr
@@ -1487,9 +1564,11 @@ const DataRow = memo(function DataRow({
             colInfo={colInfo}
             isEdited={isEdited}
             onSave={(val) => onEditCell(col, val)}
-            findQuery={findQuery}
             isMatch={hasMatch?.(col)}
             isCurrent={isCurrentMatch?.(col)}
+            isSelected={selectedCellKey === `${rowIdx}:${col}`}
+            onSelect={() => onCellSelect?.(col)}
+            onCellContextMenu={(e) => onCellContextMenu?.(e, col, value ?? null)}
           />
         );
       })}
@@ -1503,18 +1582,22 @@ const EditableCell = memo(function EditableCell({
   colInfo,
   isEdited,
   onSave,
-  findQuery,
   isMatch,
   isCurrent,
+  isSelected,
+  onSelect,
+  onCellContextMenu,
 }: {
   cellId?: string;
   value: string | number | null;
   colInfo?: ColumnInfo;
   isEdited: boolean;
   onSave: (val: string | null) => void;
-  findQuery?: string;
   isMatch?: boolean;
   isCurrent?: boolean;
+  isSelected?: boolean;
+  onSelect?: () => void;
+  onCellContextMenu?: (e: React.MouseEvent) => void;
 }) {
   const [isEditing, setIsEditing] = useState(false);
   const [localValue, setLocalValue] = useState<string>(value === null ? "" : String(value));
@@ -1570,13 +1653,16 @@ const EditableCell = memo(function EditableCell({
     <td
       id={cellId}
       className={cn(
-        "px-2 py-0 border-r h-7 min-w-[80px] relative group/cell",
+        "px-2 py-0 border-r h-7 min-w-[80px] relative group/cell cursor-default",
         isNumeric && "text-right tabular-nums",
         isEdited && "bg-amber-500/10",
         isCurrent && "ring-2 ring-primary ring-inset z-10 bg-primary/20",
         !isCurrent && isMatch && "bg-yellow-500/30",
+        isSelected && !isCurrent && "ring-1 ring-primary/60 bg-primary/8",
       )}
+      onClick={onSelect}
       onDoubleClick={() => setIsEditing(true)}
+      onContextMenu={onCellContextMenu}
       title={value === null ? "NULL" : String(value)}
     >
       {value === null ? (
