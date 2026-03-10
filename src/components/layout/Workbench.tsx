@@ -3,6 +3,7 @@ import { useLayoutStore, ActivityView } from "@/state/layoutStore";
 import { useProfilesStore } from "@/state/profilesStore";
 import { useSchemaStore } from "@/state/schemaStore";
 import { useModelsStore } from "@/state/modelsStore";
+import { useTasksStore } from "@/state/tasksStore";
 import { useAppVersion } from "@/hooks/useAppVersion";
 import { Sash } from "./Sash";
 import { EditorNode } from "./EditorNode";
@@ -41,6 +42,8 @@ export function Workbench() {
   const appVersion = useAppVersion();
   const connectedProfiles = useSchemaStore((s) => s.connectedProfiles);
   const connectedCount = Object.keys(connectedProfiles).length;
+  const tasks = useTasksStore((s) => s.tasks);
+  const pendingTaskCount = tasks.filter((t) => t.status !== "done").length;
   const activityBarWidth = useLayoutStore((s) => s.activityBarWidth);
   const primarySidebarWidth = useLayoutStore((s) => s.primarySidebarWidth);
   const isPrimarySidebarVisible = useLayoutStore(
@@ -96,6 +99,7 @@ export function Workbench() {
   useEffect(() => {
     useProfilesStore.getState().loadProfiles();
     useModelsStore.getState().loadProviders();
+    useTasksStore.getState().loadTasks();
   }, []);
 
   // Connection Keep-Alive Loop
@@ -155,6 +159,8 @@ export function Workbench() {
             const badge =
               item.id === "explorer" && connectedCount > 0
                 ? connectedCount
+                : item.id === "tasks" && pendingTaskCount > 0
+                ? pendingTaskCount
                 : null;
             return (
               <button
