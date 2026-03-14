@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "workgrid-studio",
+  "productName": "WorkGrid Studio",
   "version": "0.1.0",
   "identifier": "com.skiddph.workgrid-studio",
   "build": {
@@ -12,9 +12,11 @@
   "app": {
     "windows": [
       {
-        "title": "workgrid-studio",
-        "width": 800,
-        "height": 600
+        "title": "WorkGrid Studio",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 800,
+        "minHeight": 500
       }
     ],
     "security": {

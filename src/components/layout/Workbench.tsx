@@ -1,0 +1,978 @@
+import { useState, useEffect, useRef, useCallback } from "react";
+import { useLayoutStore, ActivityView } from "@/state/layoutStore";
+import { useProfilesStore } from "@/state/profilesStore";
+import { useSchemaStore } from "@/state/schemaStore";
+import { useModelsStore } from "@/state/modelsStore";
+import { useTasksStore } from "@/state/tasksStore";
+import { useAppVersion } from "@/hooks/useAppVersion";
+import { Sash } from "./Sash";
+import { EditorNode } from "./EditorNode";
+import { ExplorerTree } from "@/components/views/ExplorerTree";
+import { readProfileLog, clearProfileLog, getAiLogs, clearAiLogs, AiLogEntry, dbPing } from "@/lib/db";
+import { cn } from "@/lib/utils/cn";
+import { useProfileManager } from "@/hooks/useProfileManager";
+import { useAppStore, StatusBarInfo } from "@/state/appStore";
+import {
+  FolderTree,
+  CheckSquare,
+  PanelBottom,
+  Sidebar,
+  Server,
+  Bot,
+  Sun,
+  Moon,
+  Monitor,
+  Settings,
+  Trash2,
+  RefreshCw,
+  Sparkles,
+  Columns2,
+  ArrowDownToLine,
+} from "lucide-react";
+import { ServersSidebar } from "@/components/views/ServersSidebar";
+import { AiChatSidebar } from "@/components/views/AiChatSidebar";
+
+const activityItems: { id: ActivityView; icon: any; label: string }[] = [
+  { id: "explorer", icon: FolderTree, label: "Explorer" },
+  { id: "servers", icon: Server, label: "Servers" },
+  { id: "models", icon: Bot, label: "AI Models" },
+  { id: "tasks", icon: CheckSquare, label: "Tasks" },
+];
+
+export function Workbench() {
+  const appVersion = useAppVersion();
+  const connectedProfiles = useSchemaStore((s) => s.connectedProfiles);
+  const connectedCount = Object.keys(connectedProfiles).length;
+  const tasks = useTasksStore((s) => s.tasks);
+  const pendingTaskCount = tasks.filter((t) => t.status !== "done").length;
+  const activityBarWidth = useLayoutStore((s) => s.activityBarWidth);
+  const primarySidebarWidth = useLayoutStore((s) => s.primarySidebarWidth);
+  const isPrimarySidebarVisible = useLayoutStore(
+    (s) => s.isPrimarySidebarVisible,
+  );
+  const isBottomPanelVisible = useLayoutStore((s) => s.isBottomPanelVisible);
+  const isBottomPanelSplit = useLayoutStore((s) => s.isBottomPanelSplit);
+  const bottomPanelSplitRatio = useLayoutStore((s) => s.bottomPanelSplitRatio);
+  const setBottomPanelSplitRatio = useLayoutStore((s) => s.setBottomPanelSplitRatio);
+  const bottomPanelHeight = useLayoutStore((s) => s.bottomPanelHeight);
+  const activeView = useLayoutStore((s) => s.activeView);
+  const editorTree = useLayoutStore((s) => s.editorTree);
+  const setActiveView = useLayoutStore((s) => s.setActiveView);
+  const adjustSidebarWidth = useLayoutStore((s) => s.adjustSidebarWidth);
+  const adjustPanelHeight = useLayoutStore((s) => s.adjustPanelHeight);
+  const toggleSidebar = useLayoutStore((s) => s.toggleSidebar);
+  const togglePanel = useLayoutStore((s) => s.togglePanel);
+  const openTab = useLayoutStore((s) => s.openTab);
+  const isSecondarySidebarVisible = useLayoutStore((s) => s.isSecondarySidebarVisible);
+  const secondarySidebarWidth = useLayoutStore((s) => s.secondarySidebarWidth);
+  const toggleSecondarySidebar = useLayoutStore((s) => s.toggleSecondarySidebar);
+  const adjustSecondarySidebarWidth = useLayoutStore((s) => s.adjustSecondarySidebarWidth);
+  const bottomPanelRef = useRef<HTMLDivElement>(null);
+
+  const handleBottomPanelSplitDrag = useCallback(
+    (delta: number) => {
+      if (!bottomPanelRef.current) return;
+      const width = bottomPanelRef.current.clientWidth;
+      if (width === 0) return;
+      const currentWidth = width * bottomPanelSplitRatio;
+      const newWidth = currentWidth + delta;
+      setBottomPanelSplitRatio(newWidth / width);
+    },
+    [bottomPanelSplitRatio, setBottomPanelSplitRatio]
+  );
+  
+  const { handleConnect } = useProfileManager();
+
+  // Theme Toggle Logic
+  const globalPrefs = useProfilesStore((s) => s.globalPreferences);
+  const setGlobalPrefs = useProfilesStore((s) => s.setGlobalPreferences);
+  const theme = globalPrefs.theme || "system";
+
+  const handleToggleTheme = () => {
+    let next: "light" | "dark" | "system" = "system";
+    if (theme === "dark") next = "light";
+    else if (theme === "light") next = "system";
+    else next = "dark";
+    setGlobalPrefs({ ...globalPrefs, theme: next });
+  };
+
+  // App Initialization
+  useEffect(() => {
+    useProfilesStore.getState().loadProfiles();
+    useModelsStore.getState().loadProviders();
+    useTasksStore.getState().loadTasks();
+    useLayoutStore.getState().loadLayoutPrefs();
+  }, []);
+
+  // Connection Keep-Alive Loop
+  useEffect(() => {
+    const pinger = setInterval(async () => {
+      const { profiles, setConnectionStatus } = useProfilesStore.getState();
+      const connected = profiles.filter((p) => p.connectionStatus === "connected");
+      for (const p of connected) {
+        try {
+          await dbPing(p.id);
+        } catch {
+          console.warn(`[Keep-Alive] Ping failed for ${p.id}, marking error and reconnecting...`);
+          setConnectionStatus(p.id, "error");
+          // Attempt a silent reconnect via the manager
+          await handleConnect(p.id);
+        }
+      }
+    }, 15_000); // 15 seconds
+    
+    return () => clearInterval(pinger);
+  }, [handleConnect]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.ctrlKey || e.metaKey) {
+        if (e.key === "`") {
+          e.preventDefault();
+          togglePanel();
+        } else if (e.key.toLowerCase() === "b") {
+          e.preventDefault();
+          toggleSidebar();
+        } else if (e.key.toLowerCase() === "n") {
+          e.preventDefault();
+          e.stopPropagation();
+          useLayoutStore.getState().openTab({ title: "New Query", type: "sql", meta: {} });
+        } else if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "t") {
+          e.preventDefault();
+          useLayoutStore.getState().restoreLastClosedTab();
+        }
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown, true);
+    return () => window.removeEventListener("keydown", handleKeyDown, true);
+  }, [togglePanel, toggleSidebar]);
+
+  return (
+    <div className="flex h-screen w-screen overflow-hidden bg-background text-foreground">
+      {/* Activity Bar */}
+      <div
+        className="shrink-0 bg-muted/20 border-r flex flex-col items-center py-2 justify-between"
+        style={{ width: activityBarWidth }}
+      >
+        <div className="flex flex-col items-center gap-1">
+          {activityItems.map((item) => {
+            const Icon = item.icon;
+            const isActive = activeView === item.id && isPrimarySidebarVisible;
+            const badge =
+              item.id === "explorer" && connectedCount > 0
+                ? connectedCount
+                : item.id === "tasks" && pendingTaskCount > 0
+                ? pendingTaskCount
+                : null;
+            return (
+              <button
+                key={item.id}
+                onClick={() => setActiveView(item.id)}
+                className={cn(
+                  "w-10 h-10 flex items-center justify-center rounded-md transition-colors relative",
+                  isActive
+                    ? "text-foreground bg-accent"
+                    : "text-muted-foreground hover:text-foreground hover:bg-accent/50",
+                )}
+                title={item.label}
+              >
+                {isActive && (
+                  <div className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-5 bg-foreground rounded-r" />
+                )}
+                <Icon className="w-5 h-5" />
+                {badge !== null && (
+                  <span className="absolute top-1 right-1 min-w-[14px] h-[14px] rounded-full bg-primary text-primary-foreground text-[9px] font-bold flex items-center justify-center px-0.5 leading-none">
+                    {badge}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Bottom icons */}
+        <div className="flex flex-col items-center gap-1 mb-2">
+          <button
+            onClick={() => openTab({ title: "Settings", type: "settings", meta: {} })}
+            className="w-10 h-10 flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors"
+            title="Settings"
+          >
+            <Settings className="w-5 h-5" />
+          </button>
+
+          <button
+            onClick={toggleSecondarySidebar}
+            className={cn(
+              "w-10 h-10 flex items-center justify-center rounded-md transition-colors",
+              isSecondarySidebarVisible
+                ? "text-indigo-400 bg-accent"
+                : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
+            )}
+            title="AI Chat"
+          >
+            <Sparkles className="w-5 h-5" />
+          </button>
+
+          <button
+            onClick={handleToggleTheme}
+            className="w-10 h-10 flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors"
+            title={`Theme: ${theme.charAt(0).toUpperCase() + theme.slice(1)}`}
+          >
+            {theme === "dark" && <Moon className="w-5 h-5" />}
+            {theme === "light" && <Sun className="w-5 h-5" />}
+            {theme === "system" && <Monitor className="w-5 h-5" />}
+          </button>
+          <button
+            onClick={toggleSidebar}
+            className="w-10 h-10 flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors"
+            title="Toggle Sidebar (Ctrl+B)"
+          >
+            <Sidebar className="w-5 h-5" />
+          </button>
+          <button
+            onClick={togglePanel}
+            className="w-10 h-10 flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors"
+            title="Toggle Panel (Ctrl+`)"
+          >
+            <PanelBottom className="w-5 h-5" />
+          </button>
+        </div>
+      </div>
+
+      {/* Primary Sidebar */}
+      {isPrimarySidebarVisible && (
+        <div
+          className="relative bg-muted/10 border-r flex flex-col"
+          style={{ width: primarySidebarWidth }}
+        >
+          {activeView !== "servers" && (
+            <div className="h-9 px-4 flex items-center border-b shrink-0 bg-background/50">
+              <span className="font-semibold text-xs uppercase tracking-wider">
+                {activityItems.find((i) => i.id === activeView)?.label ??
+                  "Explorer"}
+              </span>
+            </div>
+          )}
+          <div className="flex-1 overflow-auto">
+            {activeView === "explorer" && <ExplorerTree />}
+            {activeView === "servers" && <ServersSidebar />}
+            {activeView === "models" && (
+              <div className="flex flex-col gap-2 p-2">
+                <p className="text-xs text-muted-foreground mb-1">
+                  AI Providers
+                </p>
+                <button
+                  onClick={() =>
+                    openTab({ title: "AI Models", type: "models" })
+                  }
+                  className="w-full text-left text-sm px-3 py-2 rounded border bg-card hover:bg-accent transition-colors"
+                >
+                  Manage Models →
+                </button>
+              </div>
+            )}
+            {activeView === "tasks" && (
+              <div className="flex flex-col gap-2 p-2">
+                <p className="text-xs text-muted-foreground mb-1">
+                  Task tracker
+                </p>
+                <button
+                  onClick={() => openTab({ title: "Tasks", type: "tasks" })}
+                  className="w-full text-left text-sm px-3 py-2 rounded border bg-card hover:bg-accent transition-colors"
+                >
+                  Open Tasks →
+                </button>
+              </div>
+            )}
+          </div>
+          <Sash
+            direction="vertical"
+            className="right-0 translate-x-0.5"
+            onDrag={adjustSidebarWidth}
+          />
+        </div>
+      )}
+
+      {/* Main Content Area */}
+      <div className="flex-1 flex flex-col relative min-w-0">
+        {/* Editor Group */}
+        <div className="flex-1 flex overflow-hidden min-h-0 min-w-0">
+          <div className="flex-1 relative p-0.5 min-w-0 min-h-0">
+            <EditorNode tree={editorTree} />
+          </div>
+
+          {/* Secondary Sidebar (AI Chat) */}
+          {isSecondarySidebarVisible && (
+            <div
+              className="relative bg-muted/10 border-l flex flex-col shrink-0"
+              style={{ width: secondarySidebarWidth }}
+            >
+              <Sash
+                direction="horizontal"
+                className="absolute top-0 bottom-0 left-0 w-1 cursor-col-resize"
+                onDrag={(delta) => adjustSecondarySidebarWidth(-delta)}
+              />
+              <AiChatSidebar />
+            </div>
+          )}
+        </div>
+
+        {/* Bottom Panel */}
+        {isBottomPanelVisible && (
+          <div
+            ref={bottomPanelRef}
+            className="relative bg-muted/10 border-t flex flex-row"
+            style={{ height: bottomPanelHeight }}
+          >
+            <Sash
+              direction="horizontal"
+              className="top-0 -translate-y-0.5"
+              onDrag={(delta) => adjustPanelHeight(-delta)}
+            />
+            {isBottomPanelSplit ? (
+              <>
+                <div
+                  className="relative flex flex-col min-w-0"
+                  style={{ width: `${bottomPanelSplitRatio * 100}%` }}
+                >
+                  <BottomPanel />
+                  <Sash
+                    direction="vertical"
+                    className="right-0 translate-x-0.5"
+                    onDrag={handleBottomPanelSplitDrag}
+                  />
+                </div>
+                <div className="relative flex flex-col flex-1 min-w-0 border-l">
+                  <BottomPanel isSecondary />
+                </div>
+              </>
+            ) : (
+              <div className="flex-1 flex flex-col min-w-0 relative">
+                <BottomPanel />
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Status Bar */}
+        <StatusBar appVersion={appVersion} />
+      </div>
+    </div>
+  );
+}
+
+// ─── Bottom Panel ───────────────────────────────────────────────────
+
+type PanelTab = "output" | "problems" | "logs" | "ailogs";
+type LogFilter = "mysql" | "error";
+
+interface ProblemItem {
+  id: string;
+  severity: "error" | "warning" | "info";
+  timestamp: string;
+  profileName: string;
+  profileColor: string;
+  message: string;
+}
+
+function parseProblems(
+  profileId: string,
+  profileName: string,
+  profileColor: string,
+  raw: string,
+): ProblemItem[] {
+  if (!raw.trim()) return [];
+  return raw
+    .split("\n")
+    .filter((line) => line.trim())
+    .map((line, i) => {
+      // Format: [2026-02-28 05:00:09] ERROR: Connection failed ...
+      const tsMatch = line.match(/^\[([^\]]+)\]\s*/);
+      const timestamp = tsMatch ? tsMatch[1] : "";
+      const rest = tsMatch ? line.slice(tsMatch[0].length) : line;
+
+      let severity: ProblemItem["severity"] = "error";
+      let message = rest;
+
+      if (rest.startsWith("ERROR:")) {
+        severity = "error";
+        message = rest.slice(7).trim();
+      } else if (rest.startsWith("WARNING:")) {
+        severity = "warning";
+        message = rest.slice(9).trim();
+      } else if (rest.startsWith("INFO:")) {
+        severity = "info";
+        message = rest.slice(6).trim();
+      }
+
+      // Classify specific errors
+      if (message.includes("Connection failed")) severity = "error";
+      if (message.includes("Query error")) severity = "error";
+      if (message.includes("Lock error")) severity = "warning";
+      if (message.includes("Not connected")) severity = "warning";
+
+      return {
+        id: `${profileId}-${i}`,
+        severity,
+        timestamp,
+        profileName,
+        profileColor,
+        message,
+      };
+    });
+}
+
+function BottomPanel({ isSecondary }: { isSecondary?: boolean }) {
+  const profiles = useProfilesStore((s) => s.profiles);
+  const connectedProfiles = profiles.filter(
+    (p) => p.connectionStatus === "connected",
+  );
+
+  const isBottomPanelSplit = useLayoutStore((s) => s.isBottomPanelSplit);
+  const toggleBottomPanelSplit = useLayoutStore((s) => s.toggleBottomPanelSplit);
+
+  const [activeTab, setActiveTab] = useState<PanelTab>(isSecondary ? "logs" : "output");
+  const [logFilter, setLogFilter] = useState<LogFilter>("mysql");
+  const [selectedProfileId, setSelectedProfileId] = useState<string>("");
+  const [logContent, setLogContent] = useState<string>("");
+  const [problems, setProblems] = useState<ProblemItem[]>([]);
+  const [aiLogs, setAiLogs] = useState<AiLogEntry[]>([]);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [autoScroll, setAutoScroll] = useState(true);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Auto-select first connected profile
+  useEffect(() => {
+    if (!selectedProfileId && connectedProfiles.length > 0) {
+      setSelectedProfileId(connectedProfiles[0].id);
+    }
+    if (
+      selectedProfileId &&
+      !connectedProfiles.find((p) => p.id === selectedProfileId)
+    ) {
+      setSelectedProfileId(connectedProfiles[0]?.id ?? "");
+    }
+  }, [connectedProfiles, selectedProfileId]);
+
+  // ── Logs fetching ───────────────────────────────────────────────
+  const fetchLogs = useCallback(async () => {
+    if (!selectedProfileId || activeTab !== "logs") return;
+    try {
+      const content = await readProfileLog(selectedProfileId, logFilter);
+      setLogContent(content);
+    } catch (e) {
+      setLogContent(`Error reading logs: ${e}`);
+    }
+  }, [selectedProfileId, logFilter, activeTab]);
+
+  useEffect(() => {
+    fetchLogs();
+    if (activeTab !== "logs") return;
+    const interval = setInterval(fetchLogs, 2000);
+    return () => clearInterval(interval);
+  }, [fetchLogs, activeTab]);
+
+  // ── Problems fetching ───────────────────────────────────────────
+  const fetchProblems = useCallback(async () => {
+    // Read directly from the store to avoid referential dependency issues
+    // that cause infinite re-render loops when the component updates
+    const stateProfiles = useProfilesStore.getState().profiles;
+    const currentConnected = stateProfiles.filter((p) => p.connectionStatus === "connected");
+
+    if (currentConnected.length === 0) {
+      setProblems([]);
+      return;
+    }
+    const allProblems: ProblemItem[] = [];
+    for (const p of currentConnected) {
+      try {
+        const raw = await readProfileLog(p.id, "error");
+        const parsed = parseProblems(p.id, p.name, p.color, raw);
+        allProblems.push(...parsed);
+      } catch {
+        // Skip profiles with read errors
+      }
+    }
+    // Also check profiles with error status that aren't connected
+    for (const p of stateProfiles.filter((p) => p.connectionStatus === "error")) {
+      allProblems.push({
+        id: `status-${p.id}`,
+        severity: "error",
+        timestamp: p.lastConnectedAt
+          ? new Date(p.lastConnectedAt).toLocaleString()
+          : "Unknown",
+        profileName: p.name,
+        profileColor: p.color,
+        message: `Connection to ${p.host}:${p.port} is in error state`,
+      });
+    }
+    // Sort newest first
+    allProblems.reverse();
+    setProblems(allProblems);
+  }, []);
+
+  useEffect(() => {
+    fetchProblems();
+    // Refresh problems every 3 seconds when tab is active or in background
+    const interval = setInterval(fetchProblems, 3000);
+    return () => clearInterval(interval);
+  }, [fetchProblems]);
+
+  // ── AI Logs fetching ────────────────────────────────────────────
+  const fetchAiLogs = useCallback(async () => {
+    if (activeTab !== "ailogs") return;
+    try {
+      const logs = await getAiLogs();
+      setAiLogs(logs);
+    } catch (e) {
+      console.error("Failed to fetch AI logs", e);
+    }
+  }, [activeTab]);
+
+  useEffect(() => {
+    fetchAiLogs();
+    if (activeTab !== "ailogs") return;
+    const interval = setInterval(fetchAiLogs, 2000);
+    return () => clearInterval(interval);
+  }, [fetchAiLogs, activeTab]);
+
+  // Auto-scroll to bottom when log content changes
+  useEffect(() => {
+    if (scrollRef.current && (activeTab === "logs" || activeTab === "ailogs") && autoScroll) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [logContent, aiLogs, activeTab, autoScroll]);
+
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    if (activeTab === "logs") await fetchLogs();
+    if (activeTab === "problems") await fetchProblems();
+    if (activeTab === "ailogs") await fetchAiLogs();
+    setTimeout(() => setIsRefreshing(false), 300);
+  };
+
+  const handleClear = async () => {
+    if (activeTab === "logs") {
+      if (!selectedProfileId) return;
+      try {
+        await clearProfileLog(selectedProfileId, logFilter);
+        setLogContent("");
+      } catch (e) {
+        console.error("Clear log error:", e);
+      }
+    } else if (activeTab === "problems") {
+      // Clear all error logs for all connected profiles
+      for (const p of connectedProfiles) {
+        try {
+          await clearProfileLog(p.id, "error");
+        } catch {
+          // ignore
+        }
+      }
+      setProblems([]);
+    } else if (activeTab === "ailogs") {
+      try {
+        await clearAiLogs();
+        setAiLogs([]);
+      } catch (e) {
+        console.error("Clear AI log error:", e);
+      }
+    }
+  };
+
+  const errorCount = problems.filter((p) => p.severity === "error").length;
+  const warningCount = problems.filter((p) => p.severity === "warning").length;
+
+  return (
+    <>
+      {/* Tab bar */}
+      <div className="h-8 border-b flex items-center px-2 gap-1 shrink-0">
+        {/* Output tab */}
+        <button
+          onClick={() => setActiveTab("output")}
+          className={cn(
+            "px-3 h-full text-xs transition-colors",
+            activeTab === "output"
+              ? "text-foreground border-b-2 border-primary"
+              : "text-muted-foreground hover:text-foreground",
+          )}
+        >
+          Output
+        </button>
+
+        {/* Problems tab with badge */}
+        <button
+          onClick={() => setActiveTab("problems")}
+          className={cn(
+            "px-3 h-full text-xs transition-colors flex items-center gap-1.5",
+            activeTab === "problems"
+              ? "text-foreground border-b-2 border-primary"
+              : "text-muted-foreground hover:text-foreground",
+          )}
+        >
+          Problems
+          {(errorCount > 0 || warningCount > 0) && (
+            <span className="flex items-center gap-1">
+              {errorCount > 0 && (
+                <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-red-500/20 text-red-400">
+                  {errorCount}
+                </span>
+              )}
+              {warningCount > 0 && (
+                <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-yellow-500/20 text-yellow-400">
+                  {warningCount}
+                </span>
+              )}
+            </span>
+          )}
+        </button>
+
+        {/* Logs tab */}
+        <button
+          onClick={() => setActiveTab("logs")}
+          className={cn(
+            "px-3 h-full text-xs transition-colors",
+            activeTab === "logs"
+              ? "text-foreground border-b-2 border-primary"
+              : "text-muted-foreground hover:text-foreground",
+          )}
+        >
+          Logs
+        </button>
+
+        {/* AI Logs tab */}
+        <button
+          onClick={() => setActiveTab("ailogs")}
+          className={cn(
+            "px-3 h-full text-xs transition-colors flex items-center gap-1",
+            activeTab === "ailogs"
+              ? "text-foreground border-b-2 border-primary"
+              : "text-muted-foreground hover:text-foreground",
+          )}
+        >
+          <Bot className="w-3 h-3" />
+          AI Logs
+        </button>
+
+        {/* Right-side controls */}
+        {(activeTab === "logs" || activeTab === "problems" || activeTab === "ailogs") && (
+          <div className="ml-auto flex items-center gap-2">
+            {/* Logs-specific: Profile selector */}
+            {activeTab === "logs" && connectedProfiles.length > 0 && (
+              <select
+                value={selectedProfileId}
+                onChange={(e) => setSelectedProfileId(e.target.value)}
+                className="h-6 text-[11px] rounded border bg-secondary/50 text-foreground px-1.5 outline-none"
+              >
+                {connectedProfiles.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+            )}
+
+            {/* Logs-specific: Log type filter */}
+            {activeTab === "logs" && (
+              <select
+                value={logFilter}
+                onChange={(e) => setLogFilter(e.target.value as LogFilter)}
+                className="h-6 text-[11px] rounded border bg-secondary/50 text-foreground px-1.5 outline-none"
+              >
+                <option value="mysql">Query Log</option>
+                <option value="error">Error Log</option>
+              </select>
+            )}
+
+            {/* Refresh */}
+            <button
+              onClick={handleRefresh}
+              className="p-1 text-muted-foreground hover:text-foreground transition-colors"
+              title="Refresh"
+            >
+              <RefreshCw
+                className={cn("w-3.5 h-3.5", isRefreshing && "animate-spin")}
+              />
+            </button>
+
+            {/* Clear */}
+            <button
+              onClick={handleClear}
+              className="p-1 text-muted-foreground hover:text-red-400 transition-colors"
+              title={
+                activeTab === "problems" ? "Clear all problems" : "Clear log"
+              }
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+            
+            {/* Auto Scroll Toggle */}
+            {(activeTab === "logs" || activeTab === "ailogs") && (
+              <button
+                onClick={() => setAutoScroll(!autoScroll)}
+                className={cn(
+                  "p-1 transition-colors relative",
+                  autoScroll ? "text-primary hover:text-primary/80" : "text-muted-foreground hover:text-foreground"
+                )}
+                title="Toggle Auto-Scroll"
+              >
+                <ArrowDownToLine className="w-3.5 h-3.5" />
+                {autoScroll && (
+                  <span className="absolute bottom-1 right-1 w-1.5 h-1.5 bg-primary rounded-full shadow-sm shadow-foreground/20" />
+                )}
+              </button>
+            )}
+
+            {/* Split Panel Toggle */}
+            <button
+              onClick={toggleBottomPanelSplit}
+              className={cn(
+                "p-1 transition-colors",
+                isBottomPanelSplit && !isSecondary ? "text-primary hover:text-primary/80" : "text-muted-foreground hover:text-foreground"
+              )}
+              title={isBottomPanelSplit && !isSecondary ? "Close Split View" : "Split View"}
+            >
+              <Columns2 className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
+        
+        {/* If right-side controls aren't rendered, we still need the split button far right for 'output' tab */}
+        {!(activeTab === "logs" || activeTab === "problems" || activeTab === "ailogs") && (
+          <div className="ml-auto flex items-center gap-2">
+            {/* Split Panel Toggle */}
+            <button
+              onClick={toggleBottomPanelSplit}
+              className={cn(
+                "p-1 transition-colors",
+                isBottomPanelSplit && !isSecondary ? "text-primary hover:text-primary/80" : "text-muted-foreground hover:text-foreground"
+              )}
+              title={isBottomPanelSplit && !isSecondary ? "Close Split View" : "Split View"}
+            >
+              <Columns2 className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Panel content */}
+      <div ref={scrollRef} className="flex-1 overflow-auto">
+        {/* ── Output ─────────────────────────────────────────── */}
+        {activeTab === "output" && (
+          <div className="p-3 font-mono text-xs leading-5 text-muted-foreground">
+            WorkGrid Studio ready.
+          </div>
+        )}
+
+        {/* ── Problems ───────────────────────────────────────── */}
+        {activeTab === "problems" && (
+          <div className="text-xs">
+            {problems.length === 0 ? (
+              <div className="p-3 text-muted-foreground font-mono">
+                No problems detected.
+              </div>
+            ) : (
+              <div className="divide-y divide-border/40">
+                {problems.map((item) => (
+                  <div
+                    key={item.id}
+                    className={cn(
+                      "flex items-start gap-2 px-3 py-1.5 hover:bg-accent/30 transition-colors",
+                      item.severity === "error" && "bg-red-500/3",
+                      item.severity === "warning" && "bg-yellow-500/3",
+                    )}
+                  >
+                    {/* Severity icon */}
+                    <span className="mt-0.5 shrink-0">
+                      {item.severity === "error" && (
+                        <span className="inline-block w-3.5 h-3.5 rounded-full bg-red-500/20 text-red-400 text-center leading-[14px] text-[9px] font-bold">
+                          ✕
+                        </span>
+                      )}
+                      {item.severity === "warning" && (
+                        <span className="inline-block w-3.5 h-3.5 rounded-full bg-yellow-500/20 text-yellow-400 text-center leading-[14px] text-[9px] font-bold">
+                          !
+                        </span>
+                      )}
+                      {item.severity === "info" && (
+                        <span className="inline-block w-3.5 h-3.5 rounded-full bg-blue-500/20 text-blue-400 text-center leading-[14px] text-[9px] font-bold">
+                          i
+                        </span>
+                      )}
+                    </span>
+
+                    {/* Message */}
+                    <span className="flex-1 font-mono text-foreground/80 break-all leading-relaxed">
+                      {item.message}
+                    </span>
+
+                    {/* Profile badge */}
+                    <span className="shrink-0 flex items-center gap-1 ml-2">
+                      <span
+                        className="w-2 h-2 rounded-full shrink-0"
+                        style={{ backgroundColor: item.profileColor }}
+                      />
+                      <span className="text-[10px] text-muted-foreground whitespace-nowrap">
+                        {item.profileName}
+                      </span>
+                    </span>
+
+                    {/* Timestamp */}
+                    <span className="shrink-0 text-[10px] text-muted-foreground/50 font-mono whitespace-nowrap">
+                      {item.timestamp}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── Logs ───────────────────────────────────────────── */}
+        {activeTab === "logs" && (
+          <div className="p-3 font-mono text-xs leading-5">
+            {connectedProfiles.length === 0 ? (
+              <span className="text-muted-foreground">
+                Connect to a database to view logs.
+              </span>
+            ) : logContent ? (
+              <pre className="whitespace-pre-wrap break-all text-muted-foreground">
+                {logContent.split("\n").map((line, i) => (
+                  <div
+                    key={i}
+                    className={cn(
+                      line.includes("ERROR") && "text-red-400",
+                      line.includes("INFO") && "text-blue-400/70",
+                      line.includes("QUERY") &&
+                      !line.includes("ERROR") &&
+                      "text-foreground/80",
+                    )}
+                  >
+                    {line}
+                  </div>
+                ))}
+              </pre>
+            ) : (
+              <span className="text-muted-foreground">
+                No log entries yet. Interact with the database to see queries
+                here.
+              </span>
+            )}
+          </div>
+        )}
+
+        {/* ── AI Logs ───────────────────────────────────────────── */}
+        {activeTab === "ailogs" && (
+          <div className="min-w-max text-xs">
+            {aiLogs.length === 0 ? (
+              <div className="p-3 text-muted-foreground font-mono">
+                No AI transactions logged.
+              </div>
+            ) : (
+              <table className="w-full text-left font-mono border-collapse">
+                <thead className="bg-muted/50 sticky top-0 border-b border-border/40 select-none">
+                  <tr>
+                    <th className="py-2 px-3 tracking-tighter hover:bg-muted/50 bg-background text-foreground/70 cursor-pointer min-w-[140px] sticky left-0 z-10 font-normal">
+                      Timestamp
+                    </th>
+                    <th className="py-2 px-3 font-normal tracking-wide min-w-[120px]">
+                      Model
+                    </th>
+                    <th className="py-2 px-3 font-normal max-w-[200px] truncate">
+                      URI
+                    </th>
+                    <th className="py-2 px-3 font-normal min-w-[200px]">
+                      Payload
+                    </th>
+                    <th className="py-2 px-3 font-normal min-w-[300px]">
+                      Response
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border/40 text-foreground/80">
+                  {aiLogs.map((log) => (
+                    <tr
+                      key={log.id}
+                      className="hover:bg-accent/30 transition-colors group align-top"
+                    >
+                      <td className="py-2 px-3 whitespace-nowrap bg-background group-hover:bg-accent/10 sticky left-0 z-10 border-r border-border/20 text-muted-foreground">
+                        {log.timestamp}
+                      </td>
+                      <td className="py-2 px-3 whitespace-nowrap">
+                        <span className="bg-primary/5 border border-primary/20 text-primary px-1.5 py-0.5 rounded text-[10px]">
+                          {log.model}
+                        </span>
+                      </td>
+                      <td
+                        className="py-2 px-3 truncate max-w-[200px] text-muted-foreground/80"
+                        title={log.uri}
+                      >
+                        {log.uri}
+                      </td>
+                      <td className="py-2 px-3">
+                        <div
+                          className="max-w-[30vw] line-clamp-3 text-muted-foreground cursor-help"
+                          title={log.payload_preview}
+                        >
+                          {log.payload_preview}
+                        </div>
+                      </td>
+                      <td className="py-2 px-3">
+                        <div
+                          className="max-w-[40vw] line-clamp-3 text-muted-foreground cursor-help"
+                          title={log.response_preview}
+                        >
+                          {log.response_preview}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
+// ─── Status Bar ─────────────────────────────────────────────────────
+
+function StatusBar({ appVersion }: { appVersion: string }) {
+  const info = useAppStore((s) => s.statusBarInfo) as StatusBarInfo;
+
+  return (
+    <div className="h-6 bg-primary text-primary-foreground flex items-center px-4 text-xs gap-3 shrink-0 select-none">
+      <span className="font-medium">WorkGrid Studio</span>
+
+      {info.connectionName && (
+        <>
+          <span className="opacity-40">|</span>
+          <span className="opacity-80">{info.connectionName}</span>
+        </>
+      )}
+
+      {info.database && (
+        <>
+          <span className="opacity-40">/</span>
+          <span className="opacity-80 font-mono">{info.database}</span>
+        </>
+      )}
+
+      <span className="ml-auto flex items-center gap-3">
+        {info.rowCount !== undefined && (
+          <span className="opacity-70">{info.rowCount.toLocaleString()} rows</span>
+        )}
+        {info.executionTimeMs !== undefined && (
+          <span className="opacity-70">
+            {info.executionTimeMs < 1000
+              ? `${Math.round(info.executionTimeMs)}ms`
+              : `${(info.executionTimeMs / 1000).toFixed(2)}s`}
+          </span>
+        )}
+        <span className="opacity-60">v{appVersion}</span>
+      </span>
+    </div>
+  );
+}

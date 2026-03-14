@@ -1,0 +1,269 @@
+import { invoke } from "@tauri-apps/api/core";
+
+// ─── Types ──────────────────────────────────────────────────────────
+
+export interface ConnectParams {
+    profile_id: string;
+    host: string;
+    port: number;
+    user: string;
+    password: string;
+    database: string | null;
+    ssl: boolean;
+    ssl_ca_file: string | null;
+    ssl_cert_file: string | null;
+    ssl_key_file: string | null;
+    ssl_reject_unauthorized: boolean;
+    db_type: string;
+    // SSH Tunneling
+    ssh: boolean;
+    ssh_host: string;
+    ssh_port: number;
+    ssh_user: string;
+    ssh_password: string | null;
+    ssh_key_file: string | null;
+    ssh_passphrase: string | null;
+    ssh_strict_key_checking: boolean;
+    ssh_keep_alive_interval: number;
+    ssh_compression: boolean;
+}
+
+export interface ColumnInfo {
+    name: string;
+    col_type: string;
+    nullable: boolean;
+    key: string;           // PRI, MUL, UNI, ""
+    default_val: string | null;
+    extra: string;         // auto_increment, etc.
+}
+
+// ─── Tauri command wrappers ─────────────────────────────────────────
+
+export async function dbConnect(params: ConnectParams): Promise<string> {
+    return invoke<string>("db_connect", { params });
+}
+
+export async function dbDisconnect(profileId: string): Promise<string> {
+    return invoke<string>("db_disconnect", { profileId });
+}
+
+export async function dbPing(profileId: string): Promise<number> {
+    return invoke<number>("db_ping", { profileId });
+}
+
+export async function dbListDatabases(profileId: string): Promise<string[]> {
+    return invoke<string[]>("db_list_databases", { profileId });
+}
+
+export async function dbListTables(profileId: string, database: string): Promise<string[]> {
+    return invoke<string[]>("db_list_tables", { profileId, database });
+}
+
+export async function dbListColumns(profileId: string, database: string, table: string): Promise<ColumnInfo[]> {
+    return invoke<ColumnInfo[]>("db_list_columns", { profileId, database, table });
+}
+
+// ─── Database info (HeidiSQL-style) ─────────────────────────────────
+
+export interface DatabaseInfo {
+    name: string;
+    size_bytes: number;
+    tables: number;
+    views: number;
+    default_collation: string;
+    last_modified: string | null;
+}
+
+export async function dbGetDatabasesInfo(profileId: string): Promise<DatabaseInfo[]> {
+    return invoke<DatabaseInfo[]>("db_get_databases_info", { profileId });
+}
+
+// ─── Table info (HeidiSQL-style) ────────────────────────────────────
+
+export interface TableInfo {
+    name: string;
+    rows: number | null;
+    size_bytes: number | null;
+    created: string | null;
+    updated: string | null;
+    engine: string | null;
+    comment: string | null;
+    type_: string;
+}
+
+export async function dbGetTablesInfo(profileId: string, database: string): Promise<TableInfo[]> {
+    return invoke<TableInfo[]>("db_get_tables_info", { profileId, database });
+}
+
+// ─── Variables ──────────────────────────────────────────────────────
+
+export interface VariableInfo {
+    name: string;
+    session_value: string;
+    global_value: string;
+    scope?: string;
+}
+
+export async function dbGetVariables(profileId: string): Promise<VariableInfo[]> {
+    return invoke<VariableInfo[]>("db_get_variables", { profileId });
+}
+
+export async function dbSetVariable(
+    profileId: string,
+    scope: "SESSION" | "GLOBAL",
+    name: string,
+    value: string
+): Promise<void> {
+    return invoke("db_set_variable", { profileId, scope, name, value });
+}
+
+// ─── Status ────────────────────────────────────────────────────────
+
+export interface StatusInfo {
+    name: string;
+    value: string;
+}
+
+export async function dbGetStatus(profileId: string): Promise<StatusInfo[]> {
+    return invoke<StatusInfo[]>("db_get_status", { profileId });
+}
+
+// ─── Processes ──────────────────────────────────────────────────────
+
+export interface ProcessInfo {
+    id: number;
+    user: string | null;
+    host: string | null;
+    db: string | null;
+    command: string | null;
+    time: number | null;
+    state: string | null;
+    info: string | null;
+}
+
+export async function dbGetProcesses(profileId: string): Promise<ProcessInfo[]> {
+    return invoke<ProcessInfo[]>("db_get_processes", { profileId });
+}
+
+export async function dbKillProcess(profileId: string, processId: number): Promise<void> {
+    return invoke<void>("db_kill_process", { profileId, processId });
+}
+
+// ─── Log commands ───────────────────────────────────────────────────
+
+export type LogType = "mysql" | "error" | "all";
+
+export async function readProfileLog(profileId: string, logType: LogType): Promise<string> {
+    return invoke<string>("read_profile_log", { profileId, logType });
+}
+
+export async function clearProfileLog(profileId: string, logType: LogType): Promise<void> {
+    return invoke<void>("clear_profile_log", { profileId, logType });
+}
+
+export async function dbExecuteQuery(profileId: string, query: string): Promise<void> {
+    return invoke<void>("db_execute_query", { profileId, query });
+}
+
+export interface CollationResponse {
+    collations: string[];
+    default_collation: string;
+}
+
+export async function dbGetCollations(profileId: string): Promise<CollationResponse> {
+    return invoke<CollationResponse>("db_get_collations", { profileId });
+}
+
+// ─── Query execution (returns results) ──────────────────────────────
+
+export interface QueryResultSet {
+    columns: string[];
+    rows: (string | number | null)[][];
+    affected_rows: number;
+    info: string;
+}
+
+export async function dbQuery(profileId: string, query: string): Promise<QueryResultSet[]> {
+    return invoke<QueryResultSet[]>("db_query", { profileId, query });
+}
+
+// ─── Vault (Secure Storage) ─────────────────────────────────────────
+
+export async function vaultSet(key: string, secret: string): Promise<void> {
+    return invoke<void>("vault_set", { key, secret });
+}
+
+export async function vaultGet(key: string): Promise<string> {
+    return invoke<string>("vault_get", { key });
+}
+
+export async function vaultDelete(key: string): Promise<void> {
+    return invoke<void>("vault_delete", { key });
+}
+
+// ─── Encryption ─────────────────────────────────────────────────────
+
+export async function encryptPassword(password: string): Promise<string> {
+    return invoke<string>("encrypt_password", { password });
+}
+
+export async function decryptPassword(encrypted: string): Promise<string> {
+    return invoke<string>("decrypt_password", { encrypted });
+}
+
+// ─── Schema DDL (for AI context) ────────────────────────────────────
+
+export async function dbGetSchemaDdl(profileId: string, database: string): Promise<string> {
+    return invoke<string>("db_get_schema_ddl", { profileId, database });
+}
+
+// ─── AI Generation ──────────────────────────────────────────────────
+
+export async function aiGenerateQuery(
+    providerType: "openai" | "gemini" | "deepseek" | "other",
+    baseUrl: string | null,
+    apiKeyRef: string,
+    modelId: string,
+    prompt: string,
+    schemaContext: string,
+    currentQuery: string
+): Promise<string> {
+    return invoke<string>("ai_generate_query", {
+        providerType,
+        baseUrl,
+        apiKeyRef,
+        modelId,
+        prompt,
+        schemaContext,
+        currentQuery
+    });
+}
+
+// ─── AI Logs ────────────────────────────────────────────────────────
+
+export interface AiLogEntry {
+    id: string;
+    timestamp: string;
+    model: string;
+    uri: string;
+    payload_preview: string;
+    response_preview: string;
+}
+
+export async function getAiLogs(): Promise<AiLogEntry[]> {
+    return invoke<AiLogEntry[]>("get_ai_logs");
+}
+
+export async function clearAiLogs(): Promise<void> {
+    return invoke<void>("clear_ai_logs");
+}
+
+// ─── Data Import ───────────────────────────────────────────────────
+
+export async function dbImportSql(profileId: string, database: string, filePath: string): Promise<string> {
+    return invoke<string>("db_import_sql", { profileId, database, filePath });
+}
+
+export async function dbImportCsv(profileId: string, database: string, table: string, filePath: string): Promise<string> {
+    return invoke<string>("db_import_csv", { profileId, database, table, filePath });
+}
