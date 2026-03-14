@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo, memo } from "react";
+import { useState, useCallback, useEffect, useMemo, memo, useRef } from "react";
 import { useSchemaStore } from "@/state/schemaStore";
 import { CreateDatabaseModal } from "./CreateDatabaseModal";
 import { ConfirmModal } from "./ConfirmModal";
@@ -47,6 +47,7 @@ import {
   TableProperties,
   Rows3,
   Import,
+  Search,
 } from "lucide-react";
 import { SiPostgresql, SiMysql, SiSqlite, SiMariadb } from "react-icons/si";
 
@@ -65,10 +66,34 @@ type ContextMenuTarget =
   | { type: "database"; profileId: string; databases: string[] }
   | { type: "table"; profileId: string; database: string; table: string };
 
+// ─── Highlight helper ────────────────────────────────────────────────
+function HighlightMatch({ text, query }: { text: string; query: string }) {
+  if (!query.trim()) return <>{text}</>;
+  let re: RegExp;
+  try { re = new RegExp(`(${query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`, "gi"); }
+  catch { return <>{text}</>; }
+  const parts = text.split(re);
+  return (
+    <>
+      {parts.map((part, i) =>
+        re.test(part) ? (
+          <mark key={i} className="bg-yellow-400/30 text-foreground rounded-sm px-px">{part}</mark>
+        ) : (
+          <span key={i}>{part}</span>
+        )
+      )}
+    </>
+  );
+}
+
 export function ExplorerTree() {
   const connectedProfiles = useSchemaStore((s) => s.connectedProfiles);
+  const schemaDatabases = useSchemaStore((s) => s.databases);
+  const schemaTables = useSchemaStore((s) => s.tables);
+  const schemaColumns = useSchemaStore((s) => s.columns);
   const profiles = useProfilesStore((s) => s.profiles);
   const setActiveView = useLayoutStore((s) => s.setActiveView);
+  const openTab = useLayoutStore((s) => s.openTab);
   const [expanded, setExpanded] = useState<ExpandedSet>({});
 
   const connectedList = profiles.filter(
@@ -96,6 +121,57 @@ export function ExplorerTree() {
   } | null>(null);
   const [dbFilter, setDbFilter] = useState("");
   const [tableFilter, setTableFilter] = useState("");
+  const [globalSearch, setGlobalSearch] = useState("");
+  const [searchFocusIdx, setSearchFocusIdx] = useState(0);
+  const globalSearchRef = useRef<HTMLInputElement>(null);
+
+  // ── Global search results ────────────────────────────────
+  type SearchResult =
+    | { kind: "database"; profileId: string; profileName: string; database: string }
+    | { kind: "table"; profileId: string; profileName: string; database: string; table: string }
+    | { kind: "column"; profileId: string; profileName: string; database: string; table: string; column: string };
+
+  const searchResults = useMemo((): SearchResult[] => {
+    const q = globalSearch.trim();
+    if (!q) return [];
+    let re: RegExp;
+    try { re = new RegExp(q, "i"); }
+    catch { return []; }
+    const results: SearchResult[] = [];
+    for (const profile of connectedList) {
+      const profileName = connectedProfiles[profile.id]?.name ?? profile.name;
+      const dbs = schemaDatabases[profile.id] ?? [];
+      for (const database of dbs) {
+        if (re.test(database)) {
+          results.push({ kind: "database", profileId: profile.id, profileName, database });
+        }
+        const tables = schemaTables[`${profile.id}::${database}`] ?? [];
+        for (const table of tables) {
+          if (re.test(table)) {
+            results.push({ kind: "table", profileId: profile.id, profileName, database, table });
+          }
+          const cols = schemaColumns[`${profile.id}::${database}::${table}`] ?? [];
+          for (const col of cols) {
+            if (re.test(col.name)) {
+              results.push({ kind: "column", profileId: profile.id, profileName, database, table, column: col.name });
+            }
+          }
+        }
+      }
+    }
+    return results.slice(0, 100);
+  }, [globalSearch, connectedList, connectedProfiles, schemaDatabases, schemaTables, schemaColumns]);
+
+  const openSearchResult = useCallback((result: SearchResult) => {
+    if (result.kind === "database") {
+      openTab({ title: result.database, type: "database-view", meta: { profileId: result.profileId, database: result.database } });
+    } else if (result.kind === "table") {
+      openTab({ title: `Data: ${result.table}`, type: "table-data", meta: { profileId: result.profileId, database: result.database, table: result.table } });
+    } else {
+      openTab({ title: `Data: ${result.table}`, type: "table-data", meta: { profileId: result.profileId, database: result.database, table: result.table } });
+    }
+    setGlobalSearch("");
+  }, [openTab]);
 
   // Hide context menu on click outside
   useEffect(() => {
@@ -144,6 +220,28 @@ export function ExplorerTree() {
 
   return (
     <div className="flex flex-col h-full bg-background select-none text-[12px]">
+      {/* Global Search */}
+      <div className="shrink-0 flex items-center h-7 border-b bg-muted/10 px-2 gap-1.5 focus-within:bg-muted/20 transition-colors">
+        <Search className="w-3 h-3 text-muted-foreground shrink-0" />
+        <input
+          ref={globalSearchRef}
+          type="text"
+          placeholder="Search across all servers…"
+          value={globalSearch}
+          onChange={(e) => { setGlobalSearch(e.target.value); setSearchFocusIdx(0); }}
+          onKeyDown={(e) => {
+            if (e.key === "ArrowDown") { e.preventDefault(); setSearchFocusIdx((i) => Math.min(i + 1, searchResults.length - 1)); }
+            else if (e.key === "ArrowUp") { e.preventDefault(); setSearchFocusIdx((i) => Math.max(i - 1, 0)); }
+            else if (e.key === "Enter" && searchResults.length > 0) { openSearchResult(searchResults[searchFocusIdx]); }
+            else if (e.key === "Escape") { setGlobalSearch(""); }
+          }}
+          className="bg-transparent border-none outline-none w-full text-[11px] text-foreground placeholder:text-muted-foreground/60 h-full"
+        />
+        {globalSearch && (
+          <X className="w-3 h-3 text-muted-foreground cursor-pointer hover:text-foreground shrink-0" onClick={() => setGlobalSearch("")} />
+        )}
+      </div>
+
       {/* Filter Bar */}
       <div className="shrink-0 flex items-center h-6.5 border-b bg-muted/20 text-[11px]">
         <div className="flex-1 flex items-center h-full px-2 border-r focus-within:bg-muted/30 transition-colors">
@@ -180,8 +278,49 @@ export function ExplorerTree() {
         </div>
       </div>
 
+      {/* Global Search Results */}
+      {globalSearch.trim() && (
+        <div className="flex-1 overflow-y-auto overflow-x-hidden">
+          {searchResults.length === 0 ? (
+            <div className="px-3 py-4 text-[11px] text-muted-foreground text-center">No results</div>
+          ) : (
+            <div className="py-0.5">
+              {searchResults.map((r, i) => {
+                const isFocused = i === searchFocusIdx;
+                return (
+                  <button
+                    key={i}
+                    className={cn(
+                      "w-full text-left px-3 py-1 flex flex-col gap-0.5 hover:bg-accent transition-colors",
+                      isFocused && "bg-accent"
+                    )}
+                    onClick={() => openSearchResult(r)}
+                    onMouseEnter={() => setSearchFocusIdx(i)}
+                  >
+                    <div className="flex items-center gap-1.5 text-[11px] font-medium truncate">
+                      {r.kind === "database" && <Database className="w-3 h-3 text-blue-400 shrink-0" />}
+                      {r.kind === "table" && <Table2 className="w-3 h-3 text-green-400 shrink-0" />}
+                      {r.kind === "column" && <Hash className="w-3 h-3 text-muted-foreground shrink-0" />}
+                      <span className="truncate">
+                        <HighlightMatch text={r.kind === "database" ? r.database : r.kind === "table" ? r.table : r.column} query={globalSearch} />
+                      </span>
+                    </div>
+                    <div className="text-[10px] text-muted-foreground truncate pl-4.5">
+                      {r.profileName}
+                      {r.kind !== "database" && <> › <HighlightMatch text={r.database} query={globalSearch} /></>}
+                      {r.kind === "column" && <> › <HighlightMatch text={r.table} query={globalSearch} /></>}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Tree (hidden when global search is active) */}
       <div
-        className="flex-1 overflow-y-auto overflow-x-hidden pt-1"
+        className={cn("flex-1 overflow-y-auto overflow-x-hidden pt-1", globalSearch.trim() && "hidden")}
         onContextMenu={(e) => {
           // If we clicked directly on this container (empty space)
           // and not on a child element, show context menu for the last server

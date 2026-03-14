@@ -742,6 +742,49 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
     navigator.clipboard.writeText(text).catch(() => {});
   }, [cellContextMenu, rows, columns]);
 
+  const copyRowAsJson = useCallback(() => {
+    if (!cellContextMenu) return;
+    const row = rows[cellContextMenu.rowIdx];
+    if (!row) return;
+    const obj: Record<string, string | number | null> = {};
+    visibleColumns.forEach((col) => {
+      const idx = columns.indexOf(col);
+      obj[col] = idx >= 0 ? (row[idx] ?? null) : null;
+    });
+    navigator.clipboard.writeText(JSON.stringify(obj, null, 2)).catch(() => {});
+  }, [cellContextMenu, rows, columns, visibleColumns]);
+
+  const copyRowAsCsv = useCallback(() => {
+    if (!cellContextMenu) return;
+    const row = rows[cellContextMenu.rowIdx];
+    if (!row) return;
+    const escapeCSV = (val: string | number | null): string => {
+      if (val === null) return "";
+      const s = String(val);
+      if (s.includes(",") || s.includes('"') || s.includes("\n")) return `"${s.replace(/"/g, '""')}"`;
+      return s;
+    };
+    const header = visibleColumns.map(escapeCSV).join(",");
+    const values = visibleColumns.map((col) => {
+      const idx = columns.indexOf(col);
+      return escapeCSV(idx >= 0 ? row[idx] ?? null : null);
+    }).join(",");
+    navigator.clipboard.writeText(`${header}\n${values}`).catch(() => {});
+  }, [cellContextMenu, rows, columns, visibleColumns]);
+
+  const copyRowAsSqlInsert = useCallback(() => {
+    if (!cellContextMenu) return;
+    const row = rows[cellContextMenu.rowIdx];
+    if (!row) return;
+    const cols = visibleColumns.map(escId).join(", ");
+    const vals = visibleColumns.map((col) => {
+      const idx = columns.indexOf(col);
+      const v = idx >= 0 ? row[idx] ?? null : null;
+      return v === null ? "NULL" : `'${String(v).replace(/'/g, "''")}'`;
+    }).join(", ");
+    navigator.clipboard.writeText(`INSERT INTO ${escId(tableName)} (${cols}) VALUES (${vals});`).catch(() => {});
+  }, [cellContextMenu, rows, columns, visibleColumns, tableName]);
+
   // ── Edit handlers ───────────────────────────────────────
   const handleAddRow = useCallback(() => {
     setAddedRows(prev => {
@@ -1152,6 +1195,9 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
           y={cellContextMenu.y}
           onCopyCell={copyCellContextValue}
           onCopyRow={copyRowValues}
+          onCopyRowJson={copyRowAsJson}
+          onCopyRowCsv={copyRowAsCsv}
+          onCopyRowSqlInsert={copyRowAsSqlInsert}
           onCopyColumn={copyColumnValues}
           onClose={() => setCellContextMenu(null)}
         />

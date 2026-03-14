@@ -672,6 +672,46 @@ export function QueryTab({
     navigator.clipboard.writeText(text).catch(() => {});
   }, [cellContextMenu, results, activeResultIdx]);
 
+  const copyRowAsJson = useCallback(() => {
+    if (!cellContextMenu) return;
+    const active = results[activeResultIdx];
+    if (!active) return;
+    const row = active.rows[cellContextMenu.rowIdx];
+    if (!row) return;
+    const obj: Record<string, string | number | null> = {};
+    active.columns.forEach((col, i) => { obj[col] = row[i] ?? null; });
+    navigator.clipboard.writeText(JSON.stringify(obj, null, 2)).catch(() => {});
+  }, [cellContextMenu, results, activeResultIdx]);
+
+  const copyRowAsCsv = useCallback(() => {
+    if (!cellContextMenu) return;
+    const active = results[activeResultIdx];
+    if (!active) return;
+    const row = active.rows[cellContextMenu.rowIdx];
+    if (!row) return;
+    const escapeCSV = (val: string | number | null): string => {
+      if (val === null) return "";
+      const s = String(val);
+      if (s.includes(",") || s.includes('"') || s.includes("\n")) return `"${s.replace(/"/g, '""')}"`;
+      return s;
+    };
+    const header = active.columns.map(escapeCSV).join(",");
+    const values = row.map(escapeCSV).join(",");
+    navigator.clipboard.writeText(`${header}\n${values}`).catch(() => {});
+  }, [cellContextMenu, results, activeResultIdx]);
+
+  const copyRowAsSqlInsert = useCallback(() => {
+    if (!cellContextMenu) return;
+    const active = results[activeResultIdx];
+    if (!active) return;
+    const row = active.rows[cellContextMenu.rowIdx];
+    if (!row) return;
+    const escId = (v: string) => `\`${v.replace(/`/g, "``")}\``;
+    const cols = active.columns.map(escId).join(", ");
+    const vals = row.map((v) => v === null ? "NULL" : `'${String(v).replace(/'/g, "''")}'`).join(", ");
+    navigator.clipboard.writeText(`INSERT INTO \`table\` (${cols}) VALUES (${vals});`).catch(() => {});
+  }, [cellContextMenu, results, activeResultIdx]);
+
   // Ctrl+S listener
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -683,6 +723,26 @@ export function QueryTab({
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [handleSave]);
+
+  // Ctrl+A — select all result rows and copy as TSV
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.key !== "a") return;
+      const active = results[activeResultIdx];
+      if (!active || active.rows.length === 0) return;
+      // Only intercept when focus is inside the result grid (not the SQL editor)
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === "TEXTAREA" || target.tagName === "INPUT")) return;
+      e.preventDefault();
+      const header = active.columns.join("\t");
+      const rows = active.rows
+        .map((r) => r.map((v) => (v === null ? "NULL" : String(v))).join("\t"))
+        .join("\n");
+      navigator.clipboard.writeText(`${header}\n${rows}`).catch(() => {});
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [results, activeResultIdx]);
 
   // Sync dirty state
   useEffect(() => {
@@ -899,6 +959,47 @@ export function QueryTab({
     a.click();
     document.body.removeChild(a);
     // Defer revocation to give the browser time to initiate the download
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }, [results, activeResultIdx]);
+
+  // ── Export JSON ────────────────────────────────────────────
+  const handleExportJSON = useCallback(() => {
+    const active = results[activeResultIdx];
+    if (!active || active.rows.length === 0) return;
+    const data = active.rows.map((r) => {
+      const obj: Record<string, string | number | null> = {};
+      active.columns.forEach((col, i) => { obj[col] = r[i] ?? null; });
+      return obj;
+    });
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `query_result_${Date.now()}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }, [results, activeResultIdx]);
+
+  // ── Export SQL INSERTs ──────────────────────────────────────
+  const handleExportSQL = useCallback(() => {
+    const active = results[activeResultIdx];
+    if (!active || active.rows.length === 0) return;
+    const escId = (v: string) => `\`${v.replace(/`/g, "``")}\``;
+    const cols = active.columns.map(escId).join(", ");
+    const lines = active.rows.map((r) => {
+      const vals = r.map((v) => v === null ? "NULL" : `'${String(v).replace(/'/g, "''")}'`).join(", ");
+      return `INSERT INTO \`table\` (${cols}) VALUES (${vals});`;
+    });
+    const blob = new Blob([lines.join("\n")], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `query_result_${Date.now()}.sql`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }, [results, activeResultIdx]);
 
@@ -1744,13 +1845,27 @@ export function QueryTab({
           active={false}
         />
         {/* Export */}
-        <ToolBtn
-          icon={<Download className="w-4 h-4" />}
-          title="Export results as CSV"
-          onClick={handleExportCSV}
-          disabled={!activeResult || activeResult.rows.length === 0}
-          active={false}
-        />
+        <div className="relative flex items-center h-7 px-1 rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors overflow-hidden">
+          <div className="flex items-center pointer-events-none">
+            <Download className="w-3.5 h-3.5" />
+          </div>
+          <select
+            value=""
+            onChange={(e) => {
+              if (e.target.value === "csv") handleExportCSV();
+              else if (e.target.value === "json") handleExportJSON();
+              else if (e.target.value === "sql") handleExportSQL();
+            }}
+            disabled={!activeResult || activeResult.rows.length === 0}
+            className="h-full bg-transparent text-[11px] font-medium pl-1 pr-1 focus:outline-none appearance-none cursor-pointer"
+            title="Export results"
+          >
+            <option value="" disabled>Export</option>
+            <option value="csv">CSV</option>
+            <option value="json">JSON</option>
+            <option value="sql">SQL INSERTs</option>
+          </select>
+        </div>
 
         {/* ─── Spacer ─── */}
         <div className="flex-1" />
@@ -2052,6 +2167,9 @@ export function QueryTab({
                 y={cellContextMenu.y}
                 onCopyCell={copyCellContextValue}
                 onCopyRow={copyRowValues}
+                onCopyRowJson={copyRowAsJson}
+                onCopyRowCsv={copyRowAsCsv}
+                onCopyRowSqlInsert={copyRowAsSqlInsert}
                 onCopyColumn={copyColumnValues}
                 onClose={() => setCellContextMenu(null)}
               />
