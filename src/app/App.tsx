@@ -3,6 +3,7 @@ import { Workbench } from "@/components/layout/Workbench";
 import { ThemeProvider } from "./providers/ThemeProvider";
 import { useProfilesStore } from "@/state/profilesStore";
 import { useTasksStore } from "@/state/tasksStore";
+import { useQueryHistoryStore } from "@/state/queryHistoryStore";
 import { ToastContainer } from "@/components/ui/ToastContainer";
 import { CommandPalette } from "@/components/views/CommandPalette";
 import { useAppStore } from "@/state/appStore";

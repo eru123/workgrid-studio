@@ -19,7 +19,7 @@ pub struct TunnelHandle {
 }
 
 use mysql_async::prelude::*;
-use mysql_async::{Opts, OptsBuilder, Pool, PoolOpts, PoolConstraints};
+use mysql_async::{Opts, OptsBuilder, Pool, PoolOpts, PoolConstraints, TxOpts};
 use serde::{Deserialize, Serialize};
 
 // Crypto & HTTP imports
@@ -1942,48 +1942,79 @@ async fn db_import_csv(
             .map_err(|e| format!("USE database error: {}", e))?;
     }
 
-    let mut rdr = csv::ReaderBuilder::new().from_path(&file_path)
+    let mut rdr = csv::ReaderBuilder::new()
+        .from_path(&file_path)
         .map_err(|e| format!("Failed to read CSV file: {}", e))?;
-    
+
     let headers = rdr.headers().map_err(|e| format!("Failed to read headers: {}", e))?.clone();
-    let cols: Vec<String> = headers.iter().map(|h| format!("`{}`", h.replace("`", "``"))).collect();
-    let safe_table = format!("`{}`", table.replace("`", "``"));
-    let mut total_rows = 0;
+    let cols: Vec<String> = headers
+        .iter()
+        .map(|h| format!("`{}`", h.replace('`', "``")))
+        .collect();
+    let safe_table = format!("`{}`", table.replace('`', "``"));
 
-    // Use prepared statements for batched insertion
-    let mut batch = Vec::new();
-    let batch_size = 500;
-    
-    // Convert to placeholders e.g `(?, ?, ?)`
+    // Collect all records up-front so we can abort cleanly before opening a
+    // transaction if the file itself is malformed.
+    let records: Vec<csv::StringRecord> = rdr
+        .records()
+        .collect::<Result<_, _>>()
+        .map_err(|e| format!("Failed to parse CSV: {}", e))?;
+
+    let total_rows = records.len();
+
+    // Wrap every insert in a single transaction so a mid-import failure leaves
+    // the table in its original state (no partial imports committed).
+    let mut tx = conn
+        .start_transaction(TxOpts::default())
+        .await
+        .map_err(|e| format!("Failed to start transaction: {}", e))?;
+
     let placeholders = format!("({})", vec!["?"; cols.len()].join(", "));
-    let base_query = format!("INSERT INTO {} ({}) VALUES {}", safe_table, cols.join(", "), placeholders);
+    let base_query = format!(
+        "INSERT INTO {} ({}) VALUES {}",
+        safe_table,
+        cols.join(", "),
+        placeholders
+    );
+    let stmt = tx
+        .prep(&base_query)
+        .await
+        .map_err(|e| format!("Prepare failed: {}", e))?;
 
-    let stmt = conn.prep(&base_query).await.map_err(|e| format!("Prepare failed: {}", e))?;
-    
-    for result in rdr.records() {
-        let record = result.map_err(|e| format!("Failed to parse row: {}", e))?;
-        let values: Vec<mysql_async::Value> = record.iter().map(|v| match v {
-            "" => mysql_async::Value::NULL,
-            s => mysql_async::Value::Bytes(s.as_bytes().to_vec()),
-        }).collect();
-        
-        batch.push(values);
-        total_rows += 1;
+    let batch_size = 500usize;
+    for (chunk_start, chunk) in records.chunks(batch_size).enumerate() {
+        let batch: Vec<Vec<mysql_async::Value>> = chunk
+            .iter()
+            .map(|record| {
+                record
+                    .iter()
+                    .map(|v| {
+                        if v.is_empty() {
+                            mysql_async::Value::NULL
+                        } else {
+                            mysql_async::Value::Bytes(v.as_bytes().to_vec())
+                        }
+                    })
+                    .collect()
+            })
+            .collect();
 
-        if batch.len() >= batch_size {
-            conn.exec_batch(&stmt, batch.drain(..))
-                .await
-                .map_err(|e| format!("Batch insert failed at row {}: {}", total_rows, e))?;
-        }
+        tx.exec_batch(&stmt, batch).await.map_err(|e| {
+            format!(
+                "Batch insert failed at rows {}-{}: {}",
+                chunk_start * batch_size + 1,
+                chunk_start * batch_size + chunk.len(),
+                e
+            )
+        })?;
+        // tx is dropped automatically on error, which triggers ROLLBACK
     }
 
-    if !batch.is_empty() {
-        conn.exec_batch(&stmt, batch)
-            .await
-            .map_err(|e| format!("Final batch insert failed: {}", e))?;
-    }
+    tx.commit()
+        .await
+        .map_err(|e| format!("Failed to commit import transaction: {}", e))?;
 
-    Ok(format!("Successfully imported {} rows to {}.", total_rows, table))
+    Ok(format!("Successfully imported {} rows into {}.", total_rows, table))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
