@@ -136,6 +136,39 @@ export function useProfileManager() {
         if (!profile) return;
         const target = formatConnectionTarget(profile);
 
+        if (profile.unreadableSecrets?.password) {
+            setConnectionStatus(id, "error");
+            appendConnectionOutput(
+                profile,
+                "error",
+                `Stored password for ${target} could not be decrypted. Re-enter the password in the profile and save it again before connecting.`,
+            );
+            useAppStore.getState().addToast({
+                title: "Stored Password Unavailable",
+                description: "This profile's saved password could not be decrypted. Re-enter it and save the profile again.",
+                variant: "destructive",
+            });
+            return;
+        }
+
+        if (
+            profile.ssh &&
+            (profile.unreadableSecrets?.sshPassword || profile.unreadableSecrets?.sshPassphrase)
+        ) {
+            setConnectionStatus(id, "error");
+            appendConnectionOutput(
+                profile,
+                "error",
+                `Stored SSH credentials for ${target} could not be decrypted. Re-enter the SSH secret in the profile and save it again before connecting.`,
+            );
+            useAppStore.getState().addToast({
+                title: "Stored SSH Secret Unavailable",
+                description: "This profile's saved SSH credential could not be decrypted. Re-enter it and save the profile again.",
+                variant: "destructive",
+            });
+            return;
+        }
+
         if (profile.type !== "mysql" && profile.type !== "mariadb") {
             setConnectionStatus(id, "error");
             appendConnectionOutput(

@@ -11,86 +11,45 @@ use crate::files::ensure_app_dirs;
 /// Retrieve or create the 32-byte AES-256-GCM master key used for vault and
 /// password encryption.
 ///
-/// Key storage priority:
-///   1. OS credential store (Windows Credential Manager / macOS Keychain /
-///      Linux Secret Service) via the `keyring` crate.
-///   2. Legacy `~/.workgrid-studio/data/secret.key` flat file — migrated to
-///      the OS store on first access, then deleted.
-///   3. Flat-file fallback when the OS store is unavailable (e.g., headless CI,
-///      Linux without a running secret-service daemon).
+/// Reliability note:
+///   On some systems the OS credential store can behave inconsistently across
+///   processes. To keep secrets decryptable, WorkGrid Studio now uses the local
+///   `~/.workgrid-studio/data/secret.key` file as the source of truth and mirrors
+///   the same key to the OS store on a best-effort basis.
 pub fn get_or_create_secret_key() -> Result<[u8; 32], String> {
     const SERVICE: &str = "workgrid-studio";
     const ACCOUNT: &str = "vault-key";
 
-    let entry = match keyring::Entry::new(SERVICE, ACCOUNT) {
-        Ok(e) => e,
-        Err(e) => {
-            eprintln!("[workgrid-studio] Keychain entry init failed ({e}), falling back to file-based key");
-            return get_or_create_key_from_file();
-        }
-    };
+    if let Some(key) = read_secret_key_from_file()? {
+        let _ = store_key_in_keyring(SERVICE, ACCOUNT, &key);
+        return Ok(key);
+    }
 
-    match entry.get_password() {
-        Ok(encoded) => {
-            // Key already stored in OS keychain.
+    if let Ok(entry) = keyring::Entry::new(SERVICE, ACCOUNT) {
+        if let Ok(encoded) = entry.get_password() {
             let bytes = b64.decode(&encoded)
                 .map_err(|e| format!("Keychain key decode error: {e}"))?;
-            if bytes.len() != 32 {
-                return Err("Keychain vault key has unexpected length; \
-                            delete the 'workgrid-studio / vault-key' keychain entry and restart".to_string());
+            if bytes.len() == 32 {
+                let mut key = [0u8; 32];
+                key.copy_from_slice(&bytes);
+                write_secret_key_to_file(&key)?;
+                return Ok(key);
             }
-            let mut key = [0u8; 32];
-            key.copy_from_slice(&bytes);
-            Ok(key)
-        }
-        Err(keyring::Error::NoEntry) => {
-            // Nothing in the keychain yet — check for a legacy flat file to migrate.
-            let base = ensure_app_dirs()?;
-            let key_path = base.join("data").join("secret.key");
-
-            let key: [u8; 32] = if key_path.exists() {
-                // Migrate: read key from file, will store it in the keychain below.
-                let contents = fs::read(&key_path)
-                    .map_err(|e| format!("Failed to read secret.key during migration: {e}"))?;
-                if contents.len() != 32 {
-                    return Err("secret.key has unexpected length; delete it and restart".to_string());
-                }
-                let mut k = [0u8; 32];
-                k.copy_from_slice(&contents);
-                k
-            } else {
-                // Fresh install — generate a new key.
-                let mut k = [0u8; 32];
-                rand::thread_rng().fill_bytes(&mut k);
-                k
-            };
-
-            // Persist to OS keychain.
-            let encoded = b64.encode(key);
-            entry.set_password(&encoded)
-                .map_err(|e| format!("Failed to store vault key in OS keychain: {e}"))?;
-
-            // Remove the legacy file now that the keychain holds the key.
-            if key_path.exists() {
-                let _ = fs::remove_file(&key_path);
-            }
-
-            Ok(key)
-        }
-        Err(e) => {
-            // Keychain present but inaccessible (locked, permission denied, no daemon, etc.).
-            eprintln!("[workgrid-studio] OS keychain unavailable ({e}), falling back to file-based key");
-            get_or_create_key_from_file()
         }
     }
+
+    let key = get_or_create_key_from_file()?;
+    let _ = store_key_in_keyring(SERVICE, ACCOUNT, &key);
+    Ok(key)
 }
 
-/// File-based fallback for `get_or_create_secret_key()`.
-/// Used when the OS credential store is unavailable (headless environments,
-/// Linux systems without a running secret-service daemon, etc.).
-pub fn get_or_create_key_from_file() -> Result<[u8; 32], String> {
+fn secret_key_path() -> Result<std::path::PathBuf, String> {
     let base = ensure_app_dirs()?;
-    let key_path = base.join("data").join("secret.key");
+    Ok(base.join("data").join("secret.key"))
+}
+
+fn read_secret_key_from_file() -> Result<Option<[u8; 32]>, String> {
+    let key_path = secret_key_path()?;
 
     if key_path.exists() {
         let contents = fs::read(&key_path)
@@ -98,15 +57,38 @@ pub fn get_or_create_key_from_file() -> Result<[u8; 32], String> {
         if contents.len() == 32 {
             let mut key = [0u8; 32];
             key.copy_from_slice(&contents);
-            return Ok(key);
+            return Ok(Some(key));
         }
+    }
+
+    Ok(None)
+}
+
+fn write_secret_key_to_file(key: &[u8; 32]) -> Result<(), String> {
+    let key_path = secret_key_path()?;
+    fs::write(&key_path, key)
+        .map_err(|e| format!("Failed to write secret.key: {e}"))?;
+    Ok(())
+}
+
+fn store_key_in_keyring(service: &str, account: &str, key: &[u8; 32]) -> Result<(), String> {
+    let entry = keyring::Entry::new(service, account)
+        .map_err(|e| format!("Keychain entry init failed: {e}"))?;
+    let encoded = b64.encode(key);
+    entry.set_password(&encoded)
+        .map_err(|e| format!("Failed to store vault key in OS keychain: {e}"))?;
+    Ok(())
+}
+
+/// File-based key store for `get_or_create_secret_key()`.
+pub fn get_or_create_key_from_file() -> Result<[u8; 32], String> {
+    if let Some(key) = read_secret_key_from_file()? {
+        return Ok(key);
     }
 
     let mut key = [0u8; 32];
     rand::thread_rng().fill_bytes(&mut key);
-    fs::write(&key_path, &key)
-        .map_err(|e| format!("Failed to write secret.key: {e}"))?;
-
+    write_secret_key_to_file(&key)?;
     Ok(key)
 }
 
@@ -235,11 +217,17 @@ pub fn decrypt_password(encrypted: String) -> Result<String, String> {
     let base64_payload = &encrypted[6..];
     let payload = match b64.decode(base64_payload) {
         Ok(p) => p,
-        Err(_) => return Ok(encrypted),
+        Err(_) => {
+            return Err(
+                "Stored secret has an invalid encrypted format. Re-enter it and save the profile again.".to_string(),
+            )
+        }
     };
 
     if payload.len() < 12 {
-        return Ok(encrypted);
+        return Err(
+            "Stored secret is truncated or corrupted. Re-enter it and save the profile again.".to_string(),
+        );
     }
 
     let nonce_bytes = &payload[..12];
@@ -250,8 +238,11 @@ pub fn decrypt_password(encrypted: String) -> Result<String, String> {
     let nonce = Nonce::from_slice(nonce_bytes);
 
     match cipher.decrypt(nonce, ciphertext) {
-        Ok(plaintext) => String::from_utf8(plaintext).or_else(|_| Ok(encrypted.clone())),
-        Err(_) => Ok(encrypted),
+        Ok(plaintext) => String::from_utf8(plaintext)
+            .map_err(|_| "Stored secret could not be decoded as UTF-8 after decryption.".to_string()),
+        Err(_) => Err(
+            "Stored secret could not be decrypted with the current installation key. Re-enter it and save the profile again.".to_string(),
+        ),
     }
 }
 
