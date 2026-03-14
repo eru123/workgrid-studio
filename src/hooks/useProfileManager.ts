@@ -12,6 +12,11 @@ import { useSchemaStore } from "@/state/schemaStore";
 import { useLayoutStore } from "@/state/layoutStore";
 import { useAppStore } from "@/state/appStore";
 import { dbConnect, dbDisconnect, dbListDatabases } from "@/lib/db";
+import {
+    appendConnectionOutput,
+    formatConnectionTarget,
+    formatOutputError,
+} from "@/lib/output";
 
 export type ViewMode = "list" | "create" | "edit";
 
@@ -95,10 +100,30 @@ export function useProfileManager() {
     };
 
     const handleDelete = async (id: string) => {
-        try {
-            await dbDisconnect(id);
-        } catch {
-            /* ignore */
+        const profile = useProfilesStore.getState().profiles.find((p) => p.id === id);
+        const shouldDisconnect = profile?.connectionStatus === "connected"
+            || profile?.connectionStatus === "connecting";
+
+        if (shouldDisconnect && profile) {
+            appendConnectionOutput(
+                profile,
+                "info",
+                `Disconnecting before deleting profile from ${formatConnectionTarget(profile)}...`,
+            );
+            try {
+                await dbDisconnect(id);
+                appendConnectionOutput(
+                    profile,
+                    "success",
+                    `Disconnected from ${formatConnectionTarget(profile)}.`,
+                );
+            } catch (e) {
+                appendConnectionOutput(
+                    profile,
+                    "warning",
+                    `Disconnect before delete reported an error for ${formatConnectionTarget(profile)}: ${formatOutputError(e)}`,
+                );
+            }
         }
         removeConnection(id);
         deleteProfile(id);
@@ -107,11 +132,17 @@ export function useProfileManager() {
     // ── Connection ────────────────────────────────────────
 
     const handleConnect = async (id: string) => {
-        const profile = profiles.find((p) => p.id === id);
+        const profile = useProfilesStore.getState().profiles.find((p) => p.id === id);
         if (!profile) return;
+        const target = formatConnectionTarget(profile);
 
         if (profile.type !== "mysql" && profile.type !== "mariadb") {
             setConnectionStatus(id, "error");
+            appendConnectionOutput(
+                profile,
+                "error",
+                `Connection blocked for ${target}: only MySQL and MariaDB are supported in this version.`,
+            );
             useAppStore.getState().addToast({
                 title: "Connection Failed",
                 description: "Only MySQL and MariaDB are supported in this version.",
@@ -121,15 +152,34 @@ export function useProfileManager() {
         }
 
         if (profile.connectionStatus === "connected") {
+            appendConnectionOutput(
+                profile,
+                "info",
+                `Disconnecting from ${target}...`,
+            );
             try {
                 await dbDisconnect(id);
-            } catch {
-                /* ignore */
+                appendConnectionOutput(
+                    profile,
+                    "success",
+                    `Disconnected from ${target}.`,
+                );
+            } catch (e) {
+                appendConnectionOutput(
+                    profile,
+                    "warning",
+                    `Disconnect failed for ${target}: ${formatOutputError(e)}`,
+                );
             }
             setConnectionStatus(id, "disconnected");
             removeConnection(id);
         } else {
             setConnectionStatus(id, "connecting");
+            appendConnectionOutput(
+                profile,
+                "info",
+                `Connecting to ${target}...`,
+            );
             try {
                 await dbConnect({
                     profile_id: id,
@@ -156,6 +206,11 @@ export function useProfileManager() {
                     ssh_compression: profile.sshCompression ?? true,
                 });
                 setConnectionStatus(id, "connected");
+                appendConnectionOutput(
+                    profile,
+                    "success",
+                    `Connected to ${target}.`,
+                );
                 addConnection(id, profile.name, profile.color);
                 // Pre-load database list so Explorer is ready on arrival
                 const schemaStore = useSchemaStore.getState();
@@ -163,14 +218,23 @@ export function useProfileManager() {
                 try {
                     const dbs = await dbListDatabases(id);
                     schemaStore.setDatabases(id, dbs);
-                } catch {
-                    /* non-fatal */
+                } catch (e) {
+                    appendConnectionOutput(
+                        profile,
+                        "warning",
+                        `Connected to ${target}, but database preload failed: ${formatOutputError(e)}`,
+                    );
                 } finally {
                     schemaStore.setLoading(id, "databases", false);
                 }
                 setActiveView("explorer");
             } catch (e) {
                 setConnectionStatus(id, "error");
+                appendConnectionOutput(
+                    profile,
+                    "error",
+                    `Connection failed for ${target}: ${formatOutputError(e)}`,
+                );
                 useAppStore.getState().addToast({
                     title: "Connection Failed",
                     description: String(e),
@@ -181,7 +245,7 @@ export function useProfileManager() {
     };
 
     const handleDoubleClick = async (id: string) => {
-        const profile = profiles.find((p) => p.id === id);
+        const profile = useProfilesStore.getState().profiles.find((p) => p.id === id);
         if (!profile) return;
 
         if (profile.connectionStatus === "connected") {

@@ -13,6 +13,11 @@ import { cn } from "@/lib/utils/cn";
 import { useProfileManager } from "@/hooks/useProfileManager";
 import { useAppStore, StatusBarInfo } from "@/state/appStore";
 import {
+  appendConnectionOutput,
+  formatConnectionTarget,
+  formatOutputError,
+} from "@/lib/output";
+import {
   FolderTree,
   CheckSquare,
   PanelBottom,
@@ -114,8 +119,13 @@ export function Workbench() {
         try {
           const ms = await dbPing(p.id);
           setLatency(p.id, ms);
-        } catch {
+        } catch (e) {
           console.warn(`[Keep-Alive] Ping failed for ${p.id}, marking error and reconnecting...`);
+          appendConnectionOutput(
+            p,
+            "warning",
+            `Keep-alive ping failed for ${formatConnectionTarget(p)}: ${formatOutputError(e)}. Reconnecting...`,
+          );
           setLatency(p.id, -1);
           setConnectionStatus(p.id, "error");
           // Attempt a silent reconnect via the manager
@@ -427,6 +437,8 @@ function parseProblems(
 
 function BottomPanel({ isSecondary }: { isSecondary?: boolean }) {
   const profiles = useProfilesStore((s) => s.profiles);
+  const outputEntries = useAppStore((s) => s.outputEntries);
+  const clearOutputEntries = useAppStore((s) => s.clearOutputEntries);
   const connectedProfiles = profiles.filter(
     (p) => p.connectionStatus === "connected",
   );
@@ -541,10 +553,14 @@ function BottomPanel({ isSecondary }: { isSecondary?: boolean }) {
 
   // Auto-scroll to bottom when log content changes
   useEffect(() => {
-    if (scrollRef.current && (activeTab === "logs" || activeTab === "ailogs") && autoScroll) {
+    if (
+      scrollRef.current &&
+      (activeTab === "output" || activeTab === "logs" || activeTab === "ailogs") &&
+      autoScroll
+    ) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [logContent, aiLogs, activeTab, autoScroll]);
+  }, [outputEntries, logContent, aiLogs, activeTab, autoScroll]);
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
@@ -555,7 +571,9 @@ function BottomPanel({ isSecondary }: { isSecondary?: boolean }) {
   };
 
   const handleClear = async () => {
-    if (activeTab === "logs") {
+    if (activeTab === "output") {
+      clearOutputEntries();
+    } else if (activeTab === "logs") {
       if (!selectedProfileId) return;
       try {
         await clearProfileLog(selectedProfileId, logFilter);
@@ -657,37 +675,36 @@ function BottomPanel({ isSecondary }: { isSecondary?: boolean }) {
           AI Logs
         </button>
 
-        {/* Right-side controls */}
-        {(activeTab === "logs" || activeTab === "problems" || activeTab === "ailogs") && (
-          <div className="ml-auto flex items-center gap-2">
-            {/* Logs-specific: Profile selector */}
-            {activeTab === "logs" && connectedProfiles.length > 0 && (
-              <select
-                value={selectedProfileId}
-                onChange={(e) => setSelectedProfileId(e.target.value)}
-                className="h-6 text-[11px] rounded border bg-secondary/50 text-foreground px-1.5 outline-none"
-              >
-                {connectedProfiles.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
-            )}
+        <div className="ml-auto flex items-center gap-2">
+          {/* Logs-specific: Profile selector */}
+          {activeTab === "logs" && connectedProfiles.length > 0 && (
+            <select
+              value={selectedProfileId}
+              onChange={(e) => setSelectedProfileId(e.target.value)}
+              className="h-6 text-[11px] rounded border bg-secondary/50 text-foreground px-1.5 outline-none"
+            >
+              {connectedProfiles.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          )}
 
-            {/* Logs-specific: Log type filter */}
-            {activeTab === "logs" && (
-              <select
-                value={logFilter}
-                onChange={(e) => setLogFilter(e.target.value as LogFilter)}
-                className="h-6 text-[11px] rounded border bg-secondary/50 text-foreground px-1.5 outline-none"
-              >
-                <option value="mysql">Query Log</option>
-                <option value="error">Error Log</option>
-              </select>
-            )}
+          {/* Logs-specific: Log type filter */}
+          {activeTab === "logs" && (
+            <select
+              value={logFilter}
+              onChange={(e) => setLogFilter(e.target.value as LogFilter)}
+              className="h-6 text-[11px] rounded border bg-secondary/50 text-foreground px-1.5 outline-none"
+            >
+              <option value="mysql">Query Log</option>
+              <option value="error">Error Log</option>
+            </select>
+          )}
 
-            {/* Refresh */}
+          {/* Refresh */}
+          {activeTab !== "output" && (
             <button
               onClick={handleRefresh}
               className="p-1 text-muted-foreground hover:text-foreground transition-colors"
@@ -697,73 +714,106 @@ function BottomPanel({ isSecondary }: { isSecondary?: boolean }) {
                 className={cn("w-3.5 h-3.5", isRefreshing && "animate-spin")}
               />
             </button>
+          )}
 
-            {/* Clear */}
+          {/* Clear */}
+          <button
+            onClick={handleClear}
+            className="p-1 text-muted-foreground hover:text-red-400 transition-colors"
+            title={
+              activeTab === "output"
+                ? "Clear output"
+                : activeTab === "problems"
+                  ? "Clear all problems"
+                  : activeTab === "ailogs"
+                    ? "Clear AI logs"
+                    : "Clear log"
+            }
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
+
+          {/* Auto Scroll Toggle */}
+          {(activeTab === "output" || activeTab === "logs" || activeTab === "ailogs") && (
             <button
-              onClick={handleClear}
-              className="p-1 text-muted-foreground hover:text-red-400 transition-colors"
-              title={
-                activeTab === "problems" ? "Clear all problems" : "Clear log"
-              }
+              onClick={() => setAutoScroll(!autoScroll)}
+              className={cn(
+                "p-1 transition-colors relative",
+                autoScroll ? "text-primary hover:text-primary/80" : "text-muted-foreground hover:text-foreground"
+              )}
+              title="Toggle Auto-Scroll"
             >
-              <Trash2 className="w-3.5 h-3.5" />
+              <ArrowDownToLine className="w-3.5 h-3.5" />
+              {autoScroll && (
+                <span className="absolute bottom-1 right-1 w-1.5 h-1.5 bg-primary rounded-full shadow-sm shadow-foreground/20" />
+              )}
             </button>
-            
-            {/* Auto Scroll Toggle */}
-            {(activeTab === "logs" || activeTab === "ailogs") && (
-              <button
-                onClick={() => setAutoScroll(!autoScroll)}
-                className={cn(
-                  "p-1 transition-colors relative",
-                  autoScroll ? "text-primary hover:text-primary/80" : "text-muted-foreground hover:text-foreground"
-                )}
-                title="Toggle Auto-Scroll"
-              >
-                <ArrowDownToLine className="w-3.5 h-3.5" />
-                {autoScroll && (
-                  <span className="absolute bottom-1 right-1 w-1.5 h-1.5 bg-primary rounded-full shadow-sm shadow-foreground/20" />
-                )}
-              </button>
+          )}
+
+          {/* Split Panel Toggle */}
+          <button
+            onClick={toggleBottomPanelSplit}
+            className={cn(
+              "p-1 transition-colors",
+              isBottomPanelSplit && !isSecondary ? "text-primary hover:text-primary/80" : "text-muted-foreground hover:text-foreground"
             )}
-
-            {/* Split Panel Toggle */}
-            <button
-              onClick={toggleBottomPanelSplit}
-              className={cn(
-                "p-1 transition-colors",
-                isBottomPanelSplit && !isSecondary ? "text-primary hover:text-primary/80" : "text-muted-foreground hover:text-foreground"
-              )}
-              title={isBottomPanelSplit && !isSecondary ? "Close Split View" : "Split View"}
-            >
-              <Columns2 className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        )}
-        
-        {/* If right-side controls aren't rendered, we still need the split button far right for 'output' tab */}
-        {!(activeTab === "logs" || activeTab === "problems" || activeTab === "ailogs") && (
-          <div className="ml-auto flex items-center gap-2">
-            {/* Split Panel Toggle */}
-            <button
-              onClick={toggleBottomPanelSplit}
-              className={cn(
-                "p-1 transition-colors",
-                isBottomPanelSplit && !isSecondary ? "text-primary hover:text-primary/80" : "text-muted-foreground hover:text-foreground"
-              )}
-              title={isBottomPanelSplit && !isSecondary ? "Close Split View" : "Split View"}
-            >
-              <Columns2 className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        )}
+            title={isBottomPanelSplit && !isSecondary ? "Close Split View" : "Split View"}
+          >
+            <Columns2 className="w-3.5 h-3.5" />
+          </button>
+        </div>
       </div>
 
       {/* Panel content */}
       <div ref={scrollRef} className="flex-1 overflow-auto">
         {/* ── Output ─────────────────────────────────────────── */}
         {activeTab === "output" && (
-          <div className="p-3 font-mono text-xs leading-5 text-muted-foreground">
-            WorkGrid Studio ready.
+          <div className="text-xs">
+            {outputEntries.length === 0 ? (
+              <div className="p-3 font-mono text-muted-foreground">
+                Connection activity and debugging events will appear here.
+              </div>
+            ) : (
+              <div className="divide-y divide-border/40 font-mono">
+                {outputEntries.map((entry) => (
+                  <div
+                    key={entry.id}
+                    className="flex items-start gap-2 px-3 py-1.5 hover:bg-accent/30 transition-colors"
+                  >
+                    <span className="shrink-0 whitespace-nowrap text-[10px] text-muted-foreground/60">
+                      {entry.timestamp}
+                    </span>
+                    <span
+                      className={cn(
+                        "shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide",
+                        entry.level === "info" && "bg-blue-500/15 text-blue-400",
+                        entry.level === "success" && "bg-emerald-500/15 text-emerald-400",
+                        entry.level === "warning" && "bg-yellow-500/15 text-yellow-400",
+                        entry.level === "error" && "bg-red-500/15 text-red-400",
+                      )}
+                    >
+                      {entry.level}
+                    </span>
+                    {entry.profileName && (
+                      <span className="shrink-0 rounded-full bg-secondary/70 px-1.5 py-0.5 text-[10px] text-foreground/70">
+                        {entry.profileName}
+                      </span>
+                    )}
+                    <span
+                      className={cn(
+                        "flex-1 break-all leading-relaxed",
+                        entry.level === "error" && "text-red-400",
+                        entry.level === "warning" && "text-yellow-300",
+                        entry.level === "success" && "text-emerald-300",
+                        entry.level === "info" && "text-foreground/80",
+                      )}
+                    >
+                      {entry.message}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 

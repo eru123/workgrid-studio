@@ -18,6 +18,11 @@ import {
 } from "@/lib/db";
 import { cn } from "@/lib/utils/cn";
 import { useAppStore } from "@/state/appStore";
+import {
+  appendConnectionOutput,
+  formatConnectionTarget,
+  formatOutputError,
+} from "@/lib/output";
 import { open } from "@tauri-apps/plugin-dialog";
 import { homeDir } from "@tauri-apps/api/path";
 import {
@@ -429,10 +434,24 @@ export function ExplorerTree() {
           if (target.type === "server") {
             const handleDisconnect = async () => {
               setContextMenu(null);
+              appendConnectionOutput(
+                profile,
+                "info",
+                `Disconnecting from ${formatConnectionTarget(profile)}...`,
+              );
               try {
                 await dbDisconnect(profileId);
-              } catch {
-                /* ignore */
+                appendConnectionOutput(
+                  profile,
+                  "success",
+                  `Disconnected from ${formatConnectionTarget(profile)}.`,
+                );
+              } catch (e) {
+                appendConnectionOutput(
+                  profile,
+                  "warning",
+                  `Disconnect failed for ${formatConnectionTarget(profile)}: ${formatOutputError(e)}`,
+                );
               }
               useProfilesStore
                 .getState()
