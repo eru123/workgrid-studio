@@ -14,6 +14,7 @@ import {
   dbExecuteQuery,
   dbImportCsv,
   dbImportSql,
+  type ImportResult,
 } from "@/lib/db";
 import { cn } from "@/lib/utils/cn";
 import { useAppStore } from "@/state/appStore";
@@ -834,10 +835,10 @@ export function ExplorerTree() {
                         description: "Importing CSV data in background.",
                       });
                       try {
-                        const res = await dbImportCsv(profileId, targetDb, targetTable, Array.isArray(file) ? file[0] : file);
+                        const res: ImportResult = await dbImportCsv(profileId, targetDb, targetTable, Array.isArray(file) ? file[0] : file);
                         useAppStore.getState().addToast({
-                          title: "Import Success",
-                          description: res
+                          title: "Import Complete",
+                          description: `${res.rowsCommitted} of ${res.rowsAttempted} row${res.rowsAttempted !== 1 ? "s" : ""} imported into ${targetTable}.`,
                         });
                       } catch (err: any) {
                         useAppStore.getState().addToast({

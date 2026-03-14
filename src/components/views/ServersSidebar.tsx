@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { homeDir, join } from "@tauri-apps/api/path";
+import { dbForgetHostKey } from "@/lib/db";
 import {
   DatabaseType,
   DB_TYPE_LABELS,
@@ -9,6 +10,7 @@ import {
 } from "@/state/profilesStore";
 import { useProfileManager } from "@/hooks/useProfileManager";
 import { useProfilesStore } from "@/state/profilesStore";
+import { useAppStore } from "@/state/appStore";
 import { ProfileListSkeleton } from "@/components/ui/Skeleton";
 import { cn } from "@/lib/utils/cn";
 import {
@@ -39,6 +41,7 @@ export function ServersSidebar() {
   const {
     profiles,
     viewMode,
+    editingId,
     formData,
     handleCreate,
     handleEdit,
@@ -831,6 +834,42 @@ export function ServersSidebar() {
                                 />
                               </div>
                             </div>
+
+                            {viewMode === "edit" && editingId && formData.sshHost && (
+                              <div className="flex items-center justify-between pt-1">
+                                <div className="space-y-0.5">
+                                  <label className="text-xs font-medium">Stored Host Key</label>
+                                  <p className="text-[10px] text-muted-foreground">
+                                    Remove cached fingerprint for this host
+                                  </p>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={async () => {
+                                    try {
+                                      await dbForgetHostKey(
+                                        editingId,
+                                        formData.sshHost!,
+                                        formData.sshPort ?? 22,
+                                      );
+                                      useAppStore.getState().addToast({
+                                        title: "Host Key Forgotten",
+                                        description: `Fingerprint for ${formData.sshHost}:${formData.sshPort ?? 22} removed. Next connection will perform a fresh TOFU exchange.`,
+                                      });
+                                    } catch (err) {
+                                      useAppStore.getState().addToast({
+                                        title: "Failed to Forget Host Key",
+                                        description: String(err),
+                                        variant: "destructive",
+                                      });
+                                    }
+                                  }}
+                                  className="h-7 px-2.5 rounded-md border border-destructive/40 bg-destructive/10 text-destructive hover:bg-destructive/20 text-[10px] font-medium transition-colors"
+                                >
+                                  Forget Key
+                                </button>
+                              </div>
+                            )}
                           </div>
                         </div>
                       </div>
