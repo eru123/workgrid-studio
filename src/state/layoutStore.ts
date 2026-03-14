@@ -125,6 +125,7 @@ interface LayoutState {
 
   // Editor tree operations
   splitLeaf: (leafId: string, direction: SplitDirection) => void;
+  splitLeafAndMove: (tabId: string, sourceLeafId: string, targetLeafId: string, direction: SplitDirection) => void;
   closeLeaf: (leafId: string) => void;
   resizeNode: (nodeId: string, newRatio: number) => void;
   moveTab: (
@@ -470,6 +471,51 @@ export const useLayoutStore = create<LayoutState>((set) => ({
         },
       }));
       return { editorTree: newTree };
+    }),
+
+  splitLeafAndMove: (tabId, sourceLeafId, targetLeafId, direction) =>
+    set((state) => {
+      const sourceLeaf = findLeafById(state.editorTree, sourceLeafId);
+      const targetLeaf = findLeafById(state.editorTree, targetLeafId);
+      if (!sourceLeaf || !targetLeaf) return state;
+
+      const tab = sourceLeaf.tabs.find((t) => t.id === tabId);
+      if (!tab) return state;
+
+      const newLeafId = `leaf-${crypto.randomUUID()}`;
+
+      // Step 1: split the target leaf; new empty leaf goes into the `b` slot
+      let newTree = replaceNode(state.editorTree, targetLeafId, (oldLeaf) => ({
+        type: "node",
+        id: `node-${crypto.randomUUID()}`,
+        direction,
+        ratio: 0.5,
+        a: oldLeaf,
+        b: { type: "leaf", id: newLeafId, tabs: [], activeTabId: null },
+      }));
+
+      // Step 2: remove tab from source leaf
+      const updatedSourceTabs = sourceLeaf.tabs.filter((t) => t.id !== tabId);
+      const updatedSourceActiveId =
+        sourceLeaf.activeTabId === tabId
+          ? updatedSourceTabs.length > 0
+            ? updatedSourceTabs[updatedSourceTabs.length - 1].id
+            : null
+          : sourceLeaf.activeTabId;
+      newTree = updateLeaf(newTree, sourceLeafId, (l) => ({
+        ...l,
+        tabs: updatedSourceTabs,
+        activeTabId: updatedSourceActiveId,
+      }));
+
+      // Step 3: place tab into the new leaf
+      newTree = updateLeaf(newTree, newLeafId, (l) => ({
+        ...l,
+        tabs: [tab],
+        activeTabId: tab.id,
+      }));
+
+      return { editorTree: newTree, activeLeafId: newLeafId };
     }),
 
   closeLeaf: (leafId) =>

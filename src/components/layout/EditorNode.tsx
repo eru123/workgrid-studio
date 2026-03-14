@@ -166,6 +166,7 @@ export function EditorNode({ tree }: { tree: SplitTree }) {
   const closeTabsToRight = useLayoutStore((s) => s.closeTabsToRight);
   const closeAllTabs = useLayoutStore((s) => s.closeAllTabs);
   const splitLeaf = useLayoutStore((s) => s.splitLeaf);
+  const splitLeafAndMove = useLayoutStore((s) => s.splitLeafAndMove);
   const closeLeaf = useLayoutStore((s) => s.closeLeaf);
   const setActiveLeaf = useLayoutStore((s) => s.setActiveLeaf);
   const setActiveTab = useLayoutStore((s) => s.setActiveTab);
@@ -182,10 +183,24 @@ export function EditorNode({ tree }: { tree: SplitTree }) {
     tabId: string;
   } | null>(null);
 
+  const [isDragging, setIsDragging] = useState<boolean>(false);
   const [dragOverTabId, setDragOverTabId] = useState<string | null>(null);
   const [isDragOverPane, setIsDragOverPane] = useState<boolean>(false);
+  const [dragOverSplit, setDragOverSplit] = useState<"horizontal" | "vertical" | null>(null);
   const [renamingTabId, setRenamingTabId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
+
+  // Track any drag-in-progress globally so all panes show their edge drop zones
+  useEffect(() => {
+    const onStart = () => setIsDragging(true);
+    const onEnd = () => { setIsDragging(false); setDragOverSplit(null); };
+    window.addEventListener("dragstart", onStart);
+    window.addEventListener("dragend", onEnd);
+    return () => {
+      window.removeEventListener("dragstart", onStart);
+      window.removeEventListener("dragend", onEnd);
+    };
+  }, []);
 
   const handleDragStart = (e: React.DragEvent, tabId: string, leafId: string) => {
     e.dataTransfer.effectAllowed = "move";
@@ -577,6 +592,63 @@ export function EditorNode({ tree }: { tree: SplitTree }) {
             ))
           ) : (
             <WelcomeTab />
+          )}
+
+          {/* Edge drop zones — only visible when a tab drag is in progress */}
+          {isDragging && (
+            <>
+              {/* Right edge → horizontal split */}
+              <div
+                className={cn(
+                  "absolute top-0 right-0 h-full w-[20%] z-50 flex items-center justify-center transition-colors",
+                  dragOverSplit === "horizontal"
+                    ? "bg-primary/20 border-r-2 border-primary"
+                    : "bg-transparent"
+                )}
+                onDragEnter={(e) => { e.preventDefault(); e.stopPropagation(); setDragOverSplit("horizontal"); setIsDragOverPane(false); }}
+                onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = "move"; }}
+                onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOverSplit(null); }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setDragOverSplit(null);
+                  if (activeDragPayload) {
+                    splitLeafAndMove(activeDragPayload.tabId, activeDragPayload.sourceLeafId, tree.id, "horizontal");
+                    activeDragPayload = null;
+                  }
+                }}
+              >
+                {dragOverSplit === "horizontal" && (
+                  <span className="text-[10px] text-primary font-semibold pointer-events-none">Split Right</span>
+                )}
+              </div>
+
+              {/* Bottom edge → vertical split */}
+              <div
+                className={cn(
+                  "absolute bottom-0 left-0 w-full h-[20%] z-50 flex items-center justify-center transition-colors",
+                  dragOverSplit === "vertical"
+                    ? "bg-primary/20 border-b-2 border-primary"
+                    : "bg-transparent"
+                )}
+                onDragEnter={(e) => { e.preventDefault(); e.stopPropagation(); setDragOverSplit("vertical"); setIsDragOverPane(false); }}
+                onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = "move"; }}
+                onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOverSplit(null); }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setDragOverSplit(null);
+                  if (activeDragPayload) {
+                    splitLeafAndMove(activeDragPayload.tabId, activeDragPayload.sourceLeafId, tree.id, "vertical");
+                    activeDragPayload = null;
+                  }
+                }}
+              >
+                {dragOverSplit === "vertical" && (
+                  <span className="text-[10px] text-primary font-semibold pointer-events-none">Split Down</span>
+                )}
+              </div>
+            </>
           )}
         </div>
       </div>
