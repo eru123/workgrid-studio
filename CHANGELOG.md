@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.1.4] - 2026-03-14
 - Add GitHub Actions workflow to update changelog
 - Enhance manual build workflow for versioning and changelog
 - docs: update changelog [skip ci]
