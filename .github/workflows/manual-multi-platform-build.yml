@@ -25,6 +25,7 @@ jobs:
     outputs:
       version: ${{ steps.read-version.outputs.version }}
       tag: ${{ steps.read-version.outputs.tag }}
+      notes: ${{ steps.changelog.outputs.notes }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -129,7 +130,7 @@ jobs:
         with:
           tagName: ${{ needs.prepare-version.outputs.tag }}
           releaseName: Workgrid Studio v${{ needs.prepare-version.outputs.version }}
-          releaseBody: "${{ steps.changelog.outputs.notes }}"
+          releaseBody: "${{ needs.prepare-version.outputs.notes }}"
           releaseDraft: true
           prerelease: true
           args: --verbose
