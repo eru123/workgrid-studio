@@ -2,6 +2,7 @@ use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::PathBuf;
 use crate::files::app_data_dir;
+use chrono::Local;
 
 pub fn log_dir_for(profile_id: &str) -> Result<PathBuf, String> {
     let base = app_data_dir()?;
@@ -14,35 +15,7 @@ pub fn log_dir_for(profile_id: &str) -> Result<PathBuf, String> {
 }
 
 pub fn timestamp() -> String {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default();
-    let secs = now.as_secs();
-    // Simple UTC timestamp: YYYY-MM-DD HH:MM:SS
-    let days = secs / 86400;
-    let time_secs = secs % 86400;
-    let hours = time_secs / 3600;
-    let minutes = (time_secs % 3600) / 60;
-    let seconds = time_secs % 60;
-
-    // Approximate date calculation
-    let mut y = 1970i64;
-    let mut remaining = days as i64;
-    loop {
-        let days_in_year = if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) { 366 } else { 365 };
-        if remaining < days_in_year { break; }
-        remaining -= days_in_year;
-        y += 1;
-    }
-    let leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
-    let months_days = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-    let mut m = 0usize;
-    for &md in &months_days {
-        if remaining < md { break; }
-        remaining -= md;
-        m += 1;
-    }
-    format!("{:04}-{:02}-{:02} {:02}:{:02}:{:02}", y, m + 1, remaining + 1, hours, minutes, seconds)
+    Local::now().format("%Y-%m-%d %H:%M:%S").to_string()
 }
 
 pub fn append_log(profile_id: &str, filename: &str, message: &str) {
