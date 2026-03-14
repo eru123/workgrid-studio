@@ -26,6 +26,7 @@
 - feat: enhance cell context menu with JSON/CSV/SQL export and add search functionality
 - Update manual-multi-platform-build.yml
 - chore: bump workgrid-studio version to 0.1.5 in Cargo.lock
+- Potential fix for code scanning alert no. 5: Hard-coded cryptographic value
 
 ## [0.1.5] - 2026-03-14
 - Exclude main branch from changelog workflow
