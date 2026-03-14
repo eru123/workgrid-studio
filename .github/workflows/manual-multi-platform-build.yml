@@ -34,7 +34,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version: 24
 
       - name: Bump and sync version files
         run: node scripts/versioning.mjs bump "${{ github.event.inputs.bump }}"
@@ -99,7 +99,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version: 24
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
