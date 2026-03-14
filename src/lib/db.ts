@@ -264,6 +264,17 @@ export async function dbImportSql(profileId: string, database: string, filePath:
     return invoke<string>("db_import_sql", { profileId, database, filePath });
 }
 
-export async function dbImportCsv(profileId: string, database: string, table: string, filePath: string): Promise<string> {
-    return invoke<string>("db_import_csv", { profileId, database, table, filePath });
+export interface ImportResult {
+    rowsAttempted: number;
+    rowsCommitted: number;
+}
+
+export async function dbImportCsv(profileId: string, database: string, table: string, filePath: string): Promise<ImportResult> {
+    return invoke<ImportResult>("db_import_csv", { profileId, database, table, filePath });
+}
+
+// ─── SSH Host Key ──────────────────────────────────────────────────
+
+export async function dbForgetHostKey(profileId: string, sshHost: string, sshPort: number): Promise<void> {
+    return invoke<void>("forget_host_key", { profileId, sshHost, sshPort });
 }
