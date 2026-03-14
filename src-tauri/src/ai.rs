@@ -46,7 +46,12 @@ pub fn append_ai_log(entry: AiLogEntry) {
         let path = base.join("ai_logs.json");
         let mut logs: Vec<AiLogEntry> = if path.exists() {
             let content = fs::read_to_string(&path).unwrap_or_else(|_| "[]".to_string());
-            serde_json::from_str(&content).unwrap_or_default()
+            serde_json::from_str(&content).unwrap_or_else(|err| {
+                eprintln!("[workgrid-studio] Failed to parse ai_logs.json: {}. Starting with an empty log.", err);
+                let backup_path = base.join("ai_logs.corrupted.json");
+                let _ = fs::copy(&path, &backup_path);
+                Vec::new()
+            })
         } else {
             Vec::new()
         };
