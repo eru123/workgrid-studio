@@ -5,7 +5,7 @@ use aes_gcm::{
     Aes256Gcm, Nonce,
 };
 use base64::{engine::general_purpose::STANDARD as b64, Engine};
-use rand::Rng;
+use rand::RngCore;
 use crate::files::ensure_app_dirs;
 
 /// Retrieve or create the 32-byte AES-256-GCM master key used for vault and

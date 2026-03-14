@@ -139,118 +139,102 @@ pub async fn ai_generate_query(
             let default_model = if provider_type == "deepseek" { "deepseek-chat" } else { "gpt-4o" };
             let actual_model = if model_id.is_empty() { default_model.to_string() } else { model_id };
 
-            let payload = OpenAIPayload {
-                model: actual_model.clone(),
-                messages: vec![
-                    AnthropicMessage { role: "system".to_string(), content: final_system_prompt },
-                    AnthropicMessage { role: "user".to_string(), content: user_prompt },
-                ],
-            };
-
-            println!("Sending {} completion request to {} (model: {})", provider_type, url, actual_model);
-
-            let payload_json = serde_json::to_string(&payload).unwrap_or_default();
-
-            let res = client.post(&url)
-                .bearer_auth(api_key)
-                .json(&payload)
-                .send()
-                .await;
-
-            let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
-            let entry_id = uuid::Uuid::new_v4().to_string();
-
-            match res {
-                Ok(response) => {
-                    let status = response.status();
-                    if !status.is_success() {
-                        let text = response.text().await.unwrap_or_default();
-                        println!("AI Request Error ({}): {}", status, text);
-
-                        append_ai_log(AiLogEntry {
-                            id: entry_id,
-                            timestamp,
-                            model: actual_model.clone(),
-                            uri: url.clone(),
-                            payload_preview: payload_json,
-                            response_preview: format!("HTTP {} - {}", status, text),
-                        });
-
-                        return Err(format!("API Error ({}): {}", status, text));
-                    }
-
-                    let raw_text = response.text().await.unwrap_or_default();
-                    let parsed: OpenAIResponse = serde_json::from_str(&raw_text)
-                        .map_err(|e| format!("Failed to parse response: {}\nRaw: {}", e, raw_text))?;
-
-                    append_ai_log(AiLogEntry {
-                        id: entry_id,
-                        timestamp,
-                        model: actual_model,
-                        uri: url,
-                        payload_preview: payload_json,
-                        response_preview: raw_text,
-                    });
-
-                    if let Some(choice) = parsed.choices.first() {
-                        let content = choice.message.content.trim().to_string();
-                        // Strip markdown codeblocks if AI disobeyed
-                let cleaned = content
-                    .strip_prefix("```sql").unwrap_or(&content)
-                    .strip_prefix("```").unwrap_or(&content)
-                    .strip_suffix("```").unwrap_or(&content)
-                    .trim()
-                    .to_string();
-                Ok(cleaned)
-            } else {
-                Err("No choices returned from AI provider".to_string())
-            }
-                },
-                Err(e) => {
-                    append_ai_log(AiLogEntry {
-                        id: entry_id,
-                        timestamp,
-                        model: actual_model,
-                        uri: url,
-                        payload_preview: payload_json,
-                        response_preview: format!("Connection failed: {}", e),
-                    });
-                    Err(format!("HTTP request failed: {}", e))
-                }
-            }
+            call_openai_compatible_api(
+                &client,
+                &provider_type,
+                &url,
+                &api_key,
+                &actual_model,
+                &final_system_prompt,
+                &user_prompt,
+            ).await
         },
         "gemini" => {
             // Very simple Gemini impl via proxy or google generative AI SDK format
             // Here assuming proxy to openai-compatible gemini endpoint
             let url = base_url.unwrap_or_else(|| "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions".to_string());
+            let actual_model = if model_id.is_empty() { "gemini-2.5-flash".to_string() } else { model_id };
 
-            let payload = OpenAIPayload {
-                model: if model_id.is_empty() { "gemini-2.5-flash".to_string() } else { model_id },
-                messages: vec![
-                    AnthropicMessage { role: "system".to_string(), content: final_system_prompt },
-                    AnthropicMessage { role: "user".to_string(), content: user_prompt },
-                ],
-            };
+            call_openai_compatible_api(
+                &client,
+                &provider_type,
+                &url,
+                &api_key,
+                &actual_model,
+                &final_system_prompt,
+                &user_prompt,
+            ).await
+        },
+        _ => Err("Unsupported provider type".to_string())
+    }
+}
 
-            let res = client.post(&url)
-                .bearer_auth(api_key)
-                .json(&payload)
-                .send()
-                .await
-                .map_err(|e| format!("HTTP request failed: {}", e))?;
+async fn call_openai_compatible_api(
+    client: &Client,
+    provider_type: &str,
+    url: &str,
+    api_key: &str,
+    actual_model: &str,
+    system_prompt: &str,
+    user_prompt: &str,
+) -> Result<String, String> {
+    let payload = OpenAIPayload {
+        model: actual_model.to_string(),
+        messages: vec![
+            AnthropicMessage { role: "system".to_string(), content: system_prompt.to_string() },
+            AnthropicMessage { role: "user".to_string(), content: user_prompt.to_string() },
+        ],
+    };
 
-            let status = res.status();
+    println!("Sending {} completion request to {} (model: {})", provider_type, url, actual_model);
+
+    let payload_json = serde_json::to_string(&payload).unwrap_or_default();
+
+    let res = client.post(url)
+        .bearer_auth(api_key)
+        .json(&payload)
+        .send()
+        .await;
+
+    let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    let entry_id = uuid::Uuid::new_v4().to_string();
+
+    match res {
+        Ok(response) => {
+            let status = response.status();
             if !status.is_success() {
-                let text = res.text().await.unwrap_or_default();
+                let text = response.text().await.unwrap_or_default();
+                println!("AI Request Error ({}): {}", status, text);
+
+                append_ai_log(AiLogEntry {
+                    id: entry_id,
+                    timestamp,
+                    model: actual_model.to_string(),
+                    uri: url.to_string(),
+                    payload_preview: payload_json,
+                    response_preview: format!("HTTP {} - {}", status, text),
+                });
+
                 return Err(format!("API Error ({}): {}", status, text));
             }
 
-            let parsed: OpenAIResponse = res.json()
-                .await
-                .map_err(|e| format!("Failed to parse response: {}", e))?;
+            let raw_text = response.text().await.unwrap_or_default();
+            let parsed: Result<OpenAIResponse, _> = serde_json::from_str(&raw_text);
+
+            append_ai_log(AiLogEntry {
+                id: entry_id,
+                timestamp,
+                model: actual_model.to_string(),
+                uri: url.to_string(),
+                payload_preview: payload_json,
+                response_preview: raw_text.clone(),
+            });
+
+            let parsed = parsed.map_err(|e| format!("Failed to parse response: {}\nRaw: {}", e, raw_text))?;
 
             if let Some(choice) = parsed.choices.first() {
                 let content = choice.message.content.trim().to_string();
+                // Strip markdown codeblocks if AI disobeyed
                 let cleaned = content
                     .strip_prefix("```sql").unwrap_or(&content)
                     .strip_prefix("```").unwrap_or(&content)
@@ -262,6 +246,16 @@ pub async fn ai_generate_query(
                 Err("No choices returned from AI provider".to_string())
             }
         },
-        _ => Err("Unsupported provider type".to_string())
+        Err(e) => {
+            append_ai_log(AiLogEntry {
+                id: entry_id,
+                timestamp,
+                model: actual_model.to_string(),
+                uri: url.to_string(),
+                payload_preview: payload_json,
+                response_preview: format!("Connection failed: {}", e),
+            });
+            Err(format!("HTTP request failed: {}", e))
+        }
     }
 }
