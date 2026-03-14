@@ -3,6 +3,9 @@
 ## [Unreleased]
 - Add GitHub Actions workflow to update changelog
 - Enhance manual build workflow for versioning and changelog
+- docs: update changelog [skip ci]
+- docs: update changelog [skip ci]
+- feat(changelog): introduce automated changelog management
 
 ## [0.1.3] - 2026-03-14
 - feat: add clear_ai_logs function to Tauri API
