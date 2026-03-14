@@ -25,6 +25,7 @@
 - feat: add per-profile ping latency display in explorer tree
 - feat: enhance cell context menu with JSON/CSV/SQL export and add search functionality
 - Update manual-multi-platform-build.yml
+- chore: bump workgrid-studio version to 0.1.5 in Cargo.lock
 
 ## [0.1.5] - 2026-03-14
 - Exclude main branch from changelog workflow
