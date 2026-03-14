@@ -32,6 +32,8 @@
 - Fix search navigation and selection bounds in ExplorerTree
 - refactor(ssh): improve tunnel shutdown logic with proper thread joining
 - refactor: replace RngCore with Rng for improved randomness generation
+- refactor: simplify secret key management and improve reliability
+- refactor: consolidate output logging and enhance bottom panel UX
 
 ## [0.1.5] - 2026-03-14
 - Exclude main branch from changelog workflow
