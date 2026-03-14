@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.1.5] - 2026-03-14
 - Exclude main branch from changelog workflow
 - Add environment variable for Node.js version
 - Update manual-multi-platform-build.yml
