@@ -90,7 +90,10 @@ function addCommits(fromRef, toRef) {
   const newLines = rawLog
     .split("\n")
     .map((l) => l.trim())
-    .filter((l) => l.startsWith("- "));
+    .filter((l) => l.startsWith("- "))
+    .filter((l) => !l.toLowerCase().includes("docs: update changelog"))
+    .filter((l) => !l.toLowerCase().includes("merge branch"))
+    .filter((l) => !l.toLowerCase().includes("merge pull request"));
 
   const content = readChangelog();
   const parsed = splitChangelog(content);
