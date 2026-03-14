@@ -30,8 +30,9 @@ pub fn get_or_create_secret_key() -> Result<[u8; 32], String> {
             let bytes = b64.decode(&encoded)
                 .map_err(|e| format!("Keychain key decode error: {e}"))?;
             if bytes.len() == 32 {
-                let mut key = [0u8; 32];
-                key.copy_from_slice(&bytes);
+                let key: [u8; 32] = bytes
+                    .try_into()
+                    .map_err(|_| "Keychain key has invalid length".to_string())?;
                 write_secret_key_to_file(&key)?;
                 return Ok(key);
             }
@@ -55,8 +56,9 @@ fn read_secret_key_from_file() -> Result<Option<[u8; 32]>, String> {
         let contents = fs::read(&key_path)
             .map_err(|e| format!("Failed to read secret.key: {e}"))?;
         if contents.len() == 32 {
-            let mut key = [0u8; 32];
-            key.copy_from_slice(&contents);
+            let key: [u8; 32] = contents
+                .try_into()
+                .map_err(|_| "secret.key has invalid length".to_string())?;
             return Ok(Some(key));
         }
     }

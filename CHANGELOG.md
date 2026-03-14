@@ -34,6 +34,7 @@
 - refactor: replace RngCore with Rng for improved randomness generation
 - refactor: simplify secret key management and improve reliability
 - refactor: consolidate output logging and enhance bottom panel UX
+- Potential fix for code scanning alert no. 17: Hard-coded cryptographic value
 
 ## [0.1.5] - 2026-03-14
 - Exclude main branch from changelog workflow
