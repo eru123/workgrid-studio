@@ -22,6 +22,7 @@
 - chore: restrict file system permissions to user home directory
 - build(security): add Content Security Policy for Tauri app
 - fix(vault)!: use secure per-installation encryption key
+- Update changelog-on-push.yml
 
 ## [0.1.4] - 2026-03-14
 - Add GitHub Actions workflow to update changelog
