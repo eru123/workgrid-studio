@@ -501,11 +501,19 @@ async fn db_connect(
         
         // Establish SSH Tunnel
         {
-            // Kill any pre-existing tunnel for this profile (reconnect scenario)
-            let mut tunnels = state.tunnels.lock().map_err(|e| e.to_string())?;
-            if let Some(old) = tunnels.remove(&pid) {
+            // Kill any pre-existing tunnel for this profile (reconnect scenario).
+            // Remove from the map first so the lock is released before joining the thread.
+            let old_tunnel = {
+                let mut tunnels = state.tunnels.lock().map_err(|e| e.to_string())?;
+                tunnels.remove(&pid)
+            };
+            if let Some(mut old) = old_tunnel {
                 old.shutdown.store(true, Ordering::Relaxed);
+                // Unblock listener.incoming() so the thread exits its loop
                 let _ = TcpStream::connect(format!("127.0.0.1:{}", old.local_port));
+                if let Some(t) = old.thread.take() {
+                    let _ = t.join();
+                }
             }
         }
         let handle = establish_ssh_tunnel(&pid, &conn_params)?;
