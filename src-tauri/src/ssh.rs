@@ -220,14 +220,20 @@ pub fn shutdown_tunnel(mut handle: TunnelHandle) {
     // Unblock the blocking `listener.incoming()` call with a throwaway connection.
     let _ = TcpStream::connect(format!("127.0.0.1:{}", handle.local_port));
     // Wait up to 5 s for the forwarding loop to signal completion.
+    let mut should_join = false;
     match handle.done_rx.recv_timeout(std::time::Duration::from_secs(5)) {
-        Ok(_) | Err(mpsc::RecvTimeoutError::Disconnected) => {}
+        Ok(_) | Err(mpsc::RecvTimeoutError::Disconnected) => {
+            should_join = true;
+        }
         Err(mpsc::RecvTimeoutError::Timeout) => {
             #[cfg(debug_assertions)]
             eprintln!("[workgrid-studio] [debug] WARNING: SSH tunnel thread did not exit within 5 s — abandoning");
         }
     }
-    if let Some(t) = handle.thread.take() {
-        let _ = t.join();
+
+    if should_join {
+        if let Some(t) = handle.thread.take() {
+            let _ = t.join();
+        }
     }
 }
