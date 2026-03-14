@@ -64,6 +64,35 @@ const DB_ICONS: Record<string, React.ElementType> = {
   mssql: Database,
 };
 
+function getConnectionStatusMeta(status?: string) {
+  switch (status) {
+    case "connected":
+      return {
+        label: "Connected",
+        dotClassName: "bg-green-500",
+        badgeClassName: "text-green-400 bg-green-500/10",
+      };
+    case "connecting":
+      return {
+        label: "Connecting",
+        dotClassName: "bg-yellow-500",
+        badgeClassName: "text-yellow-400 bg-yellow-500/10",
+      };
+    case "error":
+      return {
+        label: "Error",
+        dotClassName: "bg-red-500",
+        badgeClassName: "text-red-400 bg-red-500/10",
+      };
+    default:
+      return {
+        label: "Disconnected",
+        dotClassName: "bg-muted-foreground/50",
+        badgeClassName: "text-muted-foreground bg-muted/50",
+      };
+  }
+}
+
 type ExpandedSet = Record<string, boolean>;
 
 type ContextMenuTarget =
@@ -246,7 +275,14 @@ export function ExplorerTree() {
           className="bg-transparent border-none outline-none w-full text-[11px] text-foreground placeholder:text-muted-foreground/60 h-full"
         />
         {globalSearch && (
-          <X className="w-3 h-3 text-muted-foreground cursor-pointer hover:text-foreground shrink-0" onClick={() => setGlobalSearch("")} />
+          <button
+            type="button"
+            className="shrink-0 rounded p-0.5 text-muted-foreground hover:text-foreground"
+            onClick={() => setGlobalSearch("")}
+            aria-label="Clear global search"
+          >
+            <X className="w-3 h-3" />
+          </button>
         )}
       </div>
 
@@ -262,10 +298,14 @@ export function ExplorerTree() {
             className="bg-transparent border-none outline-none w-full text-foreground placeholder:text-muted-foreground/60 h-full"
           />
           {dbFilter && (
-            <X
-              className="w-3 h-3 text-muted-foreground cursor-pointer hover:text-foreground shrink-0"
+            <button
+              type="button"
+              className="shrink-0 rounded p-0.5 text-muted-foreground hover:text-foreground"
               onClick={() => setDbFilter("")}
-            />
+              aria-label="Clear database filter"
+            >
+              <X className="w-3 h-3" />
+            </button>
           )}
         </div>
         <div className="flex-1 flex items-center h-full px-2 focus-within:bg-muted/30 transition-colors">
@@ -278,10 +318,14 @@ export function ExplorerTree() {
             className="bg-transparent border-none outline-none w-full text-foreground placeholder:text-muted-foreground/60 h-full font-mono"
           />
           {tableFilter && (
-            <X
-              className="w-3 h-3 text-muted-foreground cursor-pointer hover:text-foreground shrink-0"
+            <button
+              type="button"
+              className="shrink-0 rounded p-0.5 text-muted-foreground hover:text-foreground"
               onClick={() => setTableFilter("")}
-            />
+              aria-label="Clear table filter"
+            >
+              <X className="w-3 h-3" />
+            </button>
           )}
         </div>
       </div>
@@ -329,6 +373,8 @@ export function ExplorerTree() {
       {/* Tree (hidden when global search is active) */}
       <div
         className={cn("flex-1 overflow-y-auto overflow-x-hidden pt-1", globalSearch.trim() && "hidden")}
+        role="tree"
+        aria-label="Connected databases"
         onContextMenu={(e) => {
           // If we clicked directly on this container (empty space)
           // and not on a child element, show context menu for the last server
@@ -1142,6 +1188,7 @@ function ProfileNode({
   const openTab = useLayoutStore((s) => s.openTab);
 
   const connectionStatus = useProfilesStore((s) => s.profiles.find((p) => p.id === profileId)?.connectionStatus);
+  const statusMeta = getConnectionStatusMeta(connectionStatus);
 
   const nodeKey = `profile-${profileId}`;
   const isOpen = expanded[nodeKey] ?? true;
@@ -1218,18 +1265,31 @@ function ProfileNode({
         })()}
         label={name}
         badge={filteredDatabases ? String(filteredDatabases.length) : undefined}
-        suffix={latency !== null && (
-          <span className={cn(
-            "text-[9px] tabular-nums font-mono px-1 rounded ml-1 shrink-0",
-            latency === -1
-              ? "text-red-400 bg-red-400/10"
-              : latency > 200
-              ? "text-amber-400 bg-amber-400/10"
-              : "text-muted-foreground/60"
-          )}>
-            {latency === -1 ? "err" : `${latency}ms`}
+        suffix={
+          <span className="ml-1 flex items-center gap-1 shrink-0">
+            <span
+              className={cn(
+                "inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[9px] font-medium",
+                statusMeta.badgeClassName,
+              )}
+            >
+              <span className={cn("h-1.5 w-1.5 rounded-full", statusMeta.dotClassName)} />
+              {statusMeta.label}
+            </span>
+            {latency !== null && (
+              <span className={cn(
+                "text-[9px] tabular-nums font-mono px-1 rounded shrink-0",
+                latency === -1
+                  ? "text-red-400 bg-red-400/10"
+                  : latency > 200
+                  ? "text-amber-400 bg-amber-400/10"
+                  : "text-muted-foreground/60"
+              )}>
+                {latency === -1 ? "err" : `${latency}ms`}
+              </span>
+            )}
           </span>
-        )}
+        }
         bold
       />
 
@@ -1350,7 +1410,7 @@ function DatabaseNode({
   }, [tables, tableFilter]);
 
   // Single click on label → open database tab OR select if ctrl/cmd held
-  const handleLabelClick = (e: React.MouseEvent) => {
+  const handleLabelClick = (e: React.MouseEvent | React.KeyboardEvent) => {
     if (e.ctrlKey || e.metaKey) {
       onSelectDatabase(cacheKey, true);
     } else {
@@ -1602,7 +1662,7 @@ const TreeRow = memo(function TreeRow({
   depth: number;
   isOpen?: boolean;
   onChevronClick?: () => void;
-  onLabelClick?: (e: React.MouseEvent) => void;
+  onLabelClick?: (e: React.MouseEvent | React.KeyboardEvent) => void;
   onDoubleClick?: () => void;
   onContextMenu?: (e: React.MouseEvent) => void;
   icon: React.ReactNode;
@@ -1615,9 +1675,15 @@ const TreeRow = memo(function TreeRow({
   highlight?: string;
 }) {
   const isFolder = isOpen !== undefined;
+  const isInteractive = Boolean(onChevronClick || onLabelClick || onDoubleClick);
 
   return (
     <div
+      role="treeitem"
+      tabIndex={isInteractive ? 0 : -1}
+      aria-expanded={isFolder ? isOpen : undefined}
+      aria-selected={selected || undefined}
+      aria-label={label}
       className={cn(
         "flex items-center h-5.5 cursor-pointer hover:bg-accent/50 transition-colors",
         bold && "font-medium",
@@ -1627,6 +1693,38 @@ const TreeRow = memo(function TreeRow({
       style={{ paddingLeft: `${depth * 14 + 6}px` }}
       onDoubleClick={onDoubleClick}
       onContextMenu={onContextMenu}
+      onKeyDown={(e) => {
+        if (e.key === "ArrowRight" && isFolder && !isOpen) {
+          e.preventDefault();
+          onChevronClick?.();
+          return;
+        }
+
+        if (e.key === "ArrowLeft" && isFolder && isOpen) {
+          e.preventDefault();
+          onChevronClick?.();
+          return;
+        }
+
+        if (e.key === " ") {
+          e.preventDefault();
+          if (isFolder) {
+            onChevronClick?.();
+          } else {
+            onLabelClick?.(e);
+          }
+          return;
+        }
+
+        if (e.key === "Enter") {
+          e.preventDefault();
+          if (onLabelClick) {
+            onLabelClick(e);
+          } else {
+            onDoubleClick?.();
+          }
+        }
+      }}
     >
       {/* Chevron — has its own click handler */}
       {isFolder ? (

@@ -650,6 +650,14 @@ export function QueryTab({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [selectedCell, results, activeResultIdx]);
 
+  useEffect(() => {
+    if (!selectedCell) return;
+    const cellEl = document.getElementById(
+      `qcell-${selectedCell.rowIdx}-${selectedCell.colIdx}`,
+    ) as HTMLElement | null;
+    cellEl?.focus({ preventScroll: true });
+  }, [selectedCell]);
+
   const copyCellContextValue = useCallback(() => {
     if (!cellContextMenu) return;
     const text = cellContextMenu.value === null ? "NULL" : String(cellContextMenu.value);
@@ -1826,10 +1834,11 @@ export function QueryTab({
                           <span className="ml-auto">{new Date(h.timestamp).toLocaleString()}</span>
                         </div>
                       </button>
-                      <div className="flex items-center gap-0.5 opacity-0 group-hover/hitem:opacity-100 transition-opacity shrink-0 mt-0.5">
+                      <div className="flex items-center gap-0.5 opacity-0 transition-opacity shrink-0 mt-0.5 group-hover/hitem:opacity-100 group-focus-within/hitem:opacity-100">
                         <button
                           className={cn("p-0.5 rounded hover:bg-muted transition-colors", h.favorited ? "text-yellow-400" : "text-muted-foreground")}
                           title={h.favorited ? "Unpin" : "Pin"}
+                          aria-label={h.favorited ? "Unpin saved history item" : "Pin saved history item"}
                           onClick={() => toggleFavorite(h.id)}
                         >
                           <Star className="w-3 h-3" fill={h.favorited ? "currentColor" : "none"} />
@@ -1837,6 +1846,7 @@ export function QueryTab({
                         <button
                           className="p-0.5 rounded hover:bg-red-500/20 text-muted-foreground hover:text-red-400 transition-colors"
                           title="Delete"
+                          aria-label="Delete history item"
                           onClick={() => deleteHistoryItem(h.id)}
                         >
                           <X className="w-3 h-3" />
@@ -1870,6 +1880,7 @@ export function QueryTab({
             className="h-full w-fit whitespace-nowrap bg-transparent text-[11px] font-medium pl-1 pr-1 focus:outline-none appearance-none cursor-pointer"
             style={{ fieldSizing: "content" } as React.CSSProperties}
             title="Format SQL"
+            aria-label="Format SQL"
           >
             <option value="" disabled>
               Format SQL
@@ -1905,6 +1916,7 @@ export function QueryTab({
             className="h-full w-fit whitespace-nowrap bg-transparent text-[11px] font-medium pl-1 pr-1 focus:outline-none appearance-none cursor-pointer"
             style={{ fieldSizing: "content" } as React.CSSProperties}
             title="Export results"
+            aria-label="Export results"
           >
             <option value="" disabled>Export</option>
             <option value="csv">CSV</option>
@@ -1932,6 +1944,7 @@ export function QueryTab({
               }}
               disabled={profileIds.length === 0}
               className="h-6 text-xs bg-secondary/50 border rounded px-1.5 focus:outline-none focus:ring-1 focus:ring-primary min-w-30 max-w-37.5 truncate"
+              aria-label="Select server"
             >
               {profileIds.length === 0 && <option value="">(no server)</option>}
               {Object.entries(connectedProfiles).map(([id, p]) => (
@@ -1954,6 +1967,7 @@ export function QueryTab({
                 !selectedProfileId || !connectedProfiles[selectedProfileId]
               }
               className="h-6 text-xs bg-secondary/50 border rounded px-1.5 focus:outline-none focus:ring-1 focus:ring-primary min-w-30 max-w-37.5 truncate"
+              aria-label="Select database"
             >
               <option value="">(no database)</option>
               {databases.map((db) => (
@@ -2221,10 +2235,20 @@ export function QueryTab({
               />
             )}
             <div className="absolute inset-0 overflow-auto">
-              <table className="min-w-max text-xs border-collapse">
+              <table
+                className="min-w-max text-xs border-collapse"
+                role="grid"
+                aria-label="Query results"
+                aria-rowcount={activeResult.rows.length + 1}
+                aria-colcount={activeResult.columns.length + 1}
+              >
                 <thead>
-                  <tr className="bg-muted sticky top-0 z-10">
-                    <th className="text-center px-2 py-1.5 text-[10px] font-medium text-muted-foreground/70 border-b border-r bg-muted w-12.5">
+                  <tr className="bg-muted sticky top-0 z-10" role="row" aria-rowindex={1}>
+                    <th
+                      className="text-center px-2 py-1.5 text-[10px] font-medium text-muted-foreground/70 border-b border-r bg-muted w-12.5"
+                      role="columnheader"
+                      aria-colindex={1}
+                    >
                       #
                     </th>
                     {activeResult.columns.map((col, ci) => (
@@ -2232,6 +2256,8 @@ export function QueryTab({
                         key={ci}
                         className="text-left px-2 py-1.5 text-[10px] font-medium text-muted-foreground/70 border-b border-r bg-muted whitespace-nowrap relative group/qth select-none"
                         style={colWidths[ci] ? { width: colWidths[ci], minWidth: colWidths[ci] } : undefined}
+                        role="columnheader"
+                        aria-colindex={ci + 2}
                       >
                         {col}
                         <div
@@ -2261,8 +2287,14 @@ export function QueryTab({
                     <tr
                       key={ri}
                       className="border-b hover:bg-accent/20 transition-colors"
+                      role="row"
+                      aria-rowindex={ri + 2}
                     >
-                      <td className="text-center px-2 py-1 border-r text-muted-foreground/40 select-none">
+                      <td
+                        className="text-center px-2 py-1 border-r text-muted-foreground/40 select-none"
+                        role="rowheader"
+                        aria-colindex={1}
+                      >
                         {ri + 1}
                       </td>
                       {row.map((val, ci) => {
@@ -2275,6 +2307,14 @@ export function QueryTab({
                           <td
                             key={ci}
                             id={`qcell-${ri}-${ci}`}
+                            role="gridcell"
+                            aria-colindex={ci + 2}
+                            aria-selected={isSelected}
+                            tabIndex={
+                              isSelected || (!selectedCell && ri === 0 && ci === 0)
+                                ? 0
+                                : -1
+                            }
                             className={cn(
                               "px-2 py-1 border-r font-mono max-w-75 transition-all cursor-default",
                               val === null
@@ -2289,6 +2329,7 @@ export function QueryTab({
                             )}
                             title={val === null ? "NULL" : String(val)}
                             onClick={() => setSelectedCell({ rowIdx: ri, colIdx: ci })}
+                            onFocus={() => setSelectedCell({ rowIdx: ri, colIdx: ci })}
                             onContextMenu={(e) => {
                               e.preventDefault();
                               setSelectedCell({ rowIdx: ri, colIdx: ci });

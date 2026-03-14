@@ -282,6 +282,10 @@ export function Workbench() {
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-background text-foreground">
+      <a href="#main-content" className="skip-link">
+        Skip to main content
+      </a>
+
       {/* Activity Bar */}
       <div
         className="shrink-0 bg-muted/20 border-r flex flex-col items-center py-2 justify-between"
@@ -308,6 +312,7 @@ export function Workbench() {
                     : "text-muted-foreground hover:text-foreground hover:bg-accent/50",
                 )}
                 title={item.label}
+                aria-label={item.label}
               >
                 {isActive && (
                   <div className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-5 bg-foreground rounded-r" />
@@ -329,6 +334,7 @@ export function Workbench() {
             onClick={() => openTab({ title: "Settings", type: "settings", meta: {} })}
             className="w-10 h-10 flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors"
             title="Settings"
+            aria-label="Settings"
           >
             <Settings className="w-5 h-5" />
           </button>
@@ -342,6 +348,7 @@ export function Workbench() {
                 : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
             )}
             title="AI Chat"
+            aria-label="AI Chat"
           >
             <Sparkles className="w-5 h-5" />
           </button>
@@ -350,6 +357,7 @@ export function Workbench() {
             onClick={handleToggleTheme}
             className="w-10 h-10 flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors"
             title={`Theme: ${theme.charAt(0).toUpperCase() + theme.slice(1)}`}
+            aria-label={`Theme: ${theme.charAt(0).toUpperCase() + theme.slice(1)}`}
           >
             {theme === "dark" && <Moon className="w-5 h-5" />}
             {theme === "light" && <Sun className="w-5 h-5" />}
@@ -359,6 +367,7 @@ export function Workbench() {
             onClick={toggleSidebar}
             className="w-10 h-10 flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors"
             title="Toggle Sidebar (Ctrl+B)"
+            aria-label="Toggle Sidebar (Ctrl+B)"
           >
             <Sidebar className="w-5 h-5" />
           </button>
@@ -366,6 +375,7 @@ export function Workbench() {
             onClick={togglePanel}
             className="w-10 h-10 flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors"
             title="Toggle Panel (Ctrl+`)"
+            aria-label="Toggle Panel (Ctrl+`)"
           >
             <PanelBottom className="w-5 h-5" />
           </button>
@@ -427,7 +437,11 @@ export function Workbench() {
       )}
 
       {/* Main Content Area */}
-      <div className="flex-1 flex flex-col relative min-w-0">
+      <main
+        id="main-content"
+        tabIndex={-1}
+        className="flex-1 flex flex-col relative min-w-0"
+      >
         {/* Editor Group */}
         <div className="flex-1 flex overflow-hidden min-h-0 min-w-0">
           <div className="flex-1 relative p-0.5 min-w-0 min-h-0">
@@ -489,7 +503,7 @@ export function Workbench() {
 
         {/* Status Bar */}
         <StatusBar appVersion={appVersion} />
-      </div>
+      </main>
     </div>
   );
 }
@@ -802,6 +816,7 @@ function BottomPanel({ isSecondary }: { isSecondary?: boolean }) {
               value={selectedProfileId}
               onChange={(e) => setSelectedProfileId(e.target.value)}
               className="h-6 text-[11px] rounded border bg-secondary/50 text-foreground px-1.5 outline-none"
+              aria-label="Select log profile"
             >
               {connectedProfiles.map((p) => (
                 <option key={p.id} value={p.id}>
@@ -817,6 +832,7 @@ function BottomPanel({ isSecondary }: { isSecondary?: boolean }) {
               value={logFilter}
               onChange={(e) => setLogFilter(e.target.value as LogFilter)}
               className="h-6 text-[11px] rounded border bg-secondary/50 text-foreground px-1.5 outline-none"
+              aria-label="Select log type"
             >
               <option value="mysql">Query Log</option>
               <option value="error">Error Log</option>
@@ -829,6 +845,7 @@ function BottomPanel({ isSecondary }: { isSecondary?: boolean }) {
               onClick={handleRefresh}
               className="p-1 text-muted-foreground hover:text-foreground transition-colors"
               title="Refresh"
+              aria-label="Refresh"
             >
               <RefreshCw
                 className={cn("w-3.5 h-3.5", isRefreshing && "animate-spin")}
@@ -841,6 +858,15 @@ function BottomPanel({ isSecondary }: { isSecondary?: boolean }) {
             onClick={handleClear}
             className="p-1 text-muted-foreground hover:text-red-400 transition-colors"
             title={
+              activeTab === "output"
+                ? "Clear output"
+                : activeTab === "problems"
+                  ? "Clear all problems"
+                  : activeTab === "ailogs"
+                    ? "Clear AI logs"
+                    : "Clear log"
+            }
+            aria-label={
               activeTab === "output"
                 ? "Clear output"
                 : activeTab === "problems"
@@ -862,6 +888,7 @@ function BottomPanel({ isSecondary }: { isSecondary?: boolean }) {
                 autoScroll ? "text-primary hover:text-primary/80" : "text-muted-foreground hover:text-foreground"
               )}
               title="Toggle Auto-Scroll"
+              aria-label="Toggle Auto-Scroll"
             >
               <ArrowDownToLine className="w-3.5 h-3.5" />
               {autoScroll && (
@@ -878,6 +905,7 @@ function BottomPanel({ isSecondary }: { isSecondary?: boolean }) {
               isBottomPanelSplit && !isSecondary ? "text-primary hover:text-primary/80" : "text-muted-foreground hover:text-foreground"
             )}
             title={isBottomPanelSplit && !isSecondary ? "Close Split View" : "Split View"}
+            aria-label={isBottomPanelSplit && !isSecondary ? "Close Split View" : "Split View"}
           >
             <Columns2 className="w-3.5 h-3.5" />
           </button>

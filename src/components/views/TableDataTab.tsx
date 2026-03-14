@@ -657,6 +657,17 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [selectedCellKey, columns, rows, visibleColumns]);
 
+  useEffect(() => {
+    if (!selectedCellKey) return;
+    const colonIdx = selectedCellKey.indexOf(":");
+    const rowIdx = Number(selectedCellKey.slice(0, colonIdx));
+    const colName = selectedCellKey.slice(colonIdx + 1);
+    const cellEl = document.getElementById(
+      `cell-${rowIdx}-${colName}`,
+    ) as HTMLElement | null;
+    cellEl?.focus({ preventScroll: true });
+  }, [selectedCellKey]);
+
   const handleSearch = useCallback((q: string) => {
     if (!q) {
       setFindMatches([]);
@@ -1091,11 +1102,13 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
           <button
             className="flex items-center gap-1 px-2 py-1 rounded hover:bg-accent transition-colors text-xs"
             title="Export data"
+            aria-haspopup="menu"
+            aria-label="Export data"
           >
             <Save className="w-3.5 h-3.5" />
             Export
           </button>
-          <div className="absolute top-full left-0 z-50 mt-1 w-32 hidden group-hover/export:block bg-popover border rounded-md shadow-lg p-1">
+          <div className="absolute top-full left-0 z-50 mt-1 hidden w-32 bg-popover border rounded-md shadow-lg p-1 group-hover/export:block group-focus-within/export:block">
             <button className="w-full text-left px-2 py-1 hover:bg-accent rounded text-xs" onClick={() => handleExport('csv')}>CSV</button>
             <button className="w-full text-left px-2 py-1 hover:bg-accent rounded text-xs" onClick={() => handleExport('json')}>JSON</button>
             <button className="w-full text-left px-2 py-1 hover:bg-accent rounded text-xs" onClick={() => handleExport('sql')}>SQL INSERTs</button>
@@ -1271,26 +1284,41 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
           </div>
         )}
 
-        <table className="w-full text-xs border-collapse">
+        <table
+          className="w-full text-xs border-collapse"
+          role="grid"
+          aria-label={`Data grid for ${tableName}`}
+          aria-rowcount={rows.length - deletedRows.size + addedRows.length + 1}
+          aria-colcount={visibleColumns.length + 2}
+        >
           <thead className="sticky top-0 z-30">
-            <tr className="bg-muted/70 backdrop-blur-sm">
-              <th className="sticky left-0 z-30 text-center px-1.5 py-1.5 border-b border-r bg-muted/70 whitespace-nowrap w-8">
+            <tr className="bg-muted/70 backdrop-blur-sm" role="row" aria-rowindex={1}>
+              <th
+                className="sticky left-0 z-30 text-center px-1.5 py-1.5 border-b border-r bg-muted/70 whitespace-nowrap w-8"
+                role="columnheader"
+                aria-colindex={1}
+              >
                 <input
                   type="checkbox"
                   className="w-3 h-3 rounded-sm opacity-50 hover:opacity-100 cursor-pointer"
                   style={{ accentColor: 'var(--primary)' }}
                   checked={rows.length > 0 && selectedRows.size === rows.length - deletedRows.size}
                   onChange={toggleAllSelection}
+                  aria-label="Select all rows"
                 />
               </th>
               {/* Row number column */}
-              <th className="sticky left-[32px] z-30 text-center px-1.5 py-1.5 text-[10px] font-medium text-muted-foreground/70 tracking-wider border-b border-r bg-muted/70 whitespace-nowrap w-10">
+              <th
+                className="sticky left-[32px] z-30 text-center px-1.5 py-1.5 text-[10px] font-medium text-muted-foreground/70 tracking-wider border-b border-r bg-muted/70 whitespace-nowrap w-10"
+                role="columnheader"
+                aria-colindex={2}
+              >
                 #
               </th>
               {(() => {
                 // checkbox col ≈32px + row number col ≈40px
                 let leftOffset = 72;
-                return visibleColumns.map((col) => {
+                return visibleColumns.map((col, colOrder) => {
                   const isFrozen = frozenCols.has(col);
                   const colLeft = isFrozen ? leftOffset : undefined;
                   if (isFrozen) leftOffset += colWidths[col] ?? 120;
@@ -1315,6 +1343,7 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
                       onResize={(w) => setColWidths(prev => ({ ...prev, [col]: w }))}
                       frozen={isFrozen}
                       frozenLeft={colLeft}
+                      ariaColIndex={colOrder + 3}
                       onToggleFreeze={() => setFrozenCols(prev => {
                         const next = new Set(prev);
                         if (next.has(col)) next.delete(col); else next.add(col);
@@ -1342,6 +1371,7 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
                 key={`new-${idx}`}
                 newRow={newRow}
                 rowIdx={idx}
+                rowIndexAria={idx + 2}
                 columns={effectiveColumns}
                 visibleColumns={visibleColumns}
                 columnInfos={columnInfos}
@@ -1369,6 +1399,7 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
                   row={row}
                   rowIdx={rowIdx}
                   rowNumber={rowNumber}
+                  rowIndexAria={addedRows.length + rowIdx + 2}
                   columns={effectiveColumns}
                   visibleColumns={visibleColumns}
                   columnInfos={columnInfos}
@@ -1410,6 +1441,7 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
             setPageSize(Number(e.target.value));
             setPage(0);
           }}
+          aria-label="Rows per page"
         >
           {PAGE_SIZE_OPTIONS.map((s) => (
             <option key={s} value={s}>
@@ -1479,6 +1511,7 @@ const SortableHeader = memo(function SortableHeader({
   onResize,
   frozen,
   frozenLeft,
+  ariaColIndex,
   onToggleFreeze,
 }: {
   name: string;
@@ -1492,6 +1525,7 @@ const SortableHeader = memo(function SortableHeader({
   onResize?: (w: number) => void;
   frozen?: boolean;
   frozenLeft?: number;
+  ariaColIndex: number;
   onToggleFreeze?: () => void;
 }) {
   const isPK = colInfo?.key === "PRI";
@@ -1530,6 +1564,8 @@ const SortableHeader = memo(function SortableHeader({
   return (
     <th
       ref={thRef}
+      role="columnheader"
+      aria-colindex={ariaColIndex}
       className={cn(
         "text-left px-1.5 py-1.5 text-[10px] font-medium tracking-wider border-b border-r bg-muted/70 whitespace-nowrap select-none group relative",
         sortDirection && "bg-primary/10",
@@ -1542,9 +1578,11 @@ const SortableHeader = memo(function SortableHeader({
       title={colInfo ? `Type: ${colInfo.col_type}` : ""}
     >
       <div className="flex items-center gap-1">
-        <div
-          className="flex-1 flex items-center gap-1 cursor-pointer hover:text-foreground transition-colors"
+        <button
+          type="button"
+          className="flex flex-1 items-center gap-1 text-left hover:text-foreground transition-colors"
           onClick={onSort}
+          aria-label={`Sort by ${name}`}
           title="Click to sort • Ctrl+Click for multi-sort"
         >
           {isPK && (
@@ -1575,26 +1613,30 @@ const SortableHeader = memo(function SortableHeader({
               </span>
             )}
           </span>
-        </div>
+        </button>
 
         <button
+          type="button"
           className={cn(
-            "p-0.5 rounded hover:bg-accent transition-colors",
+            "p-0.5 rounded hover:bg-accent transition-colors focus-visible:text-muted-foreground/80",
             (filterValue || showFilter) ? "text-primary" : "text-muted-foreground/0 group-hover:text-muted-foreground/50"
           )}
           onClick={(e) => { e.stopPropagation(); setShowFilter(!showFilter); }}
           title="Filter column"
+          aria-label={`Filter ${name} column`}
         >
           <Filter className="w-3 h-3" />
         </button>
         {onToggleFreeze && (
           <button
+            type="button"
             className={cn(
-              "p-0.5 rounded hover:bg-accent transition-colors",
+              "p-0.5 rounded hover:bg-accent transition-colors focus-visible:text-muted-foreground/80",
               frozen ? "text-primary" : "text-muted-foreground/0 group-hover:text-muted-foreground/50"
             )}
             onClick={(e) => { e.stopPropagation(); onToggleFreeze(); }}
             title={frozen ? "Unfreeze column" : "Freeze column (pin left)"}
+            aria-label={frozen ? `Unfreeze ${name} column` : `Freeze ${name} column`}
           >
             <ArrowUpDown className="w-3 h-3 rotate-90" />
           </button>
@@ -1615,6 +1657,7 @@ const SortableHeader = memo(function SortableHeader({
                 className="w-full h-7 px-2 bg-secondary/50 border rounded text-xs focus:outline-none focus:ring-1 focus:ring-primary"
                 value={filterValue}
                 onChange={(e) => onFilter(e.target.value)}
+                aria-label={`Filter values in ${name}`}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' || e.key === 'Escape') setShowFilter(false);
                 }}
@@ -1646,6 +1689,7 @@ const SortableHeader = memo(function SortableHeader({
 const NewDataRow = memo(function NewDataRow({
   newRow,
   rowIdx,
+  rowIndexAria,
   visibleColumns,
   columnInfos,
   onEditCell,
@@ -1654,6 +1698,7 @@ const NewDataRow = memo(function NewDataRow({
 }: {
   newRow: Record<string, string | null>;
   rowIdx: number;
+  rowIndexAria: number;
   columns: string[];
   visibleColumns: string[];
   columnInfos: ColumnInfo[];
@@ -1662,14 +1707,22 @@ const NewDataRow = memo(function NewDataRow({
   hasMatch?: (colName: string) => boolean;
 }) {
   return (
-    <tr className="border-b bg-green-500/5 hover:bg-green-500/10 transition-colors">
-      <td className="text-center px-1 py-0 border-r h-7 bg-green-500/10">
+    <tr
+      className="border-b bg-green-500/5 hover:bg-green-500/10 transition-colors"
+      role="row"
+      aria-rowindex={rowIndexAria}
+    >
+      <td className="text-center px-1 py-0 border-r h-7 bg-green-500/10" role="gridcell" aria-colindex={1}>
         <Plus className="w-3 h-3 text-green-500 mx-auto" />
       </td>
-      <td className="text-center px-1 py-0 border-r h-7 text-green-500 font-bold tabular-nums text-[10px] bg-green-500/10">
+      <td
+        className="text-center px-1 py-0 border-r h-7 text-green-500 font-bold tabular-nums text-[10px] bg-green-500/10"
+        role="rowheader"
+        aria-colindex={2}
+      >
         *
       </td>
-      {visibleColumns.map((col) => {
+      {visibleColumns.map((col, colOrder) => {
         const value = newRow[col] ?? null;
         const colInfo = columnInfos.find((ci) => ci.name === col);
 
@@ -1677,6 +1730,7 @@ const NewDataRow = memo(function NewDataRow({
           <EditableCell
             key={col}
             cellId={`cell-${-(rowIdx + 1)}-${col}`}
+            ariaColIndex={colOrder + 3}
             value={value}
             colInfo={colInfo}
             isEdited={value !== null}
@@ -1694,6 +1748,7 @@ const DataRow = memo(function DataRow({
   row,
   rowIdx,
   rowNumber,
+  rowIndexAria,
   columns,
   visibleColumns,
   columnInfos,
@@ -1712,6 +1767,7 @@ const DataRow = memo(function DataRow({
   row: (string | number | null)[];
   rowIdx: number;
   rowNumber: number;
+  rowIndexAria: number;
   columns: string[];
   visibleColumns: string[];
   columnInfos: ColumnInfo[];
@@ -1729,27 +1785,38 @@ const DataRow = memo(function DataRow({
 }) {
   return (
     <tr
+      role="row"
+      aria-rowindex={rowIndexAria}
       className={cn(
         "border-b transition-colors",
         isSelected ? "bg-primary/10 hover:bg-primary/15" : "hover:bg-accent/15"
       )}
     >
-      <td className="sticky left-0 z-10 text-center px-1 py-0 border-r h-7 whitespace-nowrap bg-background">
+      <td
+        className="sticky left-0 z-10 text-center px-1 py-0 border-r h-7 whitespace-nowrap bg-background"
+        role="gridcell"
+        aria-colindex={1}
+      >
         <input
           type="checkbox"
           className="w-3 h-3 rounded-sm opacity-50 hover:opacity-100 cursor-pointer"
           style={{ accentColor: 'var(--primary)' }}
           checked={isSelected}
           onChange={onToggleSelect}
+          aria-label={`Select row ${rowNumber}`}
         />
       </td>
-      <td className="sticky left-[32px] z-10 text-center px-1 py-0 border-r h-7 text-muted-foreground/40 tabular-nums text-[10px] bg-muted/20">
+      <td
+        className="sticky left-[32px] z-10 text-center px-1 py-0 border-r h-7 text-muted-foreground/40 tabular-nums text-[10px] bg-muted/20"
+        role="rowheader"
+        aria-colindex={2}
+      >
         {rowNumber}
       </td>
       {(() => {
         // checkbox col ≈32px + row# col ≈40px
         let leftOffset = 72;
-        return visibleColumns.map((col) => {
+        return visibleColumns.map((col, colOrder) => {
           const colIdx = columns.indexOf(col);
           const originalValue = colIdx >= 0 ? row[colIdx] : null;
           const editKey = `${rowIdx}:${col}`;
@@ -1764,6 +1831,7 @@ const DataRow = memo(function DataRow({
             <EditableCell
               key={col}
               cellId={`cell-${rowIdx}-${col}`}
+              ariaColIndex={colOrder + 3}
               value={value}
               colInfo={colInfo}
               isEdited={isEdited}
@@ -1771,6 +1839,10 @@ const DataRow = memo(function DataRow({
               isMatch={hasMatch?.(col)}
               isCurrent={isCurrentMatch?.(col)}
               isSelected={selectedCellKey === `${rowIdx}:${col}`}
+              isTabStop={
+                selectedCellKey === `${rowIdx}:${col}` ||
+                (!selectedCellKey && rowIdx === 0 && colOrder === 0)
+              }
               onSelect={() => onCellSelect?.(col)}
               onCellContextMenu={(e) => onCellContextMenu?.(e, col, value ?? null)}
               frozen={isFrozen}
@@ -1785,6 +1857,7 @@ const DataRow = memo(function DataRow({
 
 const EditableCell = memo(function EditableCell({
   cellId,
+  ariaColIndex,
   value,
   colInfo,
   isEdited,
@@ -1792,12 +1865,14 @@ const EditableCell = memo(function EditableCell({
   isMatch,
   isCurrent,
   isSelected,
+  isTabStop,
   onSelect,
   onCellContextMenu,
   frozen,
   frozenLeft,
 }: {
   cellId?: string;
+  ariaColIndex: number;
   value: string | number | null;
   colInfo?: ColumnInfo;
   isEdited: boolean;
@@ -1805,6 +1880,7 @@ const EditableCell = memo(function EditableCell({
   isMatch?: boolean;
   isCurrent?: boolean;
   isSelected?: boolean;
+  isTabStop?: boolean;
   onSelect?: () => void;
   onCellContextMenu?: (e: React.MouseEvent) => void;
   frozen?: boolean;
@@ -1866,6 +1942,10 @@ const EditableCell = memo(function EditableCell({
   return (
     <td
       id={cellId}
+      role="gridcell"
+      aria-colindex={ariaColIndex}
+      aria-selected={isSelected}
+      tabIndex={isTabStop ? 0 : -1}
       className={cn(
         "px-2 py-0 border-r h-7 min-w-[80px] relative group/cell cursor-default bg-background",
         isNumeric && "text-right tabular-nums",
@@ -1877,6 +1957,13 @@ const EditableCell = memo(function EditableCell({
       )}
       style={stickyStyle}
       onClick={onSelect}
+      onFocus={onSelect}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === "F2") {
+          e.preventDefault();
+          setIsEditing(true);
+        }
+      }}
       onDoubleClick={() => setIsEditing(true)}
       onContextMenu={onCellContextMenu}
       title={value === null ? "NULL" : String(value)}
@@ -1907,6 +1994,7 @@ function PaginationBtn({
 }) {
   return (
     <button
+      type="button"
       className={cn(
         "p-1 rounded hover:bg-accent transition-colors",
         disabled && "opacity-30 pointer-events-none",
@@ -1914,6 +2002,8 @@ function PaginationBtn({
       onClick={onClick}
       disabled={disabled}
       title={title}
+      aria-label={title}
+      aria-disabled={disabled}
     >
       {icon}
     </button>
