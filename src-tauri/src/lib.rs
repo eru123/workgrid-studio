@@ -9,8 +9,11 @@ pub mod db;
 pub mod ssh;
 pub mod crypto;
 pub mod ai;
+pub mod error;
 pub mod files;
 pub mod logging;
+
+pub use error::{AppError, AppResult};
 
 pub struct TunnelHandle {
     pub local_port: u16,

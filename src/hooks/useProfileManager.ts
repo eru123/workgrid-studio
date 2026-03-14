@@ -20,6 +20,11 @@ import {
 
 export type ViewMode = "list" | "create" | "edit";
 
+interface HandleConnectOptions {
+    silentFailureToast?: boolean;
+    reconnectAttempt?: number;
+}
+
 /**
  * Shared profile management hook used by ServersSidebar (and any future
  * profile-editing UI). Encapsulates CRUD, connection toggle, form state,
@@ -131,10 +136,14 @@ export function useProfileManager() {
 
     // ── Connection ────────────────────────────────────────
 
-    const handleConnect = async (id: string) => {
+    const handleConnect = async (
+        id: string,
+        options: HandleConnectOptions = {},
+    ) => {
         const profile = useProfilesStore.getState().profiles.find((p) => p.id === id);
         if (!profile) return;
         const target = formatConnectionTarget(profile);
+        const { silentFailureToast = false, reconnectAttempt } = options;
 
         if (profile.unreadableSecrets?.password) {
             setConnectionStatus(id, "error");
@@ -143,11 +152,13 @@ export function useProfileManager() {
                 "error",
                 `Stored password for ${target} could not be decrypted. Re-enter the password in the profile and save it again before connecting.`,
             );
-            useAppStore.getState().addToast({
-                title: "Stored Password Unavailable",
-                description: "This profile's saved password could not be decrypted. Re-enter it and save the profile again.",
-                variant: "destructive",
-            });
+            if (!silentFailureToast) {
+                useAppStore.getState().addToast({
+                    title: "Stored Password Unavailable",
+                    description: "This profile's saved password could not be decrypted. Re-enter it and save the profile again.",
+                    variant: "destructive",
+                });
+            }
             return;
         }
 
@@ -161,11 +172,13 @@ export function useProfileManager() {
                 "error",
                 `Stored SSH credentials for ${target} could not be decrypted. Re-enter the SSH secret in the profile and save it again before connecting.`,
             );
-            useAppStore.getState().addToast({
-                title: "Stored SSH Secret Unavailable",
-                description: "This profile's saved SSH credential could not be decrypted. Re-enter it and save the profile again.",
-                variant: "destructive",
-            });
+            if (!silentFailureToast) {
+                useAppStore.getState().addToast({
+                    title: "Stored SSH Secret Unavailable",
+                    description: "This profile's saved SSH credential could not be decrypted. Re-enter it and save the profile again.",
+                    variant: "destructive",
+                });
+            }
             return;
         }
 
@@ -176,11 +189,13 @@ export function useProfileManager() {
                 "error",
                 `Connection blocked for ${target}: only MySQL and MariaDB are supported in this version.`,
             );
-            useAppStore.getState().addToast({
-                title: "Connection Failed",
-                description: "Only MySQL and MariaDB are supported in this version.",
-                variant: "destructive",
-            });
+            if (!silentFailureToast) {
+                useAppStore.getState().addToast({
+                    title: "Connection Failed",
+                    description: "Only MySQL and MariaDB are supported in this version.",
+                    variant: "destructive",
+                });
+            }
             return;
         }
 
@@ -211,7 +226,9 @@ export function useProfileManager() {
             appendConnectionOutput(
                 profile,
                 "info",
-                `Connecting to ${target}...`,
+                reconnectAttempt
+                    ? `Reconnecting to ${target} (attempt ${reconnectAttempt})...`
+                    : `Connecting to ${target}...`,
             );
             try {
                 await dbConnect({
@@ -242,7 +259,9 @@ export function useProfileManager() {
                 appendConnectionOutput(
                     profile,
                     "success",
-                    `Connected to ${target}.`,
+                    reconnectAttempt
+                        ? `Reconnected to ${target} on attempt ${reconnectAttempt}.`
+                        : `Connected to ${target}.`,
                 );
                 addConnection(id, profile.name, profile.color);
                 // Pre-load database list so Explorer is ready on arrival
@@ -266,13 +285,17 @@ export function useProfileManager() {
                 appendConnectionOutput(
                     profile,
                     "error",
-                    `Connection failed for ${target}: ${formatOutputError(e)}`,
+                    reconnectAttempt
+                        ? `Reconnect attempt ${reconnectAttempt} failed for ${target}: ${formatOutputError(e)}`
+                        : `Connection failed for ${target}: ${formatOutputError(e)}`,
                 );
-                useAppStore.getState().addToast({
-                    title: "Connection Failed",
-                    description: String(e),
-                    variant: "destructive",
-                });
+                if (!silentFailureToast) {
+                    useAppStore.getState().addToast({
+                        title: "Connection Failed",
+                        description: String(e),
+                        variant: "destructive",
+                    });
+                }
             }
         }
     };

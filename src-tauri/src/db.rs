@@ -2,7 +2,7 @@ use tauri::State;
 use mysql_async::prelude::*;
 use mysql_async::{Opts, OptsBuilder, Pool, PoolOpts, PoolConstraints, TxOpts};
 use serde::{Deserialize, Serialize};
-use crate::DbState;
+use crate::{AppError, AppResult, DbState};
 use crate::ssh::{establish_ssh_tunnel, shutdown_tunnel};
 use crate::crypto::{encrypt_password, decrypt_password};
 use crate::logging::{log_query, log_query_result, log_info, log_error};
@@ -127,16 +127,18 @@ pub struct ImportResult {
 
 // ─── Helpers ────────────────────────────────────────────────────────
 
-pub fn get_pool(state: &State<'_, DbState>, profile_id: &str) -> Result<Pool, String> {
+pub fn get_pool(state: &State<'_, DbState>, profile_id: &str) -> AppResult<Pool> {
     let pools = state.pools.lock().map_err(|e| format!("Lock error: {}", e))?;
-    pools
-        .get(profile_id)
-        .cloned()
-        .ok_or_else(|| {
-            let msg = "Not connected. Please connect first.".to_string();
-            log_error(profile_id, &msg);
-            msg
-        })
+    Ok(
+        pools
+            .get(profile_id)
+            .cloned()
+            .ok_or_else(|| {
+                let msg = "Not connected. Please connect first.".to_string();
+                log_error(profile_id, &msg);
+                msg
+            })?,
+    )
 }
 
 pub fn split_sql_statements(sql: &str) -> Vec<String> {
@@ -187,7 +189,7 @@ pub fn split_sql_statements(sql: &str) -> Vec<String> {
 pub async fn db_connect(
     state: State<'_, DbState>,
     params: ConnectParams,
-) -> Result<String, String> {
+) -> AppResult<String> {
     let mut params = params;
     let pid = params.profile_id.clone();
     let db_type = params.db_type.as_str();
@@ -199,7 +201,7 @@ pub async fn db_connect(
             db_type
         );
         log_error(&pid, &msg);
-        return Err(msg);
+        return Err(AppError::validation(msg));
     }
 
     // Encrypt password if not already encrypted
@@ -289,7 +291,7 @@ pub async fn db_connect(
                 if !path.exists() {
                     let msg = format!("CA Certificate file does not exist at path: {}", ca);
                     log_error(&pid, &msg);
-                    return Err(msg);
+                    return Err(AppError::validation(msg));
                 }
                 ssl_opts = ssl_opts.with_root_certs(vec![path.into()]);
             }
@@ -306,7 +308,7 @@ pub async fn db_connect(
                 if !cert_path.exists() {
                     let msg = format!("Client Certificate file does not exist at path: {}", cert);
                     log_error(&pid, &msg);
-                    return Err(msg);
+                    return Err(AppError::validation(msg));
                 }
                 has_cert = true;
             }
@@ -318,7 +320,7 @@ pub async fn db_connect(
                 if !key_path.exists() {
                     let msg = format!("Client Key file does not exist at path: {}", key);
                     log_error(&pid, &msg);
-                    return Err(msg);
+                    return Err(AppError::validation(msg));
                 }
                 has_key = true;
             }
@@ -330,7 +332,7 @@ pub async fn db_connect(
         } else if has_cert || has_key {
             let msg = "Both Client Certificate and Client Key must be provided for mutual TLS.".to_string();
             log_error(&pid, &msg);
-            return Err(msg);
+            return Err(AppError::validation(msg));
         }
 
         builder = builder.ssl_opts(Some(ssl_opts));
@@ -351,7 +353,7 @@ pub async fn db_connect(
         Err(e) => {
             let msg = format!("Connection failed to {}: {}", target, e);
             log_error(&pid, &msg);
-            return Err(msg);
+            return Err(AppError::database(msg));
         }
     }
 
@@ -373,7 +375,7 @@ pub async fn db_connect(
 pub async fn db_disconnect(
     state: State<'_, DbState>,
     profile_id: String,
-) -> Result<String, String> {
+) -> AppResult<String> {
     log_info(&profile_id, "Disconnecting...");
 
     // Remove the pool while holding the lock, then drop the lock before awaiting disconnect.
@@ -414,7 +416,7 @@ pub async fn db_disconnect(
 pub async fn db_ping(
     state: State<'_, DbState>,
     profile_id: String,
-) -> Result<u128, String> {
+) -> AppResult<u128> {
     let pool = get_pool(&state, &profile_id)?;
     let start = std::time::Instant::now();
 
@@ -433,7 +435,7 @@ pub async fn db_ping(
         }
         Err(e) => {
             let msg = format!("Ping query error: {}", e);
-            Err(msg)
+            Err(AppError::database(msg))
         }
     }
 }
@@ -442,7 +444,7 @@ pub async fn db_ping(
 pub async fn db_list_databases(
     state: State<'_, DbState>,
     profile_id: String,
-) -> Result<Vec<String>, String> {
+) -> AppResult<Vec<String>> {
     let pool = get_pool(&state, &profile_id)?;
     let query = "SHOW DATABASES";
 
@@ -461,7 +463,7 @@ pub async fn db_list_databases(
         Err(e) => {
             let msg = format!("Query error [{}]: {}", query, e);
             log_error(&profile_id, &msg);
-            Err(msg)
+            Err(AppError::database(msg))
         }
     }
 }
@@ -471,7 +473,7 @@ pub async fn db_list_tables(
     state: State<'_, DbState>,
     profile_id: String,
     database: String,
-) -> Result<Vec<String>, String> {
+) -> AppResult<Vec<String>> {
     let pool = get_pool(&state, &profile_id)?;
     let query = format!("SHOW TABLES FROM `{}`", database);
 
@@ -490,7 +492,7 @@ pub async fn db_list_tables(
         Err(e) => {
             let msg = format!("Query error [{}]: {}", query, e);
             log_error(&profile_id, &msg);
-            Err(msg)
+            Err(AppError::database(msg))
         }
     }
 }
@@ -501,7 +503,7 @@ pub async fn db_list_columns(
     profile_id: String,
     database: String,
     table: String,
-) -> Result<Vec<ColumnInfo>, String> {
+) -> AppResult<Vec<ColumnInfo>> {
     let pool = get_pool(&state, &profile_id)?;
     let query = format!("SHOW COLUMNS FROM `{}`.`{}`", database, table);
 
@@ -531,7 +533,7 @@ pub async fn db_list_columns(
         Err(e) => {
             let msg = format!("Query error [{}]: {}", query, e);
             log_error(&profile_id, &msg);
-            Err(msg)
+            Err(AppError::database(msg))
         }
     }
 }
@@ -540,7 +542,7 @@ pub async fn db_list_columns(
 pub async fn db_get_databases_info(
     state: State<'_, DbState>,
     profile_id: String,
-) -> Result<Vec<DatabaseInfo>, String> {
+) -> AppResult<Vec<DatabaseInfo>> {
     let pool = get_pool(&state, &profile_id)?;
     let query = r#"
         SELECT
@@ -581,7 +583,7 @@ pub async fn db_get_databases_info(
         }
         Err(e) => {
             let msg = format!("Query error [databases info]: {}", e);
-            Err(msg)
+            Err(AppError::database(msg))
         }
     }
 }
@@ -591,7 +593,7 @@ pub async fn db_get_tables_info(
     state: State<'_, DbState>,
     profile_id: String,
     database: String,
-) -> Result<Vec<TableInfo>, String> {
+) -> AppResult<Vec<TableInfo>> {
     let pool = get_pool(&state, &profile_id)?;
     let query = r#"
         SELECT
@@ -636,7 +638,7 @@ pub async fn db_get_tables_info(
         Err(e) => {
             let msg = format!("Query error [tables info]: {}", e);
             log_error(&profile_id, &msg);
-            Err(msg)
+            Err(AppError::database(msg))
         }
     }
 }
@@ -645,7 +647,7 @@ pub async fn db_get_tables_info(
 pub async fn db_get_variables(
     state: State<'_, DbState>,
     profile_id: String,
-) -> Result<Vec<VariableInfo>, String> {
+) -> AppResult<Vec<VariableInfo>> {
     let pool = get_pool(&state, &profile_id)?;
 
     let mut conn = pool.get_conn().await.map_err(|e| {
@@ -707,7 +709,7 @@ pub async fn db_set_variable(
     scope: String,
     name: String,
     value: String,
-) -> Result<(), String> {
+) -> AppResult<()> {
     let pool = get_pool(&state, &profile_id)?;
     let mut conn = pool.get_conn().await.map_err(|e| {
         let msg = format!("Connection error: {}", e);
@@ -724,7 +726,7 @@ pub async fn db_set_variable(
     if !name.chars().all(|c| c.is_alphanumeric() || c == '_') {
         let msg = format!("Invalid variable name: {}", name);
         log_error(&profile_id, &msg);
-        return Err(msg);
+        return Err(AppError::validation(msg));
     }
 
     // Escape backslashes and single quotes manually
@@ -745,7 +747,7 @@ pub async fn db_set_variable(
 pub async fn db_get_status(
     state: State<'_, DbState>,
     profile_id: String,
-) -> Result<Vec<StatusInfo>, String> {
+) -> AppResult<Vec<StatusInfo>> {
     let pool = get_pool(&state, &profile_id)?;
     let mut conn = pool.get_conn().await.map_err(|e| {
         let msg = format!("Connection error: {}", e);
@@ -771,7 +773,7 @@ pub async fn db_get_status(
 pub async fn db_get_processes(
     state: State<'_, DbState>,
     profile_id: String,
-) -> Result<Vec<ProcessInfo>, String> {
+) -> AppResult<Vec<ProcessInfo>> {
     let pool = get_pool(&state, &profile_id)?;
     let mut conn = pool.get_conn().await.map_err(|e| {
         let msg = format!("Connection error: {}", e);
@@ -800,7 +802,7 @@ pub async fn db_kill_process(
     state: State<'_, DbState>,
     profile_id: String,
     process_id: u64,
-) -> Result<(), String> {
+) -> AppResult<()> {
     let pool = get_pool(&state, &profile_id)?;
     let mut conn = pool.get_conn().await.map_err(|e| {
         let msg = format!("Connection error: {}", e);
@@ -823,7 +825,7 @@ pub async fn db_execute_query(
     state: State<'_, DbState>,
     profile_id: String,
     query: String,
-) -> Result<(), String> {
+) -> AppResult<()> {
     let pool = get_pool(&state, &profile_id)?;
     let mut conn = pool.get_conn().await.map_err(|e| {
         let msg = format!("Connection error: {}", e);
@@ -846,7 +848,7 @@ pub async fn db_execute_query(
 pub async fn db_get_collations(
     state: State<'_, DbState>,
     profile_id: String,
-) -> Result<CollationResponse, String> {
+) -> AppResult<CollationResponse> {
     let pool = get_pool(&state, &profile_id)?;
     let mut conn = pool.get_conn().await.map_err(|e| {
         let msg = format!("Connection error: {}", e);
@@ -883,7 +885,7 @@ pub async fn db_query(
     state: State<'_, DbState>,
     profile_id: String,
     query: String,
-) -> Result<Vec<QueryResultSet>, String> {
+) -> AppResult<Vec<QueryResultSet>> {
     let pool = get_pool(&state, &profile_id)?;
     let mut conn = pool.get_conn().await.map_err(|e| {
         let msg = format!("Connection error: {}", e);
@@ -986,7 +988,7 @@ pub async fn db_query(
             Err(e) => {
                 let msg = format!("Query error [{}]: {}", stmt, e);
                 log_error(&profile_id, &msg);
-                return Err(msg);
+                return Err(AppError::database(msg));
             }
         }
     }
@@ -1001,7 +1003,7 @@ pub async fn db_get_schema_ddl(
     state: State<'_, DbState>,
     profile_id: String,
     database: String,
-) -> Result<String, String> {
+) -> AppResult<String> {
     let pool = get_pool(&state, &profile_id)?;
     let mut conn = pool.get_conn().await
         .map_err(|e| format!("Connection error: {}", e))?;
@@ -1079,7 +1081,7 @@ pub async fn db_import_sql(
     profile_id: String,
     database: String,
     file_path: String,
-) -> Result<String, String> {
+) -> AppResult<String> {
     let pool = get_pool(&state, &profile_id)?;
     let mut conn = pool.get_conn().await.map_err(|e| format!("Connection error: {}", e))?;
 
@@ -1101,7 +1103,11 @@ pub async fn db_import_sql(
     for stmt in stmts {
         if let Err(e) = conn.query_drop(&stmt).await {
             log_error(&profile_id, &format!("SQL execution error at stmt {}: {}", executed + 1, e));
-            return Err(format!("Execution failed at statement {}: {}", executed + 1, e));
+            return Err(AppError::database(format!(
+                "Execution failed at statement {}: {}",
+                executed + 1,
+                e
+            )));
         }
         executed += 1;
     }
@@ -1116,7 +1122,7 @@ pub async fn db_import_csv(
     database: String,
     table: String,
     file_path: String,
-) -> Result<ImportResult, String> {
+) -> AppResult<ImportResult> {
     let pool = get_pool(&state, &profile_id)?;
     let mut conn = pool.get_conn().await.map_err(|e| format!("Connection error: {}", e))?;
 

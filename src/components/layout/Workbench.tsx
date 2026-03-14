@@ -44,8 +44,13 @@ const activityItems: { id: ActivityView; icon: any; label: string }[] = [
   { id: "tasks", icon: CheckSquare, label: "Tasks" },
 ];
 
+const RECONNECT_BASE_DELAY_MS = 2_000;
+const RECONNECT_MAX_DELAY_MS = 60_000;
+const RECONNECT_MAX_ATTEMPTS = 6;
+
 export function Workbench() {
   const appVersion = useAppVersion();
+  const profiles = useProfilesStore((s) => s.profiles);
   const connectedProfiles = useSchemaStore((s) => s.connectedProfiles);
   const connectedCount = Object.keys(connectedProfiles).length;
   const tasks = useTasksStore((s) => s.tasks);
@@ -73,6 +78,8 @@ export function Workbench() {
   const toggleSecondarySidebar = useLayoutStore((s) => s.toggleSecondarySidebar);
   const adjustSecondarySidebarWidth = useLayoutStore((s) => s.adjustSecondarySidebarWidth);
   const bottomPanelRef = useRef<HTMLDivElement>(null);
+  const reconnectAttemptsRef = useRef<Record<string, number>>({});
+  const reconnectTimeoutsRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
 
   const handleBottomPanelSplitDrag = useCallback(
     (delta: number) => {
@@ -87,6 +94,89 @@ export function Workbench() {
   );
   
   const { handleConnect } = useProfileManager();
+
+  const clearReconnectSchedule = useCallback((profileId: string, resetAttempt = true) => {
+    const timeout = reconnectTimeoutsRef.current[profileId];
+    if (timeout) {
+      clearTimeout(timeout);
+      delete reconnectTimeoutsRef.current[profileId];
+    }
+    if (resetAttempt) {
+      delete reconnectAttemptsRef.current[profileId];
+    }
+  }, []);
+
+  const scheduleReconnect = useCallback(function scheduleReconnect(profileId: string) {
+    if (reconnectTimeoutsRef.current[profileId]) return;
+
+    const profile = useProfilesStore.getState().profiles.find((entry) => entry.id === profileId);
+    if (
+      !profile ||
+      profile.connectionStatus === "disconnected" ||
+      profile.connectionStatus === "connecting" ||
+      profile.unreadableSecrets?.password ||
+      (profile.ssh &&
+        (profile.unreadableSecrets?.sshPassword || profile.unreadableSecrets?.sshPassphrase)) ||
+      (profile.type !== "mysql" && profile.type !== "mariadb")
+    ) {
+      clearReconnectSchedule(profileId, true);
+      return;
+    }
+
+    const attempt = (reconnectAttemptsRef.current[profileId] ?? 0) + 1;
+    if (attempt > RECONNECT_MAX_ATTEMPTS) {
+      appendConnectionOutput(
+        profile,
+        "warning",
+        `Auto-reconnect stopped for ${formatConnectionTarget(profile)} after ${RECONNECT_MAX_ATTEMPTS} failed attempts. Connect manually to try again.`,
+      );
+      clearReconnectSchedule(profileId, true);
+      return;
+    }
+
+    reconnectAttemptsRef.current[profileId] = attempt;
+    const delay = Math.min(
+      RECONNECT_MAX_DELAY_MS,
+      RECONNECT_BASE_DELAY_MS * 2 ** (attempt - 1),
+    );
+
+    appendConnectionOutput(
+      profile,
+      "warning",
+      `Scheduling reconnect to ${formatConnectionTarget(profile)} in ${Math.ceil(delay / 1000)}s (attempt ${attempt}/${RECONNECT_MAX_ATTEMPTS}).`,
+    );
+
+    reconnectTimeoutsRef.current[profileId] = setTimeout(async () => {
+      delete reconnectTimeoutsRef.current[profileId];
+
+      const latestProfile = useProfilesStore.getState().profiles.find((entry) => entry.id === profileId);
+      if (
+        !latestProfile ||
+        latestProfile.connectionStatus === "connected" ||
+        latestProfile.connectionStatus === "disconnected"
+      ) {
+        clearReconnectSchedule(profileId, true);
+        return;
+      }
+
+      await handleConnect(profileId, {
+        silentFailureToast: true,
+        reconnectAttempt: attempt,
+      });
+
+      const refreshedProfile = useProfilesStore.getState().profiles.find((entry) => entry.id === profileId);
+      if (
+        refreshedProfile &&
+        refreshedProfile.connectionStatus !== "connected" &&
+        refreshedProfile.connectionStatus !== "disconnected"
+      ) {
+        scheduleReconnect(profileId);
+        return;
+      }
+
+      clearReconnectSchedule(profileId, true);
+    }, delay);
+  }, [clearReconnectSchedule, handleConnect]);
 
   // Theme Toggle Logic
   const globalPrefs = useProfilesStore((s) => s.globalPreferences);
@@ -120,22 +210,52 @@ export function Workbench() {
           const ms = await dbPing(p.id);
           setLatency(p.id, ms);
         } catch (e) {
-          console.warn(`[Keep-Alive] Ping failed for ${p.id}, marking error and reconnecting...`);
+          console.warn(`[Keep-Alive] Ping failed for ${p.id}, marking error and scheduling reconnect...`);
           appendConnectionOutput(
             p,
             "warning",
-            `Keep-alive ping failed for ${formatConnectionTarget(p)}: ${formatOutputError(e)}. Reconnecting...`,
+            `Keep-alive ping failed for ${formatConnectionTarget(p)}: ${formatOutputError(e)}.`,
           );
           setLatency(p.id, -1);
           setConnectionStatus(p.id, "error");
-          // Attempt a silent reconnect via the manager
-          await handleConnect(p.id);
+          scheduleReconnect(p.id);
         }
       }
     }, 15_000); // 15 seconds
 
     return () => clearInterval(pinger);
-  }, [handleConnect]);
+  }, [scheduleReconnect]);
+
+  useEffect(() => {
+    const activeProfileIds = new Set(profiles.map((profile) => profile.id));
+
+    for (const profileId of Object.keys(reconnectTimeoutsRef.current)) {
+      if (!activeProfileIds.has(profileId)) {
+        clearReconnectSchedule(profileId, true);
+      }
+    }
+
+    for (const profile of profiles) {
+      if (
+        profile.connectionStatus === "connected" ||
+        profile.connectionStatus === "disconnected"
+      ) {
+        clearReconnectSchedule(profile.id, true);
+      } else if (profile.connectionStatus === "connecting") {
+        clearReconnectSchedule(profile.id, false);
+      }
+    }
+  }, [clearReconnectSchedule, profiles]);
+
+  useEffect(() => {
+    return () => {
+      for (const timeout of Object.values(reconnectTimeoutsRef.current)) {
+        clearTimeout(timeout);
+      }
+      reconnectTimeoutsRef.current = {};
+      reconnectAttemptsRef.current = {};
+    };
+  }, []);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {

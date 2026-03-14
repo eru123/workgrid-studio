@@ -1,10 +1,11 @@
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::PathBuf;
+use crate::{AppError, AppResult};
 use crate::files::app_data_dir;
 use chrono::Local;
 
-pub fn log_dir_for(profile_id: &str) -> Result<PathBuf, String> {
+pub fn log_dir_for(profile_id: &str) -> AppResult<PathBuf> {
     let base = app_data_dir()?;
     let dir = base.join("logs").join(profile_id);
     if !dir.exists() {
@@ -50,22 +51,23 @@ pub fn log_error(profile_id: &str, message: &str) {
 }
 
 #[tauri::command]
-pub fn read_profile_log(profile_id: String, log_type: String) -> Result<String, String> {
+pub fn read_profile_log(profile_id: String, log_type: String) -> AppResult<String> {
     let filename = match log_type.as_str() {
         "query" | "mysql" => "mysql.log.txt",
         "error" => "error.log.txt",
-        _ => return Err("Unknown log type. Use 'mysql' or 'error'.".to_string()),
+        _ => return Err("Unknown log type. Use 'mysql' or 'error'.".into()),
     };
     let dir = log_dir_for(&profile_id)?;
     let path = dir.join(filename);
     if !path.exists() {
         return Ok(String::new());
     }
-    fs::read_to_string(&path).map_err(|e| format!("Read error: {}", e))
+    fs::read_to_string(&path)
+        .map_err(|e| AppError::io(format!("Read error: {}", e)))
 }
 
 #[tauri::command]
-pub fn clear_profile_log(profile_id: String, log_type: String) -> Result<(), String> {
+pub fn clear_profile_log(profile_id: String, log_type: String) -> AppResult<()> {
     let filename = match log_type.as_str() {
         "query" | "mysql" => "mysql.log.txt",
         "error" => "error.log.txt",
@@ -79,7 +81,7 @@ pub fn clear_profile_log(profile_id: String, log_type: String) -> Result<(), Str
             }
             return Ok(());
         }
-        _ => return Err("Unknown log type. Use 'mysql', 'error', or 'all'.".to_string()),
+        _ => return Err("Unknown log type. Use 'mysql', 'error', or 'all'.".into()),
     };
     let dir = log_dir_for(&profile_id)?;
     let path = dir.join(filename);

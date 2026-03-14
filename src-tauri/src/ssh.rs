@@ -5,12 +5,13 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use ssh2::Session;
+use crate::{AppError, AppResult};
 use crate::TunnelHandle;
 use crate::files::app_data_dir;
 use crate::logging::{log_info, log_error};
 use crate::db::ConnectParams;
 
-pub fn known_hosts_path() -> Result<std::path::PathBuf, String> {
+pub fn known_hosts_path() -> AppResult<std::path::PathBuf> {
     Ok(app_data_dir()?.join("known_hosts.json"))
 }
 
@@ -22,10 +23,10 @@ pub fn load_known_hosts() -> HashMap<String, String> {
         .unwrap_or_default()
 }
 
-pub fn save_known_hosts(hosts: &HashMap<String, String>) -> Result<(), String> {
+pub fn save_known_hosts(hosts: &HashMap<String, String>) -> AppResult<()> {
     let path = known_hosts_path()?;
     let json = serde_json::to_string_pretty(hosts).map_err(|e| e.to_string())?;
-    fs::write(&path, json).map_err(|e| e.to_string())
+    fs::write(&path, json).map_err(|e| AppError::io(e.to_string()))
 }
 
 /// Trust-On-First-Use host key verification.
@@ -42,7 +43,7 @@ pub fn verify_host_key_tofu(
     ssh_port: u16,
     sess: &Session,
     strict: bool,
-) -> Result<(), String> {
+) -> AppResult<()> {
     let (key_bytes, _key_type) = sess
         .host_key()
         .ok_or_else(|| "SSH server did not provide a host key".to_string())?;
@@ -72,7 +73,7 @@ pub fn verify_host_key_tofu(
             );
             log_error(pid, &msg);
             if strict {
-                Err(msg)
+                Err(AppError::ssh(msg))
             } else {
                 log_info(pid, "Strict key checking is OFF — proceeding despite mismatch (not recommended).");
                 Ok(())
@@ -98,7 +99,7 @@ pub fn verify_host_key_tofu(
 /// Remove a stored host key from `known_hosts.json` so the next connection
 /// performs a fresh TOFU exchange.  A no-op if the host was never stored.
 #[tauri::command]
-pub fn forget_host_key(profile_id: String, ssh_host: String, ssh_port: u16) -> Result<(), String> {
+pub fn forget_host_key(profile_id: String, ssh_host: String, ssh_port: u16) -> AppResult<()> {
     let host_id = format!("[{}]:{}", ssh_host, ssh_port);
     let mut known = load_known_hosts();
     if known.remove(&host_id).is_some() {
@@ -108,7 +109,7 @@ pub fn forget_host_key(profile_id: String, ssh_host: String, ssh_port: u16) -> R
     Ok(())
 }
 
-pub fn establish_ssh_tunnel(pid: &str, params: &ConnectParams) -> Result<TunnelHandle, String> {
+pub fn establish_ssh_tunnel(pid: &str, params: &ConnectParams) -> AppResult<TunnelHandle> {
     let ssh_host = params.ssh_host.as_ref().ok_or("SSH host not provided")?;
     let ssh_port = params.ssh_port.unwrap_or(22);
     let ssh_user = params.ssh_user.as_ref().ok_or("SSH user not provided")?;
@@ -145,11 +146,11 @@ pub fn establish_ssh_tunnel(pid: &str, params: &ConnectParams) -> Result<TunnelH
         sess.userauth_password(ssh_user, password)
             .map_err(|e| format!("SSH password authentication failed: {}", e))?;
     } else {
-        return Err("No SSH authentication method provided".to_string());
+        return Err(AppError::ssh("No SSH authentication method provided"));
     }
 
     if !sess.authenticated() {
-        return Err("SSH authentication failed".to_string());
+        return Err(AppError::ssh("SSH authentication failed"));
     }
 
     // Start local listener for port forwarding

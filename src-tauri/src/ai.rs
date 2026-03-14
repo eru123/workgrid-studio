@@ -1,6 +1,7 @@
 use std::fs;
 use serde::{Deserialize, Serialize};
 use reqwest::Client;
+use crate::{AppError, AppResult};
 use crate::files::ensure_app_dirs;
 use crate::crypto::vault_get;
 
@@ -69,7 +70,7 @@ pub fn append_ai_log(entry: AiLogEntry) {
 }
 
 #[tauri::command]
-pub fn get_ai_logs() -> Result<Vec<AiLogEntry>, String> {
+pub fn get_ai_logs() -> AppResult<Vec<AiLogEntry>> {
     let base = ensure_app_dirs()?;
     let path = base.join("ai_logs.json");
     if !path.exists() {
@@ -82,7 +83,7 @@ pub fn get_ai_logs() -> Result<Vec<AiLogEntry>, String> {
 }
 
 #[tauri::command]
-pub fn clear_ai_logs() -> Result<(), String> {
+pub fn clear_ai_logs() -> AppResult<()> {
     let base = ensure_app_dirs()?;
     let path = base.join("ai_logs.json");
     if path.exists() {
@@ -100,7 +101,7 @@ pub async fn ai_generate_query(
     prompt: String,
     schema_context: String,
     current_query: Option<String>,
-) -> Result<String, String> {
+) -> AppResult<String> {
     let api_key = vault_get(api_key_ref)?;
     let client = Client::new();
 
@@ -165,7 +166,7 @@ pub async fn ai_generate_query(
                 &user_prompt,
             ).await
         },
-        _ => Err("Unsupported provider type".to_string())
+        _ => Err(AppError::validation("Unsupported provider type"))
     }
 }
 
@@ -177,7 +178,7 @@ async fn call_openai_compatible_api(
     actual_model: &str,
     system_prompt: &str,
     user_prompt: &str,
-) -> Result<String, String> {
+) -> AppResult<String> {
     let payload = OpenAIPayload {
         model: actual_model.to_string(),
         messages: vec![
@@ -215,7 +216,7 @@ async fn call_openai_compatible_api(
                     response_preview: format!("HTTP {} - {}", status, text),
                 });
 
-                return Err(format!("API Error ({}): {}", status, text));
+                return Err(AppError::network(format!("API Error ({}): {}", status, text)));
             }
 
             let raw_text = response.text().await.unwrap_or_default();
@@ -243,7 +244,7 @@ async fn call_openai_compatible_api(
                     .to_string();
                 Ok(cleaned)
             } else {
-                Err("No choices returned from AI provider".to_string())
+                Err(AppError::external("No choices returned from AI provider"))
             }
         },
         Err(e) => {
@@ -255,7 +256,7 @@ async fn call_openai_compatible_api(
                 payload_preview: payload_json,
                 response_preview: format!("Connection failed: {}", e),
             });
-            Err(format!("HTTP request failed: {}", e))
+            Err(AppError::network(format!("HTTP request failed: {}", e)))
         }
     }
 }

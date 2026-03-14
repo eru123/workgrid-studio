@@ -6,6 +6,7 @@ use aes_gcm::{
 };
 use base64::{engine::general_purpose::STANDARD as b64, Engine};
 use rand::RngCore;
+use crate::{AppError, AppResult};
 use crate::files::ensure_app_dirs;
 
 /// Retrieve or create the 32-byte AES-256-GCM master key used for vault and
@@ -16,7 +17,7 @@ use crate::files::ensure_app_dirs;
 ///   processes. To keep secrets decryptable, WorkGrid Studio now uses the local
 ///   `~/.workgrid-studio/data/secret.key` file as the source of truth and mirrors
 ///   the same key to the OS store on a best-effort basis.
-pub fn get_or_create_secret_key() -> Result<[u8; 32], String> {
+pub fn get_or_create_secret_key() -> AppResult<[u8; 32]> {
     const SERVICE: &str = "workgrid-studio";
     const ACCOUNT: &str = "vault-key";
 
@@ -44,12 +45,12 @@ pub fn get_or_create_secret_key() -> Result<[u8; 32], String> {
     Ok(key)
 }
 
-fn secret_key_path() -> Result<std::path::PathBuf, String> {
+fn secret_key_path() -> AppResult<std::path::PathBuf> {
     let base = ensure_app_dirs()?;
     Ok(base.join("data").join("secret.key"))
 }
 
-fn read_secret_key_from_file() -> Result<Option<[u8; 32]>, String> {
+fn read_secret_key_from_file() -> AppResult<Option<[u8; 32]>> {
     let key_path = secret_key_path()?;
 
     if key_path.exists() {
@@ -66,14 +67,14 @@ fn read_secret_key_from_file() -> Result<Option<[u8; 32]>, String> {
     Ok(None)
 }
 
-fn write_secret_key_to_file(key: &[u8; 32]) -> Result<(), String> {
+fn write_secret_key_to_file(key: &[u8; 32]) -> AppResult<()> {
     let key_path = secret_key_path()?;
     fs::write(&key_path, key)
         .map_err(|e| format!("Failed to write secret.key: {e}"))?;
     Ok(())
 }
 
-fn store_key_in_keyring(service: &str, account: &str, key: &[u8; 32]) -> Result<(), String> {
+fn store_key_in_keyring(service: &str, account: &str, key: &[u8; 32]) -> AppResult<()> {
     let entry = keyring::Entry::new(service, account)
         .map_err(|e| format!("Keychain entry init failed: {e}"))?;
     let encoded = b64.encode(key);
@@ -83,7 +84,7 @@ fn store_key_in_keyring(service: &str, account: &str, key: &[u8; 32]) -> Result<
 }
 
 /// File-based key store for `get_or_create_secret_key()`.
-pub fn get_or_create_key_from_file() -> Result<[u8; 32], String> {
+pub fn get_or_create_key_from_file() -> AppResult<[u8; 32]> {
     if let Some(key) = read_secret_key_from_file()? {
         return Ok(key);
     }
@@ -102,7 +103,7 @@ pub fn get_or_create_key_from_file() -> Result<[u8; 32], String> {
 // re-enter their secrets once after upgrading.
 
 #[tauri::command]
-pub fn vault_set(key: String, secret: String) -> Result<(), String> {
+pub fn vault_set(key: String, secret: String) -> AppResult<()> {
     let base = ensure_app_dirs()?;
     let vault_path = base.join(".vault");
 
@@ -136,12 +137,12 @@ pub fn vault_set(key: String, secret: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn vault_get(key: String) -> Result<String, String> {
+pub fn vault_get(key: String) -> AppResult<String> {
     let base = ensure_app_dirs()?;
     let vault_path = base.join(".vault");
 
     if !vault_path.exists() {
-        return Err("No vault found".to_string());
+        return Err(AppError::crypto("No vault found"));
     }
 
     let content = fs::read_to_string(&vault_path).map_err(|e| e.to_string())?;
@@ -151,7 +152,7 @@ pub fn vault_get(key: String) -> Result<String, String> {
     let combined = b64.decode(encrypted_b64).map_err(|_| "Invalid base64 payload")?;
 
     if combined.len() < 12 {
-        return Err("Payload too short".to_string());
+        return Err(AppError::crypto("Payload too short"));
     }
 
     let nonce = Nonce::from_slice(&combined[0..12]);
@@ -163,11 +164,11 @@ pub fn vault_get(key: String) -> Result<String, String> {
     let plaintext = cipher.decrypt(nonce, ciphertext)
         .map_err(|_| "Decryption failed — the vault entry may have been encrypted with an older key. Please re-enter your secret.".to_string())?;
 
-    String::from_utf8(plaintext).map_err(|_| "Invalid UTF-8 in secret".to_string())
+    Ok(String::from_utf8(plaintext).map_err(|_| "Invalid UTF-8 in secret".to_string())?)
 }
 
 #[tauri::command]
-pub fn vault_delete(key: String) -> Result<(), String> {
+pub fn vault_delete(key: String) -> AppResult<()> {
     let base = ensure_app_dirs()?;
     let vault_path = base.join(".vault");
 
@@ -183,7 +184,7 @@ pub fn vault_delete(key: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn encrypt_password(password: String) -> Result<String, String> {
+pub fn encrypt_password(password: String) -> AppResult<String> {
     if password.is_empty() {
         return Ok(String::new());
     }
@@ -202,12 +203,12 @@ pub fn encrypt_password(password: String) -> Result<String, String> {
             payload.extend_from_slice(&ciphertext);
             Ok(format!("wkgrd:{}", b64.encode(payload)))
         }
-        Err(e) => Err(format!("Encryption failed: {}", e)),
+        Err(e) => Err(AppError::crypto(format!("Encryption failed: {}", e))),
     }
 }
 
 #[tauri::command]
-pub fn decrypt_password(encrypted: String) -> Result<String, String> {
+pub fn decrypt_password(encrypted: String) -> AppResult<String> {
     if encrypted.is_empty() {
         return Ok(String::new());
     }
@@ -220,16 +221,16 @@ pub fn decrypt_password(encrypted: String) -> Result<String, String> {
     let payload = match b64.decode(base64_payload) {
         Ok(p) => p,
         Err(_) => {
-            return Err(
-                "Stored secret has an invalid encrypted format. Re-enter it and save the profile again.".to_string(),
-            )
+            return Err(AppError::crypto(
+                "Stored secret has an invalid encrypted format. Re-enter it and save the profile again.",
+            ))
         }
     };
 
     if payload.len() < 12 {
-        return Err(
-            "Stored secret is truncated or corrupted. Re-enter it and save the profile again.".to_string(),
-        );
+        return Err(AppError::crypto(
+            "Stored secret is truncated or corrupted. Re-enter it and save the profile again.",
+        ));
     }
 
     let nonce_bytes = &payload[..12];
@@ -240,11 +241,12 @@ pub fn decrypt_password(encrypted: String) -> Result<String, String> {
     let nonce = Nonce::from_slice(nonce_bytes);
 
     match cipher.decrypt(nonce, ciphertext) {
-        Ok(plaintext) => String::from_utf8(plaintext)
-            .map_err(|_| "Stored secret could not be decoded as UTF-8 after decryption.".to_string()),
-        Err(_) => Err(
-            "Stored secret could not be decrypted with the current installation key. Re-enter it and save the profile again.".to_string(),
-        ),
+        Ok(plaintext) => String::from_utf8(plaintext).map_err(|_| {
+            AppError::crypto("Stored secret could not be decoded as UTF-8 after decryption.")
+        }),
+        Err(_) => Err(AppError::crypto(
+            "Stored secret could not be decrypted with the current installation key. Re-enter it and save the profile again.",
+        )),
     }
 }
 
