@@ -14,7 +14,9 @@
     "version:check": "node scripts/versioning.mjs check",
     "version:bump:patch": "node scripts/versioning.mjs bump patch",
     "version:bump:minor": "node scripts/versioning.mjs bump minor",
-    "version:bump:major": "node scripts/versioning.mjs bump major"
+    "version:bump:major": "node scripts/versioning.mjs bump major",
+    "changelog:unreleased": "node scripts/changelog.mjs get-unreleased",
+    "changelog:promote": "node scripts/changelog.mjs promote"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

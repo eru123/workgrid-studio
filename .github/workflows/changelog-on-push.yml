@@ -1,0 +1,47 @@
+name: Update Changelog
+
+on:
+  push:
+    branches:
+      - '**'
+    paths-ignore:
+      - CHANGELOG.md
+      - package.json
+      - src-tauri/tauri.conf.json
+      - src-tauri/Cargo.toml
+
+permissions:
+  contents: write
+
+jobs:
+  update-changelog:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Add commits to Unreleased section
+        run: |
+          node scripts/changelog.mjs add-commits \
+            "${{ github.event.before }}" \
+            "${{ github.event.after }}"
+
+      - name: Commit changelog update
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add CHANGELOG.md
+          if git diff --staged --quiet; then
+            echo "No changelog changes to commit."
+          else
+            git commit -m "docs: update changelog [skip ci]"
+            git push
+          fi
