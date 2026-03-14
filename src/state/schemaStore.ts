@@ -31,9 +31,13 @@ interface SchemaState {
     // Errors
     errors: Record<string, string>;
 
+    // Per-profile ping latency (ms). null = unknown, -1 = error
+    latencies: Record<string, number | null>;
+
     // Actions
     addConnection: (profileId: string, name: string, color: string) => void;
     removeConnection: (profileId: string) => void;
+    setLatency: (profileId: string, ms: number | null) => void;
 
     setDatabases: (profileId: string, dbs: string[]) => void;
     setTables: (profileId: string, db: string, tables: string[]) => void;
@@ -57,6 +61,7 @@ export const useSchemaStore = create<SchemaState>((set) => ({
     loadingTables: {},
     loadingColumns: {},
     errors: {},
+    latencies: {},
 
     addConnection: (profileId, name, color) => {
         set((state) => ({
@@ -98,7 +103,10 @@ export const useSchemaStore = create<SchemaState>((set) => ({
                 if (key.startsWith(profileId)) delete errors[key];
             }
 
-            return { connectedProfiles: cp, databases: dbs, tables, columns, errors };
+            const latencies = { ...next.latencies };
+            delete latencies[profileId];
+
+            return { connectedProfiles: cp, databases: dbs, tables, columns, errors, latencies };
         });
     },
 
@@ -122,6 +130,9 @@ export const useSchemaStore = create<SchemaState>((set) => ({
             const loadingKey = kind === "databases" ? "loadingDatabases" : kind === "tables" ? "loadingTables" : "loadingColumns";
             return { [loadingKey]: { ...state[loadingKey], [key]: loading } };
         }),
+
+    setLatency: (profileId, ms) =>
+        set((state) => ({ latencies: { ...state.latencies, [profileId]: ms } })),
 
     setError: (key, error) =>
         set((state) => ({ errors: { ...state.errors, [key]: error } })),

@@ -1112,12 +1112,13 @@ function ProfileNode({
   const databases = useSchemaStore((s) => s.databases[profileId]);
   const loading = useSchemaStore((s) => s.loadingDatabases[profileId]);
   const error = useSchemaStore((s) => s.errors[`dbs-${profileId}`]);
+  const latency = useSchemaStore((s) => s.latencies[profileId] ?? null);
   const setDatabases = useSchemaStore((s) => s.setDatabases);
   const setLoading = useSchemaStore((s) => s.setLoading);
   const setError = useSchemaStore((s) => s.setError);
   const clearError = useSchemaStore((s) => s.clearError);
   const openTab = useLayoutStore((s) => s.openTab);
-  
+
   const connectionStatus = useProfilesStore((s) => s.profiles.find((p) => p.id === profileId)?.connectionStatus);
 
   const nodeKey = `profile-${profileId}`;
@@ -1195,6 +1196,18 @@ function ProfileNode({
         })()}
         label={name}
         badge={filteredDatabases ? String(filteredDatabases.length) : undefined}
+        suffix={latency !== null && (
+          <span className={cn(
+            "text-[9px] tabular-nums font-mono px-1 rounded ml-1 shrink-0",
+            latency === -1
+              ? "text-red-400 bg-red-400/10"
+              : latency > 200
+              ? "text-amber-400 bg-amber-400/10"
+              : "text-muted-foreground/60"
+          )}>
+            {latency === -1 ? "err" : `${latency}ms`}
+          </span>
+        )}
         bold
       />
 

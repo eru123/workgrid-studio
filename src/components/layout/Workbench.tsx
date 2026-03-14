@@ -108,19 +108,22 @@ export function Workbench() {
   useEffect(() => {
     const pinger = setInterval(async () => {
       const { profiles, setConnectionStatus } = useProfilesStore.getState();
+      const { setLatency } = useSchemaStore.getState();
       const connected = profiles.filter((p) => p.connectionStatus === "connected");
       for (const p of connected) {
         try {
-          await dbPing(p.id);
+          const ms = await dbPing(p.id);
+          setLatency(p.id, ms);
         } catch {
           console.warn(`[Keep-Alive] Ping failed for ${p.id}, marking error and reconnecting...`);
+          setLatency(p.id, -1);
           setConnectionStatus(p.id, "error");
           // Attempt a silent reconnect via the manager
           await handleConnect(p.id);
         }
       }
     }, 15_000); // 15 seconds
-    
+
     return () => clearInterval(pinger);
   }, [handleConnect]);
 
