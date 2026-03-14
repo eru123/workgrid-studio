@@ -23,6 +23,13 @@
 - build(security): add Content Security Policy for Tauri app
 - fix(vault)!: use secure per-installation encryption key
 - Update changelog-on-push.yml
+- fix(deps): update dependencies and lockfile for improved compatibility
+- chore: fix missing newline in tauri configuration file
+- fix: update updater endpoint to handle multiple bundle types and improve CORS support
+- Modularized the rust backend
+- feat: add edge drop zones for tab splitting and improve drag-and-drop UX
+- feat: add per-profile ping latency display in explorer tree
+- feat: enhance cell context menu with JSON/CSV/SQL export and add search functionality
 
 ## [0.1.4] - 2026-03-14
 - Add GitHub Actions workflow to update changelog
