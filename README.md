@@ -1,7 +1,6 @@
 # WorkGrid Studio
 
-WorkGrid Studio is a desktop app built with Tauri 2, React, TypeScript, and Vite.  
-The frontend lives in the root project, and the native desktop shell lives in `src-tauri/`.
+WorkGrid Studio is a cross-platform desktop database management app built with **Tauri 2**, **React 19**, **TypeScript**, **Vite**, **TailwindCSS v4**, and **Zustand**. The frontend lives in `src/`, the Rust-backed native shell in `src-tauri/`, and the auto-update service in `wgs-updater/`.
 
 ## Install Requirements
 
@@ -55,7 +54,7 @@ Install these once on your machine before developing.
    rustup -V
    ```
 
-#### macOS/Linux (short)
+#### macOS / Linux
 
 1. Install Rustup:
 
@@ -80,80 +79,110 @@ Install these once on your machine before developing.
 
 ### 3) Tauri system prerequisites
 
-Install platform-specific dependencies required by Tauri:  
+Install platform-specific dependencies required by Tauri:
 https://v2.tauri.app/start/prerequisites/
+
+---
 
 ## Developer Setup
 
-### Install Dependencies
+### Install dependencies
 
 ```bash
 pnpm install
 ```
 
-### Start in Development
+### Start in development
 
-- Frontend only (Vite):
+- Frontend only (Vite, hot-reload in browser at `localhost:1420`):
 
   ```bash
   pnpm dev
   ```
 
-- Full desktop app (Tauri + Vite):
+- Full desktop app (Tauri + Vite, opens a native window):
 
   ```bash
   pnpm tauri dev
   ```
 
+---
+
 ## Production Build
 
-- Frontend production build:
+- Frontend production build (outputs to `dist/`):
 
   ```bash
   pnpm build
   ```
 
-This generates static assets in `dist/`.
-
-- Desktop production bundle (installers/binaries):
+- Desktop bundle (installers/binaries in `src-tauri/target/release/bundle/`):
 
   ```bash
   pnpm tauri build
   ```
 
-  Build outputs are generated under `src-tauri/target/release/bundle/`.
+---
 
 ## Versioning
 
-`package.json` is the version source of truth.  
-`src-tauri/tauri.conf.json` and `src-tauri/Cargo.toml` are synced automatically.
+`package.json` is the single source of truth for the version.
+`src-tauri/tauri.conf.json` and `src-tauri/Cargo.toml` are derived and kept in sync automatically.
 
-- Sync all version files:
+```bash
+pnpm version:current        # Print current version
+pnpm version:sync           # Propagate package.json version → tauri.conf.json, Cargo.toml
+pnpm version:check          # Assert all three files agree (exits non-zero on mismatch)
+pnpm version:bump:patch     # Bump patch, sync all files
+pnpm version:bump:minor     # Bump minor, sync all files
+pnpm version:bump:major     # Bump major, sync all files
+```
 
-  ```bash
-  pnpm version:sync
-  ```
+`pnpm build` runs `version:sync` and `version:check` automatically via the `prebuild` lifecycle hook. Never edit the version in `tauri.conf.json` or `Cargo.toml` directly.
 
-- Check version sync state:
+---
 
-  ```bash
-  pnpm version:check
-  ```
+## Changelog
 
-- Bump and sync:
+`CHANGELOG.md` is maintained automatically. Manual edits are not required.
 
-  ```bash
-  pnpm version:bump:patch
-  pnpm version:bump:minor
-  pnpm version:bump:major
-  ```
+**How it works:**
 
-- Read current version:
+1. Every push to `main` triggers the `Update Changelog` GitHub Actions workflow, which appends new commit subjects as bullet points under the `[Unreleased]` heading in `CHANGELOG.md`.
+2. When the manual build workflow runs it promotes `[Unreleased]` to a dated version heading (e.g. `## [0.1.4] - 2026-03-14`) before committing the version bump. The promoted entries become the GitHub release description.
 
-  ```bash
-  pnpm version:current
-  ```
+```bash
+pnpm changelog:unreleased         # Print current pending entries
+pnpm changelog:promote <version>  # Promote [Unreleased] to a versioned section
+```
 
-`pnpm build` runs `version:sync` and `version:check` automatically via `prebuild`.
+These are handled automatically by CI — run them locally only when needed.
 
-The GitHub Actions workflow `manual-multi-platform-build.yml` now asks for bump level on dispatch, bumps/syncs version files, commits and tags (`app-vX.Y.Z`), then builds releases from that version tag.
+---
+
+## CI/CD
+
+**`.github/workflows/manual-multi-platform-build.yml`** — manually triggered via `workflow_dispatch`.
+
+Workflow steps:
+1. Prompts for bump level (`patch` / `minor` / `major`).
+2. Bumps and syncs version files across `package.json`, `tauri.conf.json`, and `Cargo.toml`.
+3. Promotes the `[Unreleased]` changelog section to the new version.
+4. Commits and tags `app-vX.Y.Z`, then builds in parallel on Ubuntu 22.04, macOS 14 (arm64), and Windows 2022.
+5. Publishes a **draft pre-release** to GitHub Releases with the changelog entries as the release body.
+
+**`.github/workflows/changelog-on-push.yml`** — runs on every push to any branch (excluding changelog/version-file-only commits).
+
+Appends the pushed commit subjects to the `[Unreleased]` section of `CHANGELOG.md` and commits the result back with a `[skip ci]` marker to prevent loops.
+
+---
+
+## Auto-updater service (`wgs-updater/`)
+
+`wgs-updater` is a Cloudflare Worker that acts as the update endpoint for Tauri's built-in updater plugin. It is deployed separately from the desktop app.
+
+**Endpoint:** `GET /api/update/:target/:current_version`
+
+The worker queries the GitHub Releases API, compares the latest release tag against the client version using semver, and returns either `204 No Content` (already up to date) or the Tauri update payload (version, notes, signature, download URL).
+
+See [`wgs-updater/README.md`](wgs-updater/README.md) for full documentation and deployment instructions.

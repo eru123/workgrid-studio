@@ -1,5 +1,5 @@
 {
-  "name": "cloudflare-workers-openapi",
+  "name": "wgs-updater",
   "version": "0.0.1",
   "private": true,
   "scripts": {
