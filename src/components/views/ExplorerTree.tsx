@@ -18,6 +18,7 @@ import {
 import { cn } from "@/lib/utils/cn";
 import { useAppStore } from "@/state/appStore";
 import { open } from "@tauri-apps/plugin-dialog";
+import { homeDir } from "@tauri-apps/api/path";
 import {
   Database,
   Table2,
@@ -628,6 +629,7 @@ export function ExplorerTree() {
                         setContextMenu(null);
                         const file = await open({
                            multiple: false,
+                           defaultPath: await homeDir(),
                            filters: [{ name: 'SQL Script', extensions: ['sql'] }]
                         });
                         if (file) {
@@ -823,6 +825,7 @@ export function ExplorerTree() {
                     setContextMenu(null);
                     const file = await open({
                        multiple: false,
+                       defaultPath: await homeDir(),
                        filters: [{ name: 'CSV File', extensions: ['csv'] }]
                     });
                     if (file) {

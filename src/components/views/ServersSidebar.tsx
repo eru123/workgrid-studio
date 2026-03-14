@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
+import { homeDir, join } from "@tauri-apps/api/path";
 import {
   DatabaseType,
   DB_TYPE_LABELS,
@@ -556,6 +557,7 @@ export function ServersSidebar() {
                                 const selected = await open({
                                   multiple: false,
                                   directory: false,
+                                  defaultPath: await homeDir(),
                                   filters: [{ name: "Certificate", extensions: ["pem", "crt"] }],
                                 });
                                 if (typeof selected === "string") {
@@ -597,6 +599,7 @@ export function ServersSidebar() {
                                 const selected = await open({
                                   multiple: false,
                                   directory: false,
+                                  defaultPath: await homeDir(),
                                   filters: [{ name: "Certificate", extensions: ["pem", "crt"] }],
                                 });
                                 if (typeof selected === "string") {
@@ -638,6 +641,7 @@ export function ServersSidebar() {
                                 const selected = await open({
                                   multiple: false,
                                   directory: false,
+                                  defaultPath: await homeDir(),
                                   filters: [{ name: "Key", extensions: ["pem", "key"] }],
                                 });
                                 if (typeof selected === "string") {
@@ -750,6 +754,7 @@ export function ServersSidebar() {
                                   const selected = await open({
                                     multiple: false,
                                     directory: false,
+                                    defaultPath: await join(await homeDir(), ".ssh"),
                                     filters: [{ name: "Key", extensions: ["*", "pem", "key"] }],
                                   });
                                   if (typeof selected === "string") {

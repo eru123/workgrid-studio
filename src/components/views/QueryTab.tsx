@@ -19,6 +19,7 @@ import { useAppStore } from "@/state/appStore";
 import { useModelsStore } from "@/state/modelsStore";
 import { aiGenerateQuery, dbGetSchemaDdl } from "@/lib/db";
 import { save, open } from "@tauri-apps/plugin-dialog";
+import { homeDir } from "@tauri-apps/api/path";
 import { writeFile, readTextFile } from "@tauri-apps/plugin-fs";
 import { useQueryHistoryStore } from "@/state/queryHistoryStore";
 import {
@@ -467,6 +468,7 @@ export function QueryTab({
     if (!sql.trim()) return;
     try {
       const path = await save({
+        defaultPath: await homeDir(),
         filters: [{
           name: 'SQL',
           extensions: ['sql']
@@ -497,6 +499,7 @@ export function QueryTab({
     try {
       const selected = await open({
         multiple: false,
+        defaultPath: await homeDir(),
         filters: [{
           name: 'SQL',
           extensions: ['sql']
