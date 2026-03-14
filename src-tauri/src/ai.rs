@@ -2,7 +2,7 @@ use std::fs;
 use serde::{Deserialize, Serialize};
 use reqwest::Client;
 use crate::{AppError, AppResult};
-use crate::files::ensure_app_dirs;
+use crate::files::{app_preferences_path, ensure_app_dirs};
 use crate::crypto::vault_get;
 
 #[derive(Serialize)]
@@ -40,6 +40,12 @@ pub struct AiLogEntry {
     pub uri: String,
     pub payload_preview: String,
     pub response_preview: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AiPreferences {
+    block_ai_requests: Option<bool>,
 }
 
 pub fn append_ai_log(entry: AiLogEntry) {
@@ -102,6 +108,7 @@ pub async fn ai_generate_query(
     schema_context: String,
     current_query: Option<String>,
 ) -> AppResult<String> {
+    ensure_ai_requests_enabled()?;
     let api_key = vault_get(api_key_ref)?;
     let client = Client::new();
 
@@ -168,6 +175,30 @@ pub async fn ai_generate_query(
         },
         _ => Err(AppError::validation("Unsupported provider type"))
     }
+}
+
+fn ensure_ai_requests_enabled() -> AppResult<()> {
+    let Ok(path) = app_preferences_path() else {
+        return Ok(());
+    };
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let Ok(raw) = fs::read_to_string(path) else {
+        return Ok(());
+    };
+    let Ok(prefs) = serde_json::from_str::<AiPreferences>(&raw) else {
+        return Ok(());
+    };
+
+    if prefs.block_ai_requests.unwrap_or(false) {
+        return Err(AppError::validation(
+            "AI requests are disabled in Settings > Privacy.",
+        ));
+    }
+
+    Ok(())
 }
 
 async fn call_openai_compatible_api(

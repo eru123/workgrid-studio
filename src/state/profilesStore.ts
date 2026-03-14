@@ -45,6 +45,14 @@ export interface ProfilePreferences {
   fontSize?: number;
 }
 
+export interface GlobalPreferences extends ProfilePreferences {
+  privacyDisclosureAcceptedAt?: number | null;
+  aiPromptWarningAcceptedAt?: number | null;
+  blockAiRequests?: boolean;
+  allowUpdateChecks?: boolean;
+  maxLogSizeMb?: number;
+}
+
 // What gets saved to disk (no runtime-only fields)
 export interface SavedProfile {
   id: string;
@@ -123,9 +131,20 @@ export function createDefaultFormData(type?: DatabaseType): ProfileFormData {
 }
 
 const PROFILES_FILE = "profiles.json";
+const GLOBAL_PREFERENCES_FILE = "preferences.json";
+export const DEFAULT_GLOBAL_PREFERENCES: GlobalPreferences = {
+  theme: "dark",
+  fontSize: 13,
+  privacyDisclosureAcceptedAt: null,
+  aiPromptWarningAcceptedAt: null,
+  blockAiRequests: false,
+  allowUpdateChecks: true,
+  maxLogSizeMb: 10,
+};
 
 // Debounce timer for saving
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
+let prefsSaveTimer: ReturnType<typeof setTimeout> | null = null;
 
 async function safeDecryptSecret(
   value: string | undefined,
@@ -178,9 +197,16 @@ function debouncedSave(profiles: DatabaseProfile[]) {
   }, 300);
 }
 
+function debouncedSavePreferences(preferences: GlobalPreferences) {
+  if (prefsSaveTimer) clearTimeout(prefsSaveTimer);
+  prefsSaveTimer = setTimeout(() => {
+    writeData(GLOBAL_PREFERENCES_FILE, preferences).catch(() => {});
+  }, 300);
+}
+
 interface ProfilesState {
   profiles: DatabaseProfile[];
-  globalPreferences: ProfilePreferences;
+  globalPreferences: GlobalPreferences;
   _loaded: boolean;
 
   loadProfiles: () => Promise<void>;
@@ -189,17 +215,21 @@ interface ProfilesState {
   deleteProfile: (id: string) => void;
   duplicateProfile: (id: string) => void;
   setConnectionStatus: (id: string, status: ConnectionStatus) => void;
-  setGlobalPreferences: (prefs: Partial<ProfilePreferences>) => void;
+  setGlobalPreferences: (prefs: Partial<GlobalPreferences>) => void;
 }
 
 export const useProfilesStore = create<ProfilesState>((set, get) => ({
   profiles: [],
-  globalPreferences: { theme: "dark", fontSize: 13 },
+  globalPreferences: DEFAULT_GLOBAL_PREFERENCES,
   _loaded: false,
 
   loadProfiles: async () => {
     if (get()._loaded) return;
     try {
+      const savedPreferences = await readData<GlobalPreferences>(
+        GLOBAL_PREFERENCES_FILE,
+        DEFAULT_GLOBAL_PREFERENCES,
+      );
       const saved = await readData<SavedProfile[]>(PROFILES_FILE, []);
       const profiles: DatabaseProfile[] = await Promise.all(
         saved.map(async (s) => {
@@ -223,10 +253,20 @@ export const useProfilesStore = create<ProfilesState>((set, get) => ({
           };
         })
       );
-      set({ profiles, _loaded: true });
+      set({
+        profiles,
+        globalPreferences: {
+          ...DEFAULT_GLOBAL_PREFERENCES,
+          ...savedPreferences,
+        },
+        _loaded: true,
+      });
     } catch (e) {
       // console.error("[profiles] load error:", e);
-      set({ _loaded: true });
+      set({
+        globalPreferences: DEFAULT_GLOBAL_PREFERENCES,
+        _loaded: true,
+      });
     }
   },
 
@@ -310,7 +350,9 @@ export const useProfilesStore = create<ProfilesState>((set, get) => ({
     }),
 
   setGlobalPreferences: (prefs) =>
-    set((state) => ({
-      globalPreferences: { ...state.globalPreferences, ...prefs },
-    })),
+    set((state) => {
+      const globalPreferences = { ...state.globalPreferences, ...prefs };
+      debouncedSavePreferences(globalPreferences);
+      return { globalPreferences };
+    }),
 }));

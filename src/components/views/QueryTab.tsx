@@ -17,7 +17,9 @@ import { useSchemaStore } from "@/state/schemaStore";
 import { useLayoutStore } from "@/state/layoutStore";
 import { useAppStore } from "@/state/appStore";
 import { useModelsStore } from "@/state/modelsStore";
+import { useProfilesStore } from "@/state/profilesStore";
 import { aiGenerateQuery, dbGetSchemaDdl } from "@/lib/db";
+import { ensureAiUseAllowed } from "@/lib/privacy";
 import { save, open } from "@tauri-apps/plugin-dialog";
 import { homeDir } from "@tauri-apps/api/path";
 import { writeFile, readTextFile } from "@tauri-apps/plugin-fs";
@@ -364,6 +366,9 @@ export function QueryTab({
   // ── Database from schema store ────────────────────────────
   const connectedProfiles = useSchemaStore((s) => s.connectedProfiles);
   const updateTab = useLayoutStore((s) => s.updateTab);
+  const aiBlocked = useProfilesStore(
+    (s) => s.globalPreferences.blockAiRequests ?? false,
+  );
 
   const [selectedProfileId, setSelectedProfileId] = useState(profileId);
   const [selectedDb, setSelectedDb] = useState(initialDatabase ?? "");
@@ -1033,6 +1038,15 @@ export function QueryTab({
       return;
     }
 
+    if (
+      !ensureAiUseAllowed({
+        providerName: activeProvider.name,
+        includesSchemaContext: Boolean(selectedDb),
+      })
+    ) {
+      return;
+    }
+
     setIsAskingAI(true);
     try {
       // Build full DDL schema context from the database
@@ -1690,7 +1704,7 @@ export function QueryTab({
           icon={<Bot className="w-4 h-4" />}
           title="Ask AI to generate a query based on the schema"
           onClick={handleAskAI}
-          disabled={running || isAskingAI}
+          disabled={running || isAskingAI || aiBlocked}
           active={false}
           accent="text-indigo-400"
           label="Ask AI"
@@ -2417,8 +2431,9 @@ export function QueryTab({
               />
               <div className="flex items-center justify-between text-muted-foreground">
                 <span className="text-[10px] italic">
-                  Schema and editor contents are sent as context.
-                  (Ctrl+Enter to submit)
+                  {aiBlocked
+                    ? "AI requests are disabled in Settings > Privacy."
+                    : "Schema and editor contents are sent as context. (Ctrl+Enter to submit)"}
                 </span>
                 {isAskingAI && (
                   <div className="flex items-center gap-1.5 text-indigo-400 text-[11px] font-medium">
@@ -2440,7 +2455,7 @@ export function QueryTab({
               <button
                 type="button"
                 onClick={submitAiPrompt}
-                disabled={isAskingAI || !aiPromptText.trim()}
+                disabled={isAskingAI || !aiPromptText.trim() || aiBlocked}
                 className="px-3 py-1.5 rounded bg-indigo-500 text-white hover:bg-indigo-600 transition-colors flex items-center gap-1.5 disabled:opacity-50 font-medium"
               >
                 {isAskingAI ? (

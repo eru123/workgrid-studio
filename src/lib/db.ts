@@ -278,3 +278,11 @@ export async function dbImportCsv(profileId: string, database: string, table: st
 export async function dbForgetHostKey(profileId: string, sshHost: string, sshPort: number): Promise<void> {
     return invoke<void>("forget_host_key", { profileId, sshHost, sshPort });
 }
+
+export async function clearAllLogs(): Promise<void> {
+    return invoke<void>("clear_all_logs");
+}
+
+export async function deleteAllAppData(): Promise<void> {
+    return invoke<void>("app_delete_all_data");
+}

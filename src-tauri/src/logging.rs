@@ -1,9 +1,20 @@
 use std::fs::{self, OpenOptions};
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use serde::Deserialize;
 use crate::{AppError, AppResult};
-use crate::files::app_data_dir;
+use crate::files::{app_data_dir, app_preferences_path, ensure_app_dirs};
 use chrono::Local;
+
+const DEFAULT_MAX_LOG_SIZE_MB: u64 = 10;
+const MIN_LOG_SIZE_MB: u64 = 1;
+const MAX_LOG_SIZE_MB: u64 = 250;
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LoggingPreferences {
+    max_log_size_mb: Option<u64>,
+}
 
 pub fn log_dir_for(profile_id: &str) -> AppResult<PathBuf> {
     let base = app_data_dir()?;
@@ -29,6 +40,7 @@ pub fn append_log(profile_id: &str, filename: &str, message: &str) {
         {
             let _ = writeln!(file, "[{}] {}", timestamp(), message);
         }
+        enforce_log_retention(&path);
     }
 }
 
@@ -89,4 +101,70 @@ pub fn clear_profile_log(profile_id: String, log_type: String) -> AppResult<()> 
         fs::remove_file(&path).map_err(|e| format!("Delete error: {}", e))?;
     }
     Ok(())
+}
+
+#[tauri::command]
+pub fn clear_all_logs() -> AppResult<()> {
+    let base = ensure_app_dirs()?;
+    let logs_dir = base.join("logs");
+
+    if logs_dir.exists() {
+        fs::remove_dir_all(&logs_dir)
+            .map_err(|e| AppError::io(format!("Failed to clear logs directory: {}", e)))?;
+    }
+    fs::create_dir_all(&logs_dir)
+        .map_err(|e| AppError::io(format!("Failed to recreate logs directory: {}", e)))?;
+
+    for filename in ["ai_logs.json", "ai_logs.corrupted.json"] {
+        let path = base.join(filename);
+        if path.exists() {
+            fs::remove_file(&path)
+                .map_err(|e| AppError::io(format!("Failed to remove {}: {}", filename, e)))?;
+        }
+    }
+
+    Ok(())
+}
+
+fn current_max_log_size_bytes() -> u64 {
+    let default = DEFAULT_MAX_LOG_SIZE_MB * 1024 * 1024;
+    let Ok(path) = app_preferences_path() else {
+        return default;
+    };
+    let Ok(raw) = fs::read_to_string(path) else {
+        return default;
+    };
+    let Ok(prefs) = serde_json::from_str::<LoggingPreferences>(&raw) else {
+        return default;
+    };
+
+    prefs
+        .max_log_size_mb
+        .unwrap_or(DEFAULT_MAX_LOG_SIZE_MB)
+        .clamp(MIN_LOG_SIZE_MB, MAX_LOG_SIZE_MB)
+        * 1024
+        * 1024
+}
+
+fn enforce_log_retention(path: &Path) {
+    let max_size = current_max_log_size_bytes();
+    let Ok(metadata) = fs::metadata(path) else {
+        return;
+    };
+    if metadata.len() <= max_size {
+        return;
+    }
+
+    let Ok(contents) = fs::read(path) else {
+        return;
+    };
+
+    let keep_from = contents.len().saturating_sub(max_size as usize);
+    let adjusted_start = contents[keep_from..]
+        .iter()
+        .position(|byte| *byte == b'\n')
+        .map(|index| keep_from + index + 1)
+        .unwrap_or(keep_from);
+
+    let _ = fs::write(path, &contents[adjusted_start..]);
 }

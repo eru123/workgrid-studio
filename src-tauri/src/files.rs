@@ -2,6 +2,8 @@ use std::path::PathBuf;
 use std::fs;
 use crate::{AppError, AppResult};
 
+pub const APP_PREFERENCES_FILE: &str = "preferences.json";
+
 pub fn app_data_dir() -> AppResult<PathBuf> {
     let home = std::env::var("USERPROFILE")
         .or_else(|_| std::env::var("HOME"))
@@ -19,6 +21,14 @@ pub fn ensure_app_dirs() -> AppResult<PathBuf> {
         }
     }
     Ok(base)
+}
+
+pub fn data_file_path(filename: &str) -> AppResult<PathBuf> {
+    Ok(ensure_app_dirs()?.join("data").join(filename))
+}
+
+pub fn app_preferences_path() -> AppResult<PathBuf> {
+    data_file_path(APP_PREFERENCES_FILE)
 }
 
 #[tauri::command]
@@ -54,4 +64,29 @@ pub fn app_delete_file(filename: String) -> AppResult<()> {
 pub fn app_get_data_dir() -> AppResult<String> {
     let base = ensure_app_dirs()?;
     Ok(base.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+pub fn app_delete_all_data() -> AppResult<()> {
+    let base = app_data_dir()?;
+
+    if base.exists() {
+        fs::remove_dir_all(&base)
+            .map_err(|e| AppError::io(format!("Failed to remove app data directory: {}", e)))?;
+    }
+
+    if let Ok(entry) = keyring::Entry::new("workgrid-studio", "vault-key") {
+        match entry.delete_credential() {
+            Ok(_) | Err(keyring::Error::NoEntry) => {}
+            Err(e) => {
+                return Err(AppError::crypto(format!(
+                    "Failed to clear the mirrored OS keychain entry: {}",
+                    e
+                )));
+            }
+        }
+    }
+
+    ensure_app_dirs()?;
+    Ok(())
 }
