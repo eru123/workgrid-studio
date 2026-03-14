@@ -27,6 +27,11 @@
 - Update manual-multi-platform-build.yml
 - chore: bump workgrid-studio version to 0.1.5 in Cargo.lock
 - Potential fix for code scanning alert no. 5: Hard-coded cryptographic value
+- refactor: optimize AI query generation and database operations
+- fix: Handle corrupted AI logs gracefully with backup creation
+- Fix search navigation and selection bounds in ExplorerTree
+- refactor(ssh): improve tunnel shutdown logic with proper thread joining
+- refactor: replace RngCore with Rng for improved randomness generation
 
 ## [0.1.5] - 2026-03-14
 - Exclude main branch from changelog workflow
