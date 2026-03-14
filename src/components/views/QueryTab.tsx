@@ -1674,14 +1674,14 @@ export function QueryTab({
           aria-label="Wrap text"
           onClick={() => setWordWrap((p) => !p)}
           className={cn(
-            "h-7 inline-flex items-center gap-1 px-2 rounded transition-colors text-[11px]",
+            "h-7 inline-flex w-fit shrink-0 items-center gap-1 px-2 rounded whitespace-nowrap transition-colors text-[11px]",
             wordWrap
               ? "bg-accent/70 text-foreground"
               : "text-muted-foreground hover:bg-accent hover:text-foreground",
           )}
         >
           <WrapText className="w-3.5 h-3.5" />
-          <span>Wrap Text</span>
+          <span className="whitespace-nowrap">Wrap Text</span>
         </button>
 
         <div className="w-px h-5 bg-border mx-1" />
@@ -1839,7 +1839,7 @@ export function QueryTab({
         <div className="w-px h-5 bg-border mx-1" />
 
         {/* Format SQL */}
-        <div className="relative flex items-center h-7 px-1 rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors overflow-hidden">
+        <div className="relative flex h-7 w-fit shrink-0 items-center px-1 rounded whitespace-nowrap hover:bg-accent text-muted-foreground hover:text-foreground transition-colors">
           <div className="flex items-center pointer-events-none">
             {isFormatting ? (
               <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -1853,7 +1853,8 @@ export function QueryTab({
               if (e.target.value) handleFormat(e.target.value as any);
             }}
             disabled={isFormatting || !sql.trim()}
-            className="h-full bg-transparent text-[11px] font-medium pl-1 pr-1 focus:outline-none appearance-none cursor-pointer"
+            className="h-full w-fit whitespace-nowrap bg-transparent text-[11px] font-medium pl-1 pr-1 focus:outline-none appearance-none cursor-pointer"
+            style={{ fieldSizing: "content" } as React.CSSProperties}
             title="Format SQL"
           >
             <option value="" disabled>
@@ -1875,7 +1876,7 @@ export function QueryTab({
           active={false}
         />
         {/* Export */}
-        <div className="relative flex items-center h-7 px-1 rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors overflow-hidden">
+        <div className="relative flex h-7 w-fit shrink-0 items-center px-1 rounded whitespace-nowrap hover:bg-accent text-muted-foreground hover:text-foreground transition-colors">
           <div className="flex items-center pointer-events-none">
             <Download className="w-3.5 h-3.5" />
           </div>
@@ -1887,7 +1888,8 @@ export function QueryTab({
               else if (e.target.value === "sql") handleExportSQL();
             }}
             disabled={!activeResult || activeResult.rows.length === 0}
-            className="h-full bg-transparent text-[11px] font-medium pl-1 pr-1 focus:outline-none appearance-none cursor-pointer"
+            className="h-full w-fit whitespace-nowrap bg-transparent text-[11px] font-medium pl-1 pr-1 focus:outline-none appearance-none cursor-pointer"
+            style={{ fieldSizing: "content" } as React.CSSProperties}
             title="Export results"
           >
             <option value="" disabled>Export</option>
@@ -2481,7 +2483,7 @@ function ToolBtn({
   return (
     <button
       className={cn(
-        "p-1.5 rounded transition-colors flex items-center gap-1.5",
+        "flex w-fit shrink-0 items-center gap-1.5 rounded p-1.5 whitespace-nowrap transition-colors",
         disabled ? "opacity-30 pointer-events-none" : "hover:bg-accent",
         active && "bg-accent/60",
         accent && !disabled && accent,
@@ -2493,7 +2495,7 @@ function ToolBtn({
     >
       {icon}
       {label && (
-        <span className="text-[11px] font-medium leading-none tracking-wide pr-1 pt-0.5">
+        <span className="whitespace-nowrap pr-1 pt-0.5 text-[11px] font-medium leading-none tracking-wide">
           {label}
         </span>
       )}
