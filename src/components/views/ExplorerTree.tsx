@@ -230,9 +230,12 @@ export function ExplorerTree() {
           value={globalSearch}
           onChange={(e) => { setGlobalSearch(e.target.value); setSearchFocusIdx(0); }}
           onKeyDown={(e) => {
-            if (e.key === "ArrowDown") { e.preventDefault(); setSearchFocusIdx((i) => Math.min(i + 1, searchResults.length - 1)); }
+            if (e.key === "ArrowDown") { e.preventDefault(); setSearchFocusIdx((i) => Math.max(0, Math.min(i + 1, searchResults.length - 1))); }
             else if (e.key === "ArrowUp") { e.preventDefault(); setSearchFocusIdx((i) => Math.max(i - 1, 0)); }
-            else if (e.key === "Enter" && searchResults.length > 0) { openSearchResult(searchResults[searchFocusIdx]); }
+            else if (e.key === "Enter" && searchResults.length > 0) { 
+              const idx = Math.max(0, Math.min(searchFocusIdx, searchResults.length - 1));
+              openSearchResult(searchResults[idx]); 
+            }
             else if (e.key === "Escape") { setGlobalSearch(""); }
           }}
           className="bg-transparent border-none outline-none w-full text-[11px] text-foreground placeholder:text-muted-foreground/60 h-full"
