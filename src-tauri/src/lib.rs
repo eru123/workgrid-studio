@@ -6,6 +6,7 @@ use std::io::Write;
 use std::sync::Mutex;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
 use std::collections::HashMap;
 use std::net::{TcpStream, TcpListener};
 use ssh2::Session;
@@ -13,9 +14,13 @@ use ssh2::Session;
 pub struct TunnelHandle {
     pub local_port: u16,
     pub shutdown: Arc<AtomicBool>,
-    /// Join handle for the tunnel forwarding thread. Taken (set to None) on disconnect
-    /// so the thread can be cleanly joined rather than leaked.
+    /// Join handle for the forwarding thread. Taken (set to `None`) on disconnect
+    /// so the thread can be explicitly joined rather than leaked.
     pub thread: Option<std::thread::JoinHandle<()>>,
+    /// Receives a single `()` message when the forwarding loop exits.
+    /// Used to implement a bounded join timeout: `recv_timeout(5 s)` blocks
+    /// only until the thread signals completion rather than indefinitely.
+    pub done_rx: mpsc::Receiver<()>,
 }
 
 use mysql_async::prelude::*;
@@ -338,6 +343,19 @@ fn verify_host_key_tofu(
     }
 }
 
+/// Remove a stored host key from `known_hosts.json` so the next connection
+/// performs a fresh TOFU exchange.  A no-op if the host was never stored.
+#[tauri::command]
+fn forget_host_key(profile_id: String, ssh_host: String, ssh_port: u16) -> Result<(), String> {
+    let host_id = format!("[{}]:{}", ssh_host, ssh_port);
+    let mut known = load_known_hosts();
+    if known.remove(&host_id).is_some() {
+        save_known_hosts(&known)?;
+        log_info(&profile_id, &format!("Forgotten host key for {}", host_id));
+    }
+    Ok(())
+}
+
 fn establish_ssh_tunnel(pid: &str, params: &ConnectParams) -> Result<TunnelHandle, String> {
     let ssh_host = params.ssh_host.as_ref().ok_or("SSH host not provided")?;
     let ssh_port = params.ssh_port.unwrap_or(22);
@@ -394,6 +412,11 @@ fn establish_ssh_tunnel(pid: &str, params: &ConnectParams) -> Result<TunnelHandl
     let shutdown = Arc::new(AtomicBool::new(false));
     let shutdown_clone = shutdown.clone();
 
+    // Channel used to implement a bounded join timeout: the thread sends a
+    // single message just before returning, allowing `shutdown_tunnel` to
+    // wait at most 5 seconds instead of blocking indefinitely on `join()`.
+    let (done_tx, done_rx) = mpsc::channel::<()>();
+
     // Spawn the tunnel bridge thread and retain the JoinHandle so it can be
     // explicitly joined on disconnect, preventing thread accumulation on rapid
     // connect/reconnect cycles.
@@ -426,9 +449,35 @@ fn establish_ssh_tunnel(pid: &str, params: &ConnectParams) -> Result<TunnelHandl
                 }
             }
         }
+        // Notify shutdown_tunnel() that the loop has fully exited.
+        let _ = done_tx.send(());
     });
 
-    Ok(TunnelHandle { local_port, shutdown, thread: Some(join_handle) })
+    Ok(TunnelHandle { local_port, shutdown, thread: Some(join_handle), done_rx })
+}
+
+/// Gracefully shut down a tunnel handle:
+///   1. Set the shutdown flag so the forwarding loop will exit on its next iteration.
+///   2. Connect a dummy TCP stream to unblock `listener.incoming()` immediately.
+///   3. Wait up to 5 seconds for the thread to signal via `done_rx` that it has exited.
+///   4. Join the thread (non-blocking at this point since the loop has exited or timed out).
+///
+/// In debug builds, logs a warning if the thread does not exit within the timeout.
+fn shutdown_tunnel(mut handle: TunnelHandle) {
+    handle.shutdown.store(true, Ordering::Relaxed);
+    // Unblock the blocking `listener.incoming()` call with a throwaway connection.
+    let _ = TcpStream::connect(format!("127.0.0.1:{}", handle.local_port));
+    // Wait up to 5 s for the forwarding loop to signal completion.
+    match handle.done_rx.recv_timeout(std::time::Duration::from_secs(5)) {
+        Ok(_) | Err(mpsc::RecvTimeoutError::Disconnected) => {}
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            #[cfg(debug_assertions)]
+            eprintln!("[workgrid-studio] [debug] WARNING: SSH tunnel thread did not exit within 5 s — abandoning");
+        }
+    }
+    if let Some(t) = handle.thread.take() {
+        let _ = t.join();
+    }
 }
 
 // ─── DB State ───────────────────────────────────────────────────────
@@ -507,13 +556,13 @@ async fn db_connect(
                 let mut tunnels = state.tunnels.lock().map_err(|e| e.to_string())?;
                 tunnels.remove(&pid)
             };
-            if let Some(mut old) = old_tunnel {
-                old.shutdown.store(true, Ordering::Relaxed);
-                // Unblock listener.incoming() so the thread exits its loop
-                let _ = TcpStream::connect(format!("127.0.0.1:{}", old.local_port));
-                if let Some(t) = old.thread.take() {
-                    let _ = t.join();
-                }
+            if let Some(old) = old_tunnel {
+                shutdown_tunnel(old);
+            }
+            // Debug telemetry: log active tunnel count after cleanup.
+            #[cfg(debug_assertions)]
+            if let Ok(tunnels) = state.tunnels.lock() {
+                eprintln!("[workgrid-studio] [debug] active SSH tunnel count after reconnect cleanup: {}", tunnels.len());
             }
         }
         let handle = establish_ssh_tunnel(&pid, &conn_params)?;
@@ -663,13 +712,13 @@ async fn db_disconnect(
         let mut tunnels = state.tunnels.lock().map_err(|e| e.to_string())?;
         tunnels.remove(&profile_id)
     };
-    if let Some(mut handle) = tunnel {
-        handle.shutdown.store(true, Ordering::Relaxed);
-        // Unblock listener.incoming() with a dummy connection so the thread exits its loop
-        let _ = TcpStream::connect(format!("127.0.0.1:{}", handle.local_port));
-        if let Some(t) = handle.thread.take() {
-            let _ = t.join();
-        }
+    if let Some(handle) = tunnel {
+        shutdown_tunnel(handle);
+    }
+    // Debug telemetry: log active tunnel count after disconnect.
+    #[cfg(debug_assertions)]
+    if let Ok(tunnels) = state.tunnels.lock() {
+        eprintln!("[workgrid-studio] [debug] active SSH tunnel count after disconnect: {}", tunnels.len());
     }
 
     log_info(&profile_id, "Disconnected");
