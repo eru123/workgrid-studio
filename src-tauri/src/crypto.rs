@@ -261,7 +261,7 @@ mod tests {
 
     #[test]
     fn encrypt_decrypt_round_trip() {
-        let password = "hunter2".to_string();
+        let password = "test-password-value".to_string();
         let encrypted = encrypt_password(password.clone()).expect("encrypt failed");
         assert!(encrypted.starts_with("wkgrd:"), "expected wkgrd: prefix");
         let decrypted = decrypt_password(encrypted).expect("decrypt failed");
