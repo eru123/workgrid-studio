@@ -35,6 +35,9 @@
 - refactor: simplify secret key management and improve reliability
 - refactor: consolidate output logging and enhance bottom panel UX
 - Potential fix for code scanning alert no. 17: Hard-coded cryptographic value
+- feat: add loading state and skeleton UI for query history
+- refactor: simplify timestamp generation using chrono crate
+- fix: correct sash direction and cursor styling for layout panels
 
 ## [0.1.5] - 2026-03-14
 - Exclude main branch from changelog workflow
