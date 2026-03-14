@@ -657,11 +657,19 @@ async fn db_disconnect(
         let _ = pool.disconnect().await;
     }
 
-    let mut tunnels = state.tunnels.lock().map_err(|e| e.to_string())?;
-    if let Some(handle) = tunnels.remove(&profile_id) {
+    // Remove the tunnel handle while holding the lock, then release the lock
+    // before joining the thread to avoid holding the mutex during the join.
+    let tunnel = {
+        let mut tunnels = state.tunnels.lock().map_err(|e| e.to_string())?;
+        tunnels.remove(&profile_id)
+    };
+    if let Some(mut handle) = tunnel {
         handle.shutdown.store(true, Ordering::Relaxed);
-        // Unblock listener.incoming() with a dummy connection so the thread exits
+        // Unblock listener.incoming() with a dummy connection so the thread exits its loop
         let _ = TcpStream::connect(format!("127.0.0.1:{}", handle.local_port));
+        if let Some(t) = handle.thread.take() {
+            let _ = t.join();
+        }
     }
 
     log_info(&profile_id, "Disconnected");
