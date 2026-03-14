@@ -1,0 +1,117 @@
+use std::fs::{self, OpenOptions};
+use std::io::Write;
+use std::path::PathBuf;
+use crate::files::app_data_dir;
+
+pub fn log_dir_for(profile_id: &str) -> Result<PathBuf, String> {
+    let base = app_data_dir()?;
+    let dir = base.join("logs").join(profile_id);
+    if !dir.exists() {
+        fs::create_dir_all(&dir)
+            .map_err(|e| format!("Failed to create log dir: {}", e))?;
+    }
+    Ok(dir)
+}
+
+pub fn timestamp() -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    let secs = now.as_secs();
+    // Simple UTC timestamp: YYYY-MM-DD HH:MM:SS
+    let days = secs / 86400;
+    let time_secs = secs % 86400;
+    let hours = time_secs / 3600;
+    let minutes = (time_secs % 3600) / 60;
+    let seconds = time_secs % 60;
+
+    // Approximate date calculation
+    let mut y = 1970i64;
+    let mut remaining = days as i64;
+    loop {
+        let days_in_year = if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) { 366 } else { 365 };
+        if remaining < days_in_year { break; }
+        remaining -= days_in_year;
+        y += 1;
+    }
+    let leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
+    let months_days = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let mut m = 0usize;
+    for &md in &months_days {
+        if remaining < md { break; }
+        remaining -= md;
+        m += 1;
+    }
+    format!("{:04}-{:02}-{:02} {:02}:{:02}:{:02}", y, m + 1, remaining + 1, hours, minutes, seconds)
+}
+
+pub fn append_log(profile_id: &str, filename: &str, message: &str) {
+    if let Ok(dir) = log_dir_for(profile_id) {
+        let path = dir.join(filename);
+        if let Ok(mut file) = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+        {
+            let _ = writeln!(file, "[{}] {}", timestamp(), message);
+        }
+    }
+}
+
+pub fn log_query(profile_id: &str, query: &str) {
+    append_log(profile_id, "mysql.log.txt", &format!("QUERY: {}", query));
+}
+
+pub fn log_query_result(profile_id: &str, query: &str, count: usize) {
+    append_log(profile_id, "mysql.log.txt", &format!("QUERY: {} → {} rows", query, count));
+}
+
+pub fn log_info(profile_id: &str, message: &str) {
+    append_log(profile_id, "mysql.log.txt", &format!("INFO: {}", message));
+}
+
+pub fn log_error(profile_id: &str, message: &str) {
+    append_log(profile_id, "error.log.txt", &format!("ERROR: {}", message));
+    // Also log errors to mysql.log for full timeline
+    append_log(profile_id, "mysql.log.txt", &format!("ERROR: {}", message));
+}
+
+#[tauri::command]
+pub fn read_profile_log(profile_id: String, log_type: String) -> Result<String, String> {
+    let filename = match log_type.as_str() {
+        "query" | "mysql" => "mysql.log.txt",
+        "error" => "error.log.txt",
+        _ => return Err("Unknown log type. Use 'mysql' or 'error'.".to_string()),
+    };
+    let dir = log_dir_for(&profile_id)?;
+    let path = dir.join(filename);
+    if !path.exists() {
+        return Ok(String::new());
+    }
+    fs::read_to_string(&path).map_err(|e| format!("Read error: {}", e))
+}
+
+#[tauri::command]
+pub fn clear_profile_log(profile_id: String, log_type: String) -> Result<(), String> {
+    let filename = match log_type.as_str() {
+        "query" | "mysql" => "mysql.log.txt",
+        "error" => "error.log.txt",
+        "all" => {
+            let dir = log_dir_for(&profile_id)?;
+            for f in &["mysql.log.txt", "error.log.txt"] {
+                let p = dir.join(f);
+                if p.exists() {
+                    let _ = fs::remove_file(&p);
+                }
+            }
+            return Ok(());
+        }
+        _ => return Err("Unknown log type. Use 'mysql', 'error', or 'all'.".to_string()),
+    };
+    let dir = log_dir_for(&profile_id)?;
+    let path = dir.join(filename);
+    if path.exists() {
+        fs::remove_file(&path).map_err(|e| format!("Delete error: {}", e))?;
+    }
+    Ok(())
+}
