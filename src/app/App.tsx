@@ -11,13 +11,15 @@ import { useAppStore } from "@/state/appStore";
 export function App() {
     const loadProfiles = useProfilesStore((s) => s.loadProfiles);
     const loadTasks = useTasksStore((s) => s.loadTasks);
+    const loadHistory = useQueryHistoryStore((s) => s.loadHistory);
 
     const setCommandPaletteOpen = useAppStore((s) => s.setCommandPaletteOpen);
 
     useEffect(() => {
         loadProfiles();
         loadTasks();
-    }, [loadProfiles, loadTasks]);
+        loadHistory();
+    }, [loadProfiles, loadTasks, loadHistory]);
 
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
