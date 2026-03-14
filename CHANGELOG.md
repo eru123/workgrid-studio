@@ -4,6 +4,7 @@
 - Exclude main branch from changelog workflow
 - Add environment variable for Node.js version
 - Update manual-multi-platform-build.yml
+- docs(project): overhaul project documentation and updater service
 
 ## [0.1.4] - 2026-03-14
 - Add GitHub Actions workflow to update changelog
