@@ -4,15 +4,16 @@
       "Bash(pnpm tsc:*)",
       "Read(//tmp/**)",
       "Read(//c/tmp/**)",
-      "Bash(git -C c:/laragon/www/workgrid-studio worktree list)",
+      "Bash(git worktree list)",
       "Bash(find C:/laragon/www/workgrid-studio/.claude/worktrees/silly-perlman -name *.rs)",
-      "Bash(git -C c:/laragon/www/workgrid-studio log --oneline claude/silly-perlman..HEAD)",
-      "Bash(git -C c:/laragon/www/workgrid-studio log --oneline HEAD..claude/silly-perlman)",
-      "Bash(git -C \"c:/laragon/www/workgrid-studio\" diff HEAD...claude/silly-perlman -- \"src-tauri/src/\" --stat)",
-      "Bash(git -C \"c:/laragon/www/workgrid-studio\" log --oneline claude/silly-perlman)",
-      "Bash(git -C \"c:/laragon/www/workgrid-studio\" worktree list --porcelain)",
+      "Bash(git log --oneline claude/silly-perlman..HEAD)",
+      "Bash(git log --oneline HEAD..claude/silly-perlman)",
+      "Bash(git diff HEAD...claude/silly-perlman -- \"src-tauri/src/\" --stat)",
+      "Bash(git log --oneline claude/silly-perlman)",
+      "Bash(git worktree list --porcelain)",
       "Bash(grep -n \"#\\\\[cfg\\(test\\)\\\\]\\\\|#\\\\[test\\\\]\" c:/laragon/www/workgrid-studio/src-tauri/src/*.rs)",
-      "Bash(grep -n \"fn split_sql_statements\\\\|fn encrypt_password\\\\|fn decrypt_password\\\\|fn vault_set\\\\|fn vault_get\\\\|fn vault_delete\" c:/laragon/www/workgrid-studio/src-tauri/src/*.rs)"
+      "Bash(grep -n \"fn split_sql_statements\\\\|fn encrypt_password\\\\|fn decrypt_password\\\\|fn vault_set\\\\|fn vault_get\\\\|fn vault_delete\" c:/laragon/www/workgrid-studio/src-tauri/src/*.rs)",
+      "Bash(xargs grep:*)"
     ]
   }
 }

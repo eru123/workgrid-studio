@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { cors } from "hono/cors";
 import semver from "semver";
 import type { UpdateResponse } from "./types";
 
@@ -7,6 +8,10 @@ type Bindings = {
 };
 
 const app = new Hono<{ Bindings: Bindings }>();
+
+// Allow cross-origin requests from any origin so that in-app WebViews and
+// browsers can call the updater endpoints without CORS errors.
+app.use("*", cors());
 
 /**
  * GET /api/update/:target/:current_version
@@ -75,34 +80,51 @@ app.get("/api/update/:target/:current_version", async (c) => {
 		return c.body(null, 204);
 	}
 
-	// Map the Tauri target triple to the expected asset file suffix.
-	let ext = "";
+	// Map the Tauri target triple to the candidate asset file suffixes.
+	// Multiple suffixes are tried in order so the endpoint works regardless of
+	// which bundle types were included in a given release.
+	let candidates: string[] = [];
 	if (target.includes("windows")) {
-		ext = "x64-setup.nsis.zip";
+		// Tauri v2 can ship either an NSIS or MSI updater zip — try both.
+		candidates = ["x64-setup.nsis.zip", "x64_en-US.msi.zip"];
 	} else if (target.includes("darwin-aarch64")) {
-		ext = "aarch64.app.tar.gz";
+		candidates = ["aarch64.app.tar.gz"];
 	} else if (
 		target.includes("darwin-x86_64") ||
 		target.includes("darwin-intel")
 	) {
-		ext = "x64.app.tar.gz";
+		candidates = ["x64.app.tar.gz"];
 	} else if (target.includes("linux")) {
-		ext = "amd64.AppImage.tar.gz";
+		candidates = ["amd64.AppImage.tar.gz"];
 	} else {
 		return c.text("Unsupported platform", 400);
 	}
 
-	// Find signature and the matching build asset
-	const signatureAsset = release.assets.find((a: any) =>
-		a.name.endsWith(`${ext}.sig`)
-	);
-	const buildAsset = release.assets.find(
-		(a: any) => a.name.endsWith(ext) && !a.name.endsWith(".sig")
-	);
+	// Pick the first candidate that has a matching build asset in this release.
+	let buildAsset: any = null;
+	let signatureAsset: any = null;
+
+	for (const ext of candidates) {
+		const b = release.assets.find(
+			(a: any) => a.name.endsWith(ext) && !a.name.endsWith(".sig")
+		);
+		if (b) {
+			buildAsset = b;
+			signatureAsset = release.assets.find((a: any) =>
+				a.name.endsWith(`${ext}.sig`)
+			);
+			break;
+		}
+	}
 
 	if (!buildAsset) {
-		// Release exists but has no matching platform asset — treat as no update.
-		console.warn("Release found but no compatible assets for ext:", ext);
+		// Release exists but has no asset for this platform — treat as no update.
+		console.warn(
+			"Release found but no compatible assets for target:",
+			target,
+			"tried:",
+			candidates.join(", ")
+		);
 		return c.body(null, 204);
 	}
 
@@ -112,7 +134,7 @@ app.get("/api/update/:target/:current_version", async (c) => {
 		const sigResponse = await fetch(signatureAsset.browser_download_url);
 		signature = await sigResponse.text();
 	} else {
-		console.warn("No signature found for asset, bypassing strict check for testing.", ext);
+		console.warn("No signature found for asset:", buildAsset.name);
 	}
 
 	const payload: UpdateResponse = {
