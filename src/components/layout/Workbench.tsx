@@ -299,8 +299,8 @@ export function Workbench() {
             )}
           </div>
           <Sash
-            direction="vertical"
-            className="right-0 translate-x-0.5"
+            direction="horizontal"
+            className="absolute top-0 bottom-0 right-0 w-1 translate-x-0.5 cursor-col-resize"
             onDrag={adjustSidebarWidth}
           />
         </div>
@@ -338,8 +338,8 @@ export function Workbench() {
             style={{ height: bottomPanelHeight }}
           >
             <Sash
-              direction="horizontal"
-              className="top-0 -translate-y-0.5"
+              direction="vertical"
+              className="absolute top-0 left-0 right-0 h-1 -translate-y-0.5 cursor-row-resize"
               onDrag={(delta) => adjustPanelHeight(-delta)}
             />
             {isBottomPanelSplit ? (
@@ -350,8 +350,8 @@ export function Workbench() {
                 >
                   <BottomPanel />
                   <Sash
-                    direction="vertical"
-                    className="right-0 translate-x-0.5"
+                    direction="horizontal"
+                    className="absolute top-0 bottom-0 right-0 w-1 translate-x-0.5 cursor-col-resize"
                     onDrag={handleBottomPanelSplitDrag}
                   />
                 </div>
