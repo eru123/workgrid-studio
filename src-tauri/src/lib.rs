@@ -16,7 +16,7 @@ pub struct TunnelHandle {
 }
 
 use mysql_async::prelude::*;
-use mysql_async::{Opts, Conn, OptsBuilder, Pool, SslOpts, PoolOpts, PoolConstraints};
+use mysql_async::{Opts, OptsBuilder, Pool, PoolOpts, PoolConstraints};
 use serde::{Deserialize, Serialize};
 
 // Crypto & HTTP imports
@@ -319,9 +319,9 @@ fn establish_ssh_tunnel(pid: &str, params: &ConnectParams) -> Result<TunnelHandl
                 break;
             }
             match stream {
-                Ok(mut local_stream) => {
+                Ok(local_stream) => {
                     match sess.channel_direct_tcpip(&target_host, target_port, None) {
-                        Ok(mut channel) => {
+                        Ok(channel) => {
                             let mut channel_read = channel.stream(0);
                             let mut channel_write = channel.clone();
                             let mut local_read = local_stream.try_clone().unwrap();
@@ -1932,6 +1932,7 @@ pub fn run() {
             vault_delete,
             ai_generate_query,
             get_ai_logs,
+            clear_ai_logs,
             db_get_schema_ddl,
             encrypt_password,
             decrypt_password,

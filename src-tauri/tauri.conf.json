@@ -23,6 +23,14 @@
       "csp": null
     }
   },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://wgs-updater.skiddph.com/api/update/{{target}}/{{current_version}}"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IENBMUFCNzlGNTg1NUYwOTEKUldTUjhGVlluN2NheW83ZTUxUjFRN2NkdEdTMFdmMjJ3ZERNc29KN3dXRWR3SXhGRWVjblVTQzgK"
+    }
+  },
   "bundle": {
     "active": true,
     "targets": "all",
