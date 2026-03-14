@@ -1323,25 +1323,18 @@ async fn db_get_schema_ddl(
 
 // ─── Vault (Secure Storage) ─────────────────────────────────────────
 
-// A static derived key from machine-specific or fallback string to encrypt stored secrets locally
-fn get_vault_key() -> [u8; 32] {
-    let mut key = [0u8; 32];
-    // In a real app we would use OS keyring or machine ID. 
-    // For this portable local app, we use a constant salt + username or fallback.
-    let user = env::var("USERNAME").or_else(|_| env::var("USER")).unwrap_or_else(|_| "default_user".to_string());
-    let salt = format!("workgrid_studio_local_vault_{}", user);
-    let bytes = salt.as_bytes();
-    for i in 0..key.len() {
-        key[i] = bytes.get(i).copied().unwrap_or(42);
-    }
-    key
-}
+// Vault uses the same randomly-generated per-installation key as encrypt_password /
+// decrypt_password (get_or_create_secret_key). The old username-derived key
+// (get_vault_key) has been removed because it was trivially reversible by anyone
+// with access to the vault file. Existing vault entries encrypted with the old key
+// will fail to decrypt (the caller receives an error) and the user will need to
+// re-enter their secrets once after upgrading.
 
 #[tauri::command]
 fn vault_set(key: String, secret: String) -> Result<(), String> {
     let base = ensure_app_dirs()?;
     let vault_path = base.join(".vault");
-    
+
     let mut vault: HashMap<String, String> = if vault_path.exists() {
         let content = fs::read_to_string(&vault_path).unwrap_or_default();
         serde_json::from_str(&content).unwrap_or_default()
@@ -1349,8 +1342,8 @@ fn vault_set(key: String, secret: String) -> Result<(), String> {
         HashMap::new()
     };
 
-    // Encrypt the secret
-    let cipher_key = get_vault_key();
+    // Encrypt with the per-installation random key (same key used for passwords)
+    let cipher_key = get_or_create_secret_key()?;
     let cipher = Aes256Gcm::new(&cipher_key.into());
     let mut nonce_bytes = [0u8; 12];
     rand::thread_rng().fill_bytes(&mut nonce_bytes);
@@ -1393,11 +1386,11 @@ fn vault_get(key: String) -> Result<String, String> {
     let nonce = Nonce::from_slice(&combined[0..12]);
     let ciphertext = &combined[12..];
     
-    let cipher_key = get_vault_key();
+    let cipher_key = get_or_create_secret_key()?;
     let cipher = Aes256Gcm::new(&cipher_key.into());
-    
+
     let plaintext = cipher.decrypt(nonce, ciphertext)
-        .map_err(|_| "Decryption failed (bad key or corrupted data)".to_string())?;
+        .map_err(|_| "Decryption failed — the vault entry may have been encrypted with an older key. Please re-enter your secret.".to_string())?;
         
     String::from_utf8(plaintext).map_err(|_| "Invalid UTF-8 in secret".to_string())
 }
