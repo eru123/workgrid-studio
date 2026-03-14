@@ -51,6 +51,7 @@ import {
 import { cn } from "@/lib/utils/cn";
 import { FindToolbar } from "@/components/ui/FindToolbar";
 import { CellContextMenu } from "@/components/ui/CellContextMenu";
+import { Skeleton } from "@/components/ui/Skeleton";
 
 // ═══════════════════════════════════════════════════════════════════════
 //  Types
@@ -299,6 +300,7 @@ export function QueryTab({
 
   const addHistoryItem = useQueryHistoryStore((s) => s.addHistoryItem);
   const history = useQueryHistoryStore((s) => s.history);
+  const isHistoryLoading = useQueryHistoryStore((s) => s.isLoading);
   const clearHistory = useQueryHistoryStore((s) => s.clearHistory);
   const deleteHistoryItem = useQueryHistoryStore((s) => s.deleteHistoryItem);
   const toggleFavorite = useQueryHistoryStore((s) => s.toggleFavorite);
@@ -1726,7 +1728,11 @@ export function QueryTab({
               <div className="flex items-center justify-between px-3 py-2 border-b bg-muted/30 shrink-0">
                 <span className="text-[10px] font-bold uppercase tracking-wider">Query History</span>
                 <button
-                  className="text-[10px] text-red-500 hover:underline"
+                  className={cn(
+                    "text-[10px] text-red-500 hover:underline",
+                    isHistoryLoading && "opacity-50 cursor-not-allowed hover:no-underline",
+                  )}
+                  disabled={isHistoryLoading}
                   onClick={() => { if (window.confirm("Clear non-favorited history?")) clearHistory(selectedProfileId || undefined); }}
                 >
                   Clear
@@ -1741,6 +1747,7 @@ export function QueryTab({
                     placeholder="Filter queries..."
                     value={historyFilter}
                     onChange={e => setHistoryFilter(e.target.value)}
+                    disabled={isHistoryLoading}
                     className="flex-1 bg-transparent text-xs outline-none placeholder:text-muted-foreground/50"
                   />
                   {historyFilter && (
@@ -1751,7 +1758,30 @@ export function QueryTab({
                 </div>
               </div>
               <div className="flex-1 overflow-y-auto p-1 space-y-0.5">
-                {(() => {
+                {isHistoryLoading ? (
+                  <div className="space-y-1.5 p-1">
+                    {[1, 2, 3, 4].map((item) => (
+                      <div
+                        key={item}
+                        className="flex items-start gap-2 rounded border border-border/50 bg-card/40 p-2"
+                      >
+                        <div className="flex-1 space-y-2">
+                          <Skeleton className="h-3 w-11/12 rounded" />
+                          <Skeleton className="h-3 w-8/12 rounded" />
+                          <div className="flex items-center gap-2 pt-1">
+                            <Skeleton className="h-2.5 w-16 rounded" />
+                            <Skeleton className="h-2.5 w-12 rounded" />
+                            <Skeleton className="ml-auto h-2.5 w-24 rounded" />
+                          </div>
+                        </div>
+                        <div className="space-y-1 pt-0.5">
+                          <Skeleton className="h-4 w-4 rounded" />
+                          <Skeleton className="h-4 w-4 rounded" />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (() => {
                   const filtered = history
                     .filter(h => h.profileId === selectedProfileId)
                     .filter(h => !historyFilter || h.query.toLowerCase().includes(historyFilter.toLowerCase()) || (h.database ?? "").toLowerCase().includes(historyFilter.toLowerCase()));

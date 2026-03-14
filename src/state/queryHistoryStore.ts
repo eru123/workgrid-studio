@@ -16,6 +16,7 @@ export interface QueryHistoryItem {
 
 interface QueryHistoryState {
     history: QueryHistoryItem[];
+    isLoading: boolean;
     /** True once the persisted history has been read from disk. Writes are
      *  suppressed until hydrated to prevent an early empty-state save from
      *  wiping previously stored history (C8 race-condition fix). */
@@ -37,12 +38,17 @@ interface QueryHistoryState {
 export const useQueryHistoryStore = create<QueryHistoryState>()(
     (set, get) => ({
         history: [],
+        isLoading: true,
         _hydrated: false,
 
         loadHistory: async () => {
-            if (get()._hydrated) return;
-            const data = await readData<QueryHistoryItem[]>("history.json", []);
-            set({ history: data, _hydrated: true });
+            if (get()._hydrated || !get().isLoading) return;
+            try {
+                const data = await readData<QueryHistoryItem[]>("history.json", []);
+                set({ history: data, isLoading: false, _hydrated: true });
+            } catch {
+                set({ history: [], isLoading: false, _hydrated: true });
+            }
         },
 
         addHistoryItem: (item) => {
