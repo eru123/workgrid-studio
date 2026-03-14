@@ -6,6 +6,7 @@
 - Update manual-multi-platform-build.yml
 - docs(project): overhaul project documentation and updater service
 - feat: Implement a new API endpoint for Tauri update checks using GitHub releases.
+- Create dependabot.yml
 
 ## [0.1.4] - 2026-03-14
 - Add GitHub Actions workflow to update changelog

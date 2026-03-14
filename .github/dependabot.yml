@@ -1,0 +1,37 @@
+version: 2
+updates:
+  # 1. Frontend Dependencies (npm/yarn/pnpm)
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "daily"
+    # Grouping keeps your PR list from exploding
+    groups:
+      dependencies:
+        patterns:
+          - "*"
+
+  # 2. Rust Dependencies (Cargo)
+  # This covers your src-tauri/Cargo.toml
+  - package-ecosystem: "cargo"
+    directory: "/src-tauri"
+    schedule:
+      interval: "daily"
+
+  # 3. GitHub Actions
+  # Keeps your build/release workflows updated
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+
+  # 4. Updater Backend (npm/yarn/pnpm)
+  - package-ecosystem: "npm"
+    directory: "/wgs-updater"
+    schedule:
+      interval: "daily"
+    # Grouping keeps your PR list from exploding
+    groups:
+      dependencies:
+        patterns:
+          - "*"
