@@ -2056,6 +2056,15 @@ async fn db_import_sql(
     Ok(format!("Successfully imported {} statements.", total))
 }
 
+/// Structured result returned by `db_import_csv`.
+#[derive(Serialize)]
+pub struct ImportResult {
+    /// Total rows parsed from the CSV file.
+    pub rows_attempted: usize,
+    /// Rows actually committed to the database (equals `rows_attempted` on success).
+    pub rows_committed: usize,
+}
+
 #[tauri::command]
 async fn db_import_csv(
     state: State<'_, DbState>,
@@ -2063,7 +2072,7 @@ async fn db_import_csv(
     database: String,
     table: String,
     file_path: String,
-) -> Result<String, String> {
+) -> Result<ImportResult, String> {
     let pool = get_pool(&state, &profile_id)?;
     let mut conn = pool.get_conn().await.map_err(|e| format!("Connection error: {}", e))?;
 
