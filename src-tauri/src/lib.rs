@@ -13,6 +13,9 @@ use ssh2::Session;
 pub struct TunnelHandle {
     pub local_port: u16,
     pub shutdown: Arc<AtomicBool>,
+    /// Join handle for the tunnel forwarding thread. Taken (set to None) on disconnect
+    /// so the thread can be cleanly joined rather than leaked.
+    pub thread: Option<std::thread::JoinHandle<()>>,
 }
 
 use mysql_async::prelude::*;
@@ -248,6 +251,93 @@ pub struct ColumnInfo {
     pub extra: String,
 }
 
+// ─── SSH Known-Hosts (TOFU) ──────────────────────────────────────────
+
+fn known_hosts_path() -> Result<PathBuf, String> {
+    Ok(app_data_dir()?.join("known_hosts.json"))
+}
+
+fn load_known_hosts() -> HashMap<String, String> {
+    known_hosts_path()
+        .ok()
+        .and_then(|p| fs::read_to_string(p).ok())
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+fn save_known_hosts(hosts: &HashMap<String, String>) -> Result<(), String> {
+    let path = known_hosts_path()?;
+    let json = serde_json::to_string_pretty(hosts).map_err(|e| e.to_string())?;
+    fs::write(&path, json).map_err(|e| e.to_string())
+}
+
+/// Trust-On-First-Use host key verification.
+///
+/// - First connection to a host: fingerprint is stored in `~/.workgrid-studio/known_hosts.json`
+///   and the connection proceeds.
+/// - Subsequent connections: stored fingerprint is compared against the live key.
+///   If `strict` is true the function returns an error on mismatch (MITM protection).
+///   If `strict` is false a warning is logged but the connection is allowed
+///   (useful during development with self-signed or rotated keys).
+fn verify_host_key_tofu(
+    pid: &str,
+    ssh_host: &str,
+    ssh_port: u16,
+    sess: &Session,
+    strict: bool,
+) -> Result<(), String> {
+    let (key_bytes, _key_type) = sess
+        .host_key()
+        .ok_or_else(|| "SSH server did not provide a host key".to_string())?;
+
+    // Use a hex fingerprint so it is human-readable in the JSON file
+    let fingerprint: String = key_bytes.iter().map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(":");
+    let host_id = format!("[{}]:{}", ssh_host, ssh_port);
+
+    let mut known = load_known_hosts();
+
+    match known.get(&host_id) {
+        Some(stored) if stored == &fingerprint => {
+            // Key matches — all good
+            log_info(pid, &format!("SSH host key verified for {}", host_id));
+            Ok(())
+        }
+        Some(stored) => {
+            // Key has changed — potential MITM
+            let msg = format!(
+                "SSH host key CHANGED for {}! \
+                Stored fingerprint: {}... — Live fingerprint: {}... \
+                If you rotated the server key, remove the entry from \
+                ~/.workgrid-studio/known_hosts.json and reconnect.",
+                host_id,
+                &stored[..std::cmp::min(23, stored.len())],
+                &fingerprint[..std::cmp::min(23, fingerprint.len())]
+            );
+            log_error(pid, &msg);
+            if strict {
+                Err(msg)
+            } else {
+                log_info(pid, "Strict key checking is OFF — proceeding despite mismatch (not recommended).");
+                Ok(())
+            }
+        }
+        None => {
+            // First connection — TOFU: store and proceed
+            log_info(
+                pid,
+                &format!(
+                    "SSH: Trusting new host key for {} (fingerprint: {}...) and storing in known_hosts.",
+                    host_id,
+                    &fingerprint[..std::cmp::min(23, fingerprint.len())]
+                ),
+            );
+            known.insert(host_id, fingerprint);
+            save_known_hosts(&known)?;
+            Ok(())
+        }
+    }
+}
+
 fn establish_ssh_tunnel(pid: &str, params: &ConnectParams) -> Result<TunnelHandle, String> {
     let ssh_host = params.ssh_host.as_ref().ok_or("SSH host not provided")?;
     let ssh_port = params.ssh_port.unwrap_or(22);
@@ -261,16 +351,8 @@ fn establish_ssh_tunnel(pid: &str, params: &ConnectParams) -> Result<TunnelHandl
     sess.set_tcp_stream(tcp);
     sess.handshake().map_err(|e| format!("SSH handshake failed: {}", e))?;
 
-    // Host key verification
-    if params.ssh_strict_key_checking {
-        // In a real app, we'd check against known_hosts. 
-        // For now, we'll just log that strict checking is enabled but 
-        // the implementation would require a known_hosts management system.
-        // We'll proceed with the handshake key.
-        if let Some(host_key) = sess.host_key() {
-            log_info(pid, &format!("SSH Host Key ({:?}): {:?}", host_key.1, host_key.0));
-        }
-    }
+    // Host key TOFU verification — always runs; strict mode aborts on mismatch
+    verify_host_key_tofu(pid, ssh_host, ssh_port, &sess, params.ssh_strict_key_checking)?;
 
     // Advanced settings
     if params.ssh_compression {
@@ -312,8 +394,10 @@ fn establish_ssh_tunnel(pid: &str, params: &ConnectParams) -> Result<TunnelHandl
     let shutdown = Arc::new(AtomicBool::new(false));
     let shutdown_clone = shutdown.clone();
 
-    // Spawn a thread to handle the tunnel bridge
-    std::thread::spawn(move || {
+    // Spawn the tunnel bridge thread and retain the JoinHandle so it can be
+    // explicitly joined on disconnect, preventing thread accumulation on rapid
+    // connect/reconnect cycles.
+    let join_handle = std::thread::spawn(move || {
         for stream in listener.incoming() {
             if shutdown_clone.load(Ordering::Relaxed) {
                 break;
@@ -326,7 +410,7 @@ fn establish_ssh_tunnel(pid: &str, params: &ConnectParams) -> Result<TunnelHandl
                             let mut channel_write = channel.clone();
                             let mut local_read = local_stream.try_clone().unwrap();
                             let mut local_write = local_stream;
-                            
+
                             std::thread::spawn(move || {
                                 let _ = std::io::copy(&mut local_read, &mut channel_write);
                             });
@@ -344,7 +428,7 @@ fn establish_ssh_tunnel(pid: &str, params: &ConnectParams) -> Result<TunnelHandl
         }
     });
 
-    Ok(TunnelHandle { local_port, shutdown })
+    Ok(TunnelHandle { local_port, shutdown, thread: Some(join_handle) })
 }
 
 // ─── DB State ───────────────────────────────────────────────────────
