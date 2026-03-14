@@ -2154,7 +2154,10 @@ async fn db_import_csv(
         .await
         .map_err(|e| format!("Failed to commit import transaction: {}", e))?;
 
-    Ok(format!("Successfully imported {} rows into {}.", total_rows, table))
+    Ok(ImportResult {
+        rows_attempted: total_rows,
+        rows_committed: total_rows,
+    })
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -2202,7 +2205,8 @@ pub fn run() {
             decrypt_password,
             db_ping,
             db_import_sql,
-            db_import_csv
+            db_import_csv,
+            forget_host_key
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
