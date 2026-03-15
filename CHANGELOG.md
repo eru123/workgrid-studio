@@ -1,45 +1,13 @@
 # Changelog
 
 ## [Unreleased]
-- Add OS credential store integration for vault encryption keys
-- Load query history on app initialization with loading state and skeleton UI
-- Add edge drop zones for tab splitting and improve drag-and-drop UX
-- Add per-profile ping latency display in explorer tree
-- Enhance cell context menu with JSON/CSV/SQL export and search functionality
-- Add bundle analyzer and virtualization for query results
-- Enhance editor tabs with keyboard navigation and ARIA accessibility
-- Add comprehensive privacy controls and disclosure
-- Add auto-reconnect and structured error handling for connections
-- Add wgs-website workspace with React, Vite, and SEO metadata
-- Replace SVG favicon with PNG icons and update branding visuals
-- Add explain plan, result sorting, and new result tabs to query view
-- Add comprehensive security policy, contributing guidelines and issue templates
-- Add import result type and host key management UI (`forget_host_key` function)
-- Update DB import functions to use transactions, structured returns, and better error/progress handling
-- Replace leak-prone SSH tunnel shutdown with bounded join, channel signaling, and proper thread joining
-- Replace basic SSH host key logging with TOFU verification
-- Modularize the Rust backend and optimize AI query generation/database operations
-- Replace `RngCore` with `Rng` for improved randomness generation and simplify secret key management
-- Consolidate output logging and enhance bottom panel UX
-- Simplify timestamp generation using `chrono` crate
-- Reorganize editor tabs and add new tab types
-- Remove outdated agent rules and CLAUDE.md to simplify monorepo documentation
-- Properly clean up SSH tunnel threads on reconnect
-- **[Breaking]** Use secure per-installation encryption key for vault
-- Update updater endpoint to handle multiple bundle types and improve CORS support
-- Fix potential code scanning alerts for hard-coded cryptographic values (Alerts #5, #17)
-- Handle corrupted AI logs gracefully with backup creation
-- Fix search navigation and selection bounds in `ExplorerTree`
-- Correct sash direction and cursor styling for layout panels
-- Prevent text wrapping in query-tab toolbar controls
-- Build: Add Content Security Policy (CSP) for Tauri app
-- Restrict file system permissions to user home directory and improve file dialog UX
-
-### ⚙️ Chores
-- Update dependencies, lockfile, and bump version to `0.1.5`
-- Update GitHub Actions workflows (`changelog-on-push.yml`, `manual-multi-platform-build.yml`)
-- Fix missing newline in Tauri configuration file
-- Add license section to `README`
+- **[Breaking] Vault & Security:** Migrated to secure, per-installation vault encryption via the OS credential store. Added Content Security Policy (CSP) and restricted file-system permissions.
+- **Networking & SSH:** Overhauled SSH tunneling to fix memory leaks and thread hanging. Replaced basic host key logging with TOFU (Trust On First Use) verification and added connection auto-reconnects.
+- **Query & Data Operations:** Added "Explain Plan", sorting, and results virtualization for performance. Grid data can now be exported to JSON/CSV/SQL, and CSV imports are fully transactional with progress tracking.
+- **UI & Workspace:** Introduced edge drop-zones for tab splitting, a loading skeleton for query history, ping latency indicators, and full keyboard/ARIA support for editor tabs.
+- **Core backend & AI:** Modularized the Rust backend, optimized AI query generation, resolved cryptographic vulnerabilities, and added failsafes for corrupted AI logs.
+- **Ecosystem:** Launched the `wgs-website` React workspace, refreshed application branding/icons, and formalized open-source contribution and security policies.
+- **Maintenance:** Consolidated logging systems, updated CI/CD workflows, bumped dependencies, and improved the app updater endpoint.
 
 ## [0.1.5] - 2026-03-14
 - Exclude main branch from changelog workflow
