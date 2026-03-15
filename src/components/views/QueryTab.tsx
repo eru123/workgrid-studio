@@ -1,5 +1,11 @@
-import { useState, useCallback, useRef, useMemo, useEffect } from "react";
-import { format as formatSqlInternal } from "sql-formatter";
+import {
+  useState,
+  useCallback,
+  useRef,
+  useMemo,
+  useEffect,
+  useDeferredValue,
+} from "react";
 import { dbQuery, QueryResultSet } from "@/lib/db";
 import {
   highlightSQL,
@@ -74,6 +80,21 @@ interface EditorEdit {
 const DEFAULT_QUERY_FONT_SIZE_PX = 12;
 const MIN_QUERY_FONT_SIZE_PX = 10;
 const MAX_QUERY_FONT_SIZE_PX = 24;
+const QUERY_RESULT_ROW_HEIGHT_PX = 30;
+const QUERY_RESULT_OVERSCAN_ROWS = 10;
+
+let sqlFormatterModulePromise:
+  | Promise<typeof import("sql-formatter")>
+  | null = null;
+
+async function formatSqlOffline(query: string): Promise<string> {
+  if (!sqlFormatterModulePromise) {
+    sqlFormatterModulePromise = import("sql-formatter");
+  }
+
+  const { format } = await sqlFormatterModulePromise;
+  return format(query, { language: "mysql" });
+}
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
@@ -273,6 +294,9 @@ export function QueryTab({
   );
   const [cursorPos, setCursorPos] = useState(0);
   const [selectedCharCount, setSelectedCharCount] = useState(0);
+  const [visibleRowCounts, setVisibleRowCounts] = useState<Record<number, number>>(
+    {},
+  );
   const [editorViewport, setEditorViewport] = useState({
     scrollTop: 0,
     scrollHeight: 1,
@@ -284,6 +308,10 @@ export function QueryTab({
   const [textareaContentWidth, setTextareaContentWidth] = useState(0);
   const [isFormatting, setIsFormatting] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
+  const [resultViewport, setResultViewport] = useState({
+    scrollTop: 0,
+    clientHeight: 1,
+  });
 
   // ── Find-in-Results ─────────────────────────────────────
   const [isFindOpen, setIsFindOpen] = useState(false);
@@ -330,28 +358,44 @@ export function QueryTab({
   const editorRef = useRef<HTMLTextAreaElement>(null);
   const lineNumberRef = useRef<HTMLDivElement>(null);
   const highlightRef = useRef<HTMLDivElement>(null);
+  const resultScrollRef = useRef<HTMLDivElement>(null);
   const pendingEditorSelectionRef = useRef<{
     start: number;
     end: number;
   } | null>(null);
 
   // ── Matching brackets ─────────────────────────────────────
-  const matchBrackets = useMemo(() => {
-    return findMatchingBrackets(sql, cursorPos);
-  }, [sql, cursorPos]);
+  const deferredSql = useDeferredValue(sql);
+  const deferredMatchBrackets = useMemo(() => {
+    return findMatchingBrackets(
+      deferredSql,
+      clamp(cursorPos, 0, deferredSql.length),
+    );
+  }, [cursorPos, deferredSql]);
+  const deferredActiveQueryRange = useMemo(() => {
+    return getActiveQueryRange(
+      deferredSql,
+      clamp(cursorPos, 0, deferredSql.length),
+      clamp(cursorPos + selectedCharCount, 0, deferredSql.length),
+    );
+  }, [cursorPos, deferredSql, selectedCharCount]);
 
-  // Memoised highlighted HTML for the overlay
   const highlightedHTML = useMemo(() => {
-    if (activeQueryRange) {
+    if (deferredActiveQueryRange) {
       return highlightSQL(
-        sql,
-        activeQueryRange.start,
-        activeQueryRange.end,
-        matchBrackets,
+        deferredSql,
+        deferredActiveQueryRange.start,
+        deferredActiveQueryRange.end,
+        deferredMatchBrackets,
       );
     }
-    return highlightSQL(sql, 0, sql.length, matchBrackets);
-  }, [sql, activeQueryRange, matchBrackets]);
+    return highlightSQL(
+      deferredSql,
+      0,
+      deferredSql.length,
+      deferredMatchBrackets,
+    );
+  }, [deferredSql, deferredActiveQueryRange, deferredMatchBrackets]);
 
   // ── Cancellation token ────────────────────────────────────
   // Incrementing counter: if the token when a query starts differs from the
@@ -365,9 +409,16 @@ export function QueryTab({
 
   // ── Database from schema store ────────────────────────────
   const connectedProfiles = useSchemaStore((s) => s.connectedProfiles);
+  const refreshDatabases = useSchemaStore((s) => s.refreshDatabases);
   const updateTab = useLayoutStore((s) => s.updateTab);
   const aiBlocked = useProfilesStore(
     (s) => s.globalPreferences.blockAiRequests ?? false,
+  );
+  const maxResultRows = useProfilesStore(
+    (s) => s.globalPreferences.maxResultRows ?? 1000,
+  );
+  const queryTimeoutMs = useProfilesStore(
+    (s) => s.globalPreferences.queryTimeoutMs ?? 30000,
   );
 
   const [selectedProfileId, setSelectedProfileId] = useState(profileId);
@@ -395,7 +446,29 @@ export function QueryTab({
   const storeDatabases = useSchemaStore((s) =>
     selectedProfileId ? s.databases[selectedProfileId] : undefined,
   );
+  const loadingDatabases = useSchemaStore((s) =>
+    selectedProfileId ? s.loadingDatabases[selectedProfileId] ?? false : false,
+  );
   const databases = storeDatabases ?? [];
+
+  useEffect(() => {
+    if (
+      !selectedProfileId ||
+      !connectedProfiles[selectedProfileId] ||
+      storeDatabases ||
+      loadingDatabases
+    ) {
+      return;
+    }
+
+    refreshDatabases(selectedProfileId).catch(() => {});
+  }, [
+    connectedProfiles,
+    loadingDatabases,
+    refreshDatabases,
+    selectedProfileId,
+    storeDatabases,
+  ]);
 
   // Schema data for autocomplete
   const storeTables = useSchemaStore((s) => s.tables);
@@ -575,11 +648,7 @@ export function QueryTab({
     const match = matches[idx];
     if (!match) return;
 
-    const cellId = `qcell-${match.rowIdx}-${match.colIdx}`;
-    const el = document.getElementById(cellId);
-    if (el) {
-      el.scrollIntoView({ block: "center", inline: "center" });
-    }
+    scrollResultCellIntoView(match.rowIdx, match.colIdx, "center");
   };
 
   const findNext = () => {
@@ -602,6 +671,40 @@ export function QueryTab({
     window.addEventListener("click", close);
     return () => window.removeEventListener("click", close);
   }, [cellContextMenu]);
+
+  useEffect(() => {
+    setSelectedCell(null);
+    setCellContextMenu(null);
+    resultScrollRef.current?.scrollTo({ top: 0, left: 0 });
+    setResultViewport({ scrollTop: 0, clientHeight: 1 });
+
+    if (findQuery) {
+      handleSearch(findQuery);
+    } else {
+      setFindMatches([]);
+      setCurrentMatchIdx(0);
+    }
+  }, [activeResultIdx, handleSearch]);
+
+  useEffect(() => {
+    const scroller = resultScrollRef.current;
+    if (!scroller) return;
+
+    const syncViewport = () => {
+      setResultViewport({
+        scrollTop: scroller.scrollTop,
+        clientHeight: Math.max(1, scroller.clientHeight),
+      });
+    };
+
+    syncViewport();
+    scroller.addEventListener("scroll", syncViewport, { passive: true });
+    window.addEventListener("resize", syncViewport);
+    return () => {
+      scroller.removeEventListener("scroll", syncViewport);
+      window.removeEventListener("resize", syncViewport);
+    };
+  }, [activeResultIdx, wordWrap]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -643,8 +746,7 @@ export function QueryTab({
       }
 
       setSelectedCell({ rowIdx, colIdx });
-      const cellEl = document.getElementById(`qcell-${rowIdx}-${colIdx}`);
-      cellEl?.scrollIntoView({ block: "nearest", inline: "nearest" });
+      scrollResultCellIntoView(rowIdx, colIdx);
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
@@ -652,11 +754,12 @@ export function QueryTab({
 
   useEffect(() => {
     if (!selectedCell) return;
+    ensureResultRowsLoaded(activeResultIdx, selectedCell.rowIdx);
     const cellEl = document.getElementById(
       `qcell-${selectedCell.rowIdx}-${selectedCell.colIdx}`,
     ) as HTMLElement | null;
     cellEl?.focus({ preventScroll: true });
-  }, [selectedCell]);
+  }, [activeResultIdx, selectedCell]);
 
   const copyCellContextValue = useCallback(() => {
     if (!cellContextMenu) return;
@@ -776,8 +879,13 @@ export function QueryTab({
       setRunning(true);
       setError(null);
       setResults([]);
+      setVisibleRowCounts({});
       setHasRun(false);
       setExecutionTime(null);
+      setSelectedCell(null);
+      setCellContextMenu(null);
+      setFindMatches([]);
+      setCurrentMatchIdx(0);
 
       const startTime = performance.now();
 
@@ -790,7 +898,9 @@ export function QueryTab({
           fullQuery = `USE \`${escapedDb}\`;\n${queryText}`;
         }
 
-        const res = await dbQuery(selectedProfileId, fullQuery);
+        const res = await dbQuery(selectedProfileId, fullQuery, {
+          timeoutMs: queryTimeoutMs,
+        });
 
         // Discard stale results if the user cancelled (soft-stop) and re-ran
         if (token !== runTokenRef.current) return;
@@ -802,9 +912,19 @@ export function QueryTab({
         const filteredResults = selectedDb ? res.slice(1) : res;
 
         setResults(filteredResults);
+        setVisibleRowCounts(
+          Object.fromEntries(
+            filteredResults.map((result, index) => [
+              index,
+              Math.min(result.rows.length, maxResultRows),
+            ]),
+          ),
+        );
         setHasRun(true);
         setActiveResultIdx(0);
         setLastSavedSql(sql);
+        resultScrollRef.current?.scrollTo({ top: 0, left: 0 });
+        setResultViewport({ scrollTop: 0, clientHeight: 1 });
 
         // Add to history
         addHistoryItem({
@@ -849,7 +969,7 @@ export function QueryTab({
         }
       }
     },
-    [selectedProfileId, selectedDb, running],
+    [maxResultRows, queryTimeoutMs, selectedProfileId, selectedDb, running, sql],
   );
 
   const handleFormat = useCallback(
@@ -864,7 +984,7 @@ export function QueryTab({
         let formatted = textToFormat;
 
         if (choice === "internal") {
-          formatted = formatSqlInternal(textToFormat, { language: "mysql" });
+          formatted = await formatSqlOffline(textToFormat);
         } else if (choice === "sqlformat") {
           const res = await fetch("https://sqlformat.org/api/v1/format", {
             method: "POST",
@@ -920,9 +1040,13 @@ export function QueryTab({
   const handleClear = useCallback(() => {
     setSql("");
     setResults([]);
+    setVisibleRowCounts({});
     setError(null);
     setExecutionTime(null);
     setHasRun(false);
+    setSelectedCell(null);
+    setCellContextMenu(null);
+    setFindMatches([]);
   }, []);
 
   // ── Copy results ──────────────────────────────────────────
@@ -1137,8 +1261,126 @@ export function QueryTab({
 
   // ── Current result set ────────────────────────────────────
   const activeResult = results[activeResultIdx] ?? null;
+  const activeVisibleRowCount = useMemo(() => {
+    if (!activeResult) return 0;
+    const defaultCount = Math.min(activeResult.rows.length, maxResultRows);
+    return Math.min(
+      activeResult.rows.length,
+      visibleRowCounts[activeResultIdx] ?? defaultCount,
+    );
+  }, [activeResult, activeResultIdx, maxResultRows, visibleRowCounts]);
+  const activeDisplayedRows = useMemo(() => {
+    if (!activeResult) return [];
+    return activeResult.rows.slice(0, activeVisibleRowCount);
+  }, [activeResult, activeVisibleRowCount]);
+  const hasMoreActiveRows =
+    !!activeResult && activeVisibleRowCount < activeResult.rows.length;
+  const shouldVirtualizeResults =
+    !wordWrap && activeDisplayedRows.length > 200;
+  const virtualStartIdx = shouldVirtualizeResults
+    ? clamp(
+        Math.floor(resultViewport.scrollTop / QUERY_RESULT_ROW_HEIGHT_PX) -
+          QUERY_RESULT_OVERSCAN_ROWS,
+        0,
+        activeDisplayedRows.length,
+      )
+    : 0;
+  const virtualEndIdx = shouldVirtualizeResults
+    ? clamp(
+        Math.ceil(
+          (resultViewport.scrollTop + resultViewport.clientHeight) /
+            QUERY_RESULT_ROW_HEIGHT_PX,
+        ) + QUERY_RESULT_OVERSCAN_ROWS,
+        0,
+        activeDisplayedRows.length,
+      )
+    : activeDisplayedRows.length;
+  const visibleResultRows = shouldVirtualizeResults
+    ? activeDisplayedRows.slice(virtualStartIdx, virtualEndIdx)
+    : activeDisplayedRows;
+  const topVirtualSpacerHeight = shouldVirtualizeResults
+    ? virtualStartIdx * QUERY_RESULT_ROW_HEIGHT_PX
+    : 0;
+  const bottomVirtualSpacerHeight = shouldVirtualizeResults
+    ? (activeDisplayedRows.length - virtualEndIdx) * QUERY_RESULT_ROW_HEIGHT_PX
+    : 0;
+
+  function ensureResultRowsLoaded(resultIndex: number, rowIdx: number) {
+    setVisibleRowCounts((prev) => {
+      const result = results[resultIndex];
+      if (!result) return prev;
+
+      const current =
+        prev[resultIndex] ?? Math.min(result.rows.length, maxResultRows);
+      if (rowIdx < current) return prev;
+
+      const nextCount = Math.min(
+        result.rows.length,
+        Math.max(current + maxResultRows, rowIdx + 1),
+      );
+      if (nextCount === current) return prev;
+
+      return {
+        ...prev,
+        [resultIndex]: nextCount,
+      };
+    });
+  }
+
+  function scrollResultCellIntoView(
+    rowIdx: number,
+    colIdx: number,
+    block: ScrollLogicalPosition = "nearest",
+  ) {
+    ensureResultRowsLoaded(activeResultIdx, rowIdx);
+
+    const scroller = resultScrollRef.current;
+    if (scroller && shouldVirtualizeResults) {
+      const targetTop = rowIdx * QUERY_RESULT_ROW_HEIGHT_PX;
+      if (block === "center") {
+        scroller.scrollTop = Math.max(
+          0,
+          targetTop - (scroller.clientHeight - QUERY_RESULT_ROW_HEIGHT_PX) / 2,
+        );
+      } else {
+        const bottomEdge = scroller.scrollTop + scroller.clientHeight;
+        if (targetTop < scroller.scrollTop) {
+          scroller.scrollTop = targetTop;
+        } else if (targetTop + QUERY_RESULT_ROW_HEIGHT_PX > bottomEdge) {
+          scroller.scrollTop =
+            targetTop - scroller.clientHeight + QUERY_RESULT_ROW_HEIGHT_PX;
+        }
+      }
+    }
+
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        const cellEl = document.getElementById(`qcell-${rowIdx}-${colIdx}`);
+        cellEl?.scrollIntoView({ block, inline: "nearest" });
+      });
+    });
+  }
 
   // ── Row count summary ─────────────────────────────────────
+
+  const handleLoadMoreRows = useCallback(() => {
+    if (!activeResult) return;
+
+    setVisibleRowCounts((prev) => {
+      const current =
+        prev[activeResultIdx] ?? Math.min(activeResult.rows.length, maxResultRows);
+      const nextCount = Math.min(
+        activeResult.rows.length,
+        current + maxResultRows,
+      );
+      if (nextCount === current) return prev;
+
+      return {
+        ...prev,
+        [activeResultIdx]: nextCount,
+      };
+    });
+  }, [activeResult, activeResultIdx, maxResultRows]);
 
   const editorLineHeight = useMemo(
     () => Math.round(editorFontSize * 1.6 * 100) / 100,
@@ -2207,7 +2449,7 @@ export function QueryTab({
 
         {/* Results grid */}
         {!running && activeResult && activeResult.columns.length > 0 ? (
-          <div className="flex-1 min-h-0 relative">
+          <div className="flex-1 min-h-0 relative flex flex-col">
             <FindToolbar
               isOpen={isFindOpen}
               onClose={() => {
@@ -2234,12 +2476,15 @@ export function QueryTab({
                 onClose={() => setCellContextMenu(null)}
               />
             )}
-            <div className="absolute inset-0 overflow-auto">
+            <div
+              ref={resultScrollRef}
+              className="flex-1 overflow-auto"
+            >
               <table
                 className="min-w-max text-xs border-collapse"
                 role="grid"
                 aria-label="Query results"
-                aria-rowcount={activeResult.rows.length + 1}
+                aria-rowcount={activeVisibleRowCount + 1}
                 aria-colcount={activeResult.columns.length + 1}
               >
                 <thead>
@@ -2283,7 +2528,21 @@ export function QueryTab({
                   </tr>
                 </thead>
                 <tbody>
-                  {activeResult.rows.map((row, ri) => (
+                  {topVirtualSpacerHeight > 0 && (
+                    <tr aria-hidden="true">
+                      <td
+                        colSpan={activeResult.columns.length + 1}
+                        className="border-0 p-0"
+                        style={{ height: topVirtualSpacerHeight }}
+                      />
+                    </tr>
+                  )}
+                  {visibleResultRows.map((row, rowOffset) => {
+                    const ri = shouldVirtualizeResults
+                      ? rowOffset + virtualStartIdx
+                      : rowOffset;
+
+                    return (
                     <tr
                       key={ri}
                       className="border-b hover:bg-accent/20 transition-colors"
@@ -2341,10 +2600,35 @@ export function QueryTab({
                         );
                       })}
                     </tr>
-                  ))}
+                    );
+                  })}
+                  {bottomVirtualSpacerHeight > 0 && (
+                    <tr aria-hidden="true">
+                      <td
+                        colSpan={activeResult.columns.length + 1}
+                        className="border-0 p-0"
+                        style={{ height: bottomVirtualSpacerHeight }}
+                      />
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </div>
+            {hasMoreActiveRows && (
+              <div className="flex items-center justify-between gap-3 border-t bg-muted/20 px-3 py-2 text-[11px] text-muted-foreground">
+                <span>
+                  Showing {activeVisibleRowCount.toLocaleString()} of{" "}
+                  {activeResult.rows.length.toLocaleString()} row(s)
+                </span>
+                <button
+                  type="button"
+                  onClick={handleLoadMoreRows}
+                  className="rounded border px-2.5 py-1 text-[11px] font-medium text-foreground transition-colors hover:bg-accent"
+                >
+                  Load more
+                </button>
+              </div>
+            )}
           </div>
         ) : !running && !error && hasRun && results.length > 0 ? (
           /* DML/DDL success: no column data but query ran */

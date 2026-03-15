@@ -2,6 +2,7 @@ use tauri::State;
 use mysql_async::prelude::*;
 use mysql_async::{Opts, OptsBuilder, Pool, PoolOpts, PoolConstraints, TxOpts};
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 use crate::{AppError, AppResult, DbState};
 use crate::ssh::{establish_ssh_tunnel, shutdown_tunnel};
 use crate::crypto::{encrypt_password, decrypt_password};
@@ -125,6 +126,10 @@ pub struct ImportResult {
     pub rows_committed: usize,
 }
 
+const DEFAULT_QUERY_TIMEOUT_MS: u64 = 30_000;
+const MIN_QUERY_TIMEOUT_MS: u64 = 5_000;
+const MAX_QUERY_TIMEOUT_MS: u64 = 300_000;
+
 // ─── Helpers ────────────────────────────────────────────────────────
 
 pub fn get_pool(state: &State<'_, DbState>, profile_id: &str) -> AppResult<Pool> {
@@ -181,6 +186,49 @@ pub fn split_sql_statements(sql: &str) -> Vec<String> {
     }
 
     stmts
+}
+
+fn normalized_query_timeout_ms(timeout_ms: Option<u64>) -> u64 {
+    timeout_ms
+        .unwrap_or(DEFAULT_QUERY_TIMEOUT_MS)
+        .clamp(MIN_QUERY_TIMEOUT_MS, MAX_QUERY_TIMEOUT_MS)
+}
+
+fn format_timeout_label(timeout_ms: u64) -> String {
+    if timeout_ms % 1000 == 0 {
+        format!("{}s", timeout_ms / 1000)
+    } else {
+        format!("{:.1}s", timeout_ms as f64 / 1000.0)
+    }
+}
+
+async fn run_query_with_timeout<T, F>(
+    profile_id: &str,
+    label: &str,
+    timeout_ms: Option<u64>,
+    future: F,
+) -> AppResult<T>
+where
+    F: std::future::Future<Output = Result<T, mysql_async::Error>>,
+{
+    let effective_timeout_ms = normalized_query_timeout_ms(timeout_ms);
+
+    match tokio::time::timeout(Duration::from_millis(effective_timeout_ms), future).await {
+        Ok(result) => result.map_err(|e| {
+            let msg = format!("Query error [{}]: {}", label, e);
+            log_error(profile_id, &msg);
+            AppError::database(msg)
+        }),
+        Err(_) => {
+            let msg = format!(
+                "Query timed out after {} [{}]",
+                format_timeout_label(effective_timeout_ms),
+                label,
+            );
+            log_error(profile_id, &msg);
+            Err(AppError::database(msg))
+        }
+    }
 }
 
 // ─── DB Commands ────────────────────────────────────────────────────
@@ -825,6 +873,7 @@ pub async fn db_execute_query(
     state: State<'_, DbState>,
     profile_id: String,
     query: String,
+    timeout_ms: Option<u64>,
 ) -> AppResult<()> {
     let pool = get_pool(&state, &profile_id)?;
     let mut conn = pool.get_conn().await.map_err(|e| {
@@ -833,13 +882,8 @@ pub async fn db_execute_query(
         msg
     })?;
 
-    conn.query_drop(&query).await.map_err(|e| {
-        let msg = format!("Query error [{}]: {}", query, e);
-        log_error(&profile_id, &msg);
-        msg
-    })?;
-
     log_query(&profile_id, &query);
+    run_query_with_timeout(&profile_id, &query, timeout_ms, conn.query_drop(&query)).await?;
 
     Ok(())
 }
@@ -885,6 +929,7 @@ pub async fn db_query(
     state: State<'_, DbState>,
     profile_id: String,
     query: String,
+    timeout_ms: Option<u64>,
 ) -> AppResult<Vec<QueryResultSet>> {
     let pool = get_pool(&state, &profile_id)?;
     let mut conn = pool.get_conn().await.map_err(|e| {
@@ -902,7 +947,12 @@ pub async fn db_query(
         log_query(&profile_id, stmt);
 
         // Try as a query that returns rows
-        match conn.query::<mysql_async::Row, _>(stmt.as_str()).await {
+        match run_query_with_timeout(
+            &profile_id,
+            stmt,
+            timeout_ms,
+            conn.query::<mysql_async::Row, _>(stmt.as_str()),
+        ).await {
             Ok(rows) => {
                 if rows.is_empty() {
                     let affected = conn.affected_rows();
@@ -985,11 +1035,7 @@ pub async fn db_query(
                     });
                 }
             }
-            Err(e) => {
-                let msg = format!("Query error [{}]: {}", stmt, e);
-                log_error(&profile_id, &msg);
-                return Err(AppError::database(msg));
-            }
+            Err(e) => return Err(e),
         }
     }
 

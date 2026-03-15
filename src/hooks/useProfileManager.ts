@@ -11,7 +11,7 @@ import {
 import { useSchemaStore } from "@/state/schemaStore";
 import { useLayoutStore } from "@/state/layoutStore";
 import { useAppStore } from "@/state/appStore";
-import { dbConnect, dbDisconnect, dbListDatabases } from "@/lib/db";
+import { dbConnect, dbDisconnect } from "@/lib/db";
 import {
     appendConnectionOutput,
     formatConnectionTarget,
@@ -264,21 +264,6 @@ export function useProfileManager() {
                         : `Connected to ${target}.`,
                 );
                 addConnection(id, profile.name, profile.color);
-                // Pre-load database list so Explorer is ready on arrival
-                const schemaStore = useSchemaStore.getState();
-                schemaStore.setLoading(id, "databases", true);
-                try {
-                    const dbs = await dbListDatabases(id);
-                    schemaStore.setDatabases(id, dbs);
-                } catch (e) {
-                    appendConnectionOutput(
-                        profile,
-                        "warning",
-                        `Connected to ${target}, but database preload failed: ${formatOutputError(e)}`,
-                    );
-                } finally {
-                    schemaStore.setLoading(id, "databases", false);
-                }
                 setActiveView("explorer");
             } catch (e) {
                 setConnectionStatus(id, "error");

@@ -16,6 +16,7 @@ import type { ColumnInfo, QueryResultSet } from "@/lib/db";
 import { cn } from "@/lib/utils/cn";
 import { useAppStore } from "@/state/appStore";
 import { useSchemaStore } from "@/state/schemaStore";
+import { useProfilesStore } from "@/state/profilesStore";
 import { FindToolbar } from "@/components/ui/FindToolbar";
 import { CellContextMenu } from "@/components/ui/CellContextMenu";
 import { AutocompleteInput } from "@/components/ui/AutocompleteInput";
@@ -318,6 +319,10 @@ function buildWhereSuggestions(
 // ═══════════════════════════════════════════════════════════════════════
 
 export function TableDataTab({ profileId, database, tableName }: Props) {
+  const queryTimeoutMs = useProfilesStore(
+    (s) => s.globalPreferences.queryTimeoutMs ?? 30000,
+  );
+
   // ── Restore persisted session state ─────────────────────
   const sessionKey = getSessionKey(profileId, database, tableName);
   const cached = tableSessionCache.get(sessionKey);
@@ -442,8 +447,8 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
     setColumnFilters({});
     try {
       const [countRes, dataRes] = await Promise.all([
-        dbQuery(profileId, countQuery),
-        dbQuery(profileId, dataQuery),
+        dbQuery(profileId, countQuery, { timeoutMs: queryTimeoutMs }),
+        dbQuery(profileId, dataQuery, { timeoutMs: queryTimeoutMs }),
       ]);
 
       const cnt = countRes[0]?.rows?.[0]?.[0];
@@ -473,7 +478,7 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
     } finally {
       setLoading(false);
     }
-  }, [profileId, countQuery, dataQuery]);
+  }, [profileId, countQuery, dataQuery, queryTimeoutMs]);
 
   // Auto-fetch on mount and when query params change
   useEffect(() => {
@@ -945,7 +950,7 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
 
       if (queries.length > 0) {
         for (const q of queries) {
-          await dbExecuteQuery(profileId, q);
+          await dbExecuteQuery(profileId, q, { timeoutMs: queryTimeoutMs });
         }
       }
 
@@ -966,7 +971,7 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
     } finally {
       setIsApplying(false);
     }
-  }, [hasEdits, editedCells, addedRows, deletedRows, rows, columns, columnInfos, database, tableName, profileId, fetchData]);
+  }, [hasEdits, editedCells, addedRows, deletedRows, rows, columns, columnInfos, database, tableName, profileId, fetchData, queryTimeoutMs]);
 
   const toggleRowSelection = useCallback((rowIdx: number) => {
     setSelectedRows(prev => {

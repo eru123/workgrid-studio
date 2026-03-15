@@ -6,6 +6,8 @@ import {
     Moon,
     Sun,
     Type,
+    Rows3,
+    TimerReset,
     RefreshCw,
     CheckCircle2,
     AlertCircle,
@@ -25,6 +27,14 @@ import { ConfirmModal } from "@/components/views/ConfirmModal";
 
 function clampLogSizeMb(value: number): number {
     return Math.max(1, Math.min(250, value));
+}
+
+function clampMaxResultRows(value: number): number {
+    return Math.max(100, Math.min(10000, value));
+}
+
+function clampQueryTimeoutMs(value: number): number {
+    return Math.max(5000, Math.min(300000, value));
 }
 
 export function SettingsPage() {
@@ -54,6 +64,8 @@ export function SettingsPage() {
     const allowUpdateChecks = globalPrefs.allowUpdateChecks ?? true;
     const blockAiRequests = globalPrefs.blockAiRequests ?? false;
     const maxLogSizeMb = globalPrefs.maxLogSizeMb ?? 10;
+    const maxResultRows = globalPrefs.maxResultRows ?? 1000;
+    const queryTimeoutMs = globalPrefs.queryTimeoutMs ?? 30000;
 
     const handleCheckForUpdates = async () => {
         if (!allowUpdateChecks) {
@@ -229,6 +241,83 @@ export function SettingsPage() {
                                     })
                                 }
                             />
+                        </div>
+                    </div>
+                </section>
+
+                <section className="flex flex-col gap-4">
+                    <div className="border-b pb-2">
+                        <h3 className="text-lg font-medium">Performance</h3>
+                        <p className="text-xs text-muted-foreground">
+                            Tune result rendering and query execution limits for slower hardware.
+                        </p>
+                    </div>
+
+                    <div className="grid gap-4">
+                        <div className="flex items-start justify-between gap-4 rounded-lg border bg-muted/20 p-4">
+                            <div className="flex gap-3">
+                                <Rows3 className="mt-0.5 h-5 w-5 text-primary" />
+                                <div>
+                                    <p className="font-medium">Max result rows</p>
+                                    <p className="mt-0.5 text-[11px] text-muted-foreground">
+                                        Query results initially render up to this many rows.
+                                        Use Load more in the results grid to reveal more rows on demand.
+                                    </p>
+                                </div>
+                            </div>
+
+                            <div className="flex items-center gap-2">
+                                <input
+                                    type="number"
+                                    min="100"
+                                    max="10000"
+                                    step="100"
+                                    className="w-24 rounded border bg-background px-2 py-1 text-right text-xs"
+                                    value={maxResultRows}
+                                    onChange={(e) => {
+                                        const next = parseInt(e.target.value || "1000", 10);
+                                        setGlobalPrefs({
+                                            maxResultRows: clampMaxResultRows(
+                                                Number.isFinite(next) ? next : 1000,
+                                            ),
+                                        });
+                                    }}
+                                />
+                                <span className="text-xs text-muted-foreground">rows</span>
+                            </div>
+                        </div>
+
+                        <div className="flex items-start justify-between gap-4 rounded-lg border bg-muted/20 p-4">
+                            <div className="flex gap-3">
+                                <TimerReset className="mt-0.5 h-5 w-5 text-primary" />
+                                <div>
+                                    <p className="font-medium">Query timeout</p>
+                                    <p className="mt-0.5 text-[11px] text-muted-foreground">
+                                        Long-running queries are cancelled after this limit so the app
+                                        does not appear frozen on older machines.
+                                    </p>
+                                </div>
+                            </div>
+
+                            <div className="flex items-center gap-2">
+                                <input
+                                    type="number"
+                                    min="5"
+                                    max="300"
+                                    step="5"
+                                    className="w-20 rounded border bg-background px-2 py-1 text-right text-xs"
+                                    value={Math.round(queryTimeoutMs / 1000)}
+                                    onChange={(e) => {
+                                        const nextSeconds = parseInt(e.target.value || "30", 10);
+                                        setGlobalPrefs({
+                                            queryTimeoutMs: clampQueryTimeoutMs(
+                                                (Number.isFinite(nextSeconds) ? nextSeconds : 30) * 1000,
+                                            ),
+                                        });
+                                    }}
+                                />
+                                <span className="text-xs text-muted-foreground">sec</span>
+                            </div>
                         </div>
                     </div>
                 </section>

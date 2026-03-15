@@ -51,6 +51,8 @@ export interface GlobalPreferences extends ProfilePreferences {
   blockAiRequests?: boolean;
   allowUpdateChecks?: boolean;
   maxLogSizeMb?: number;
+  maxResultRows?: number;
+  queryTimeoutMs?: number;
 }
 
 // What gets saved to disk (no runtime-only fields)
@@ -140,6 +142,8 @@ export const DEFAULT_GLOBAL_PREFERENCES: GlobalPreferences = {
   blockAiRequests: false,
   allowUpdateChecks: true,
   maxLogSizeMb: 10,
+  maxResultRows: 1000,
+  queryTimeoutMs: 30_000,
 };
 
 // Debounce timer for saving

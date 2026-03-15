@@ -1144,7 +1144,7 @@ export function ExplorerTree() {
 
 // ─── Profile Node (root) → lazy loads databases ─────────────────────
 
-function ProfileNode({
+const ProfileNode = memo(function ProfileNode({
   profileId,
   name,
   color,
@@ -1333,11 +1333,11 @@ function ProfileNode({
       )}
     </>
   );
-}
+});
 
 // ─── Database Node → single-click opens tab, expand loads tables ────
 
-function DatabaseNode({
+const DatabaseNode = memo(function DatabaseNode({
   profileId,
   profileName,
   database,
@@ -1484,11 +1484,11 @@ function DatabaseNode({
       )}
     </>
   );
-}
+});
 
 // ─── Table Node → lazy loads columns ────────────────────────────────
 
-function TableNode({
+const TableNode = memo(function TableNode({
   profileId,
   database,
   table,
@@ -1610,7 +1610,7 @@ function TableNode({
       )}
     </>
   );
-}
+});
 
 // ─── Highlight matching text in a label ────────────────────────────────
 

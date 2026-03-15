@@ -161,8 +161,20 @@ export async function clearProfileLog(profileId: string, logType: LogType): Prom
     return invoke<void>("clear_profile_log", { profileId, logType });
 }
 
-export async function dbExecuteQuery(profileId: string, query: string): Promise<void> {
-    return invoke<void>("db_execute_query", { profileId, query });
+export interface QueryExecutionOptions {
+    timeoutMs?: number;
+}
+
+export async function dbExecuteQuery(
+    profileId: string,
+    query: string,
+    options: QueryExecutionOptions = {},
+): Promise<void> {
+    return invoke<void>("db_execute_query", {
+        profileId,
+        query,
+        timeoutMs: options.timeoutMs,
+    });
 }
 
 export interface CollationResponse {
@@ -183,8 +195,16 @@ export interface QueryResultSet {
     info: string;
 }
 
-export async function dbQuery(profileId: string, query: string): Promise<QueryResultSet[]> {
-    return invoke<QueryResultSet[]>("db_query", { profileId, query });
+export async function dbQuery(
+    profileId: string,
+    query: string,
+    options: QueryExecutionOptions = {},
+): Promise<QueryResultSet[]> {
+    return invoke<QueryResultSet[]>("db_query", {
+        profileId,
+        query,
+        timeoutMs: options.timeoutMs,
+    });
 }
 
 // ─── Vault (Secure Storage) ─────────────────────────────────────────
