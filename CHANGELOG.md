@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.1.6] - 2026-03-15
 - **[Breaking] Vault & Security:** Migrated to secure, per-installation vault encryption via the OS credential store. Added Content Security Policy (CSP) and restricted file-system permissions.
 - **Networking & SSH:** Overhauled SSH tunneling to fix memory leaks and thread hanging. Replaced basic host key logging with TOFU (Trust On First Use) verification and added connection auto-reconnects.
 - **Query & Data Operations:** Added "Explain Plan", sorting, and results virtualization for performance. Grid data can now be exported to JSON/CSV/SQL, and CSV imports are fully transactional with progress tracking.
