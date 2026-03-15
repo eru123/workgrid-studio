@@ -186,3 +186,9 @@ Appends the pushed commit subjects to the `[Unreleased]` section of `CHANGELOG.m
 The worker queries the GitHub Releases API, compares the latest release tag against the client version using semver, and returns either `204 No Content` (already up to date) or the Tauri update payload (version, notes, signature, download URL).
 
 See [`wgs-updater/README.md`](wgs-updater/README.md) for full documentation and deployment instructions.
+
+---
+
+## License
+
+WorkGrid Studio is licensed under the [Apache License 2.0](LICENSE).
