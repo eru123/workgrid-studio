@@ -29,7 +29,7 @@ import { useProfilesStore } from "@/state/profilesStore";
 import { useSavedQueriesStore } from "@/state/savedQueriesStore";
 import { aiGenerateQuery, dbGetSchemaDdl } from "@/lib/db";
 import { ensureAiUseAllowed } from "@/lib/privacy";
-import { save, open } from "@tauri-apps/plugin-dialog";
+import { save, open, ask } from "@tauri-apps/plugin-dialog";
 import { homeDir } from "@tauri-apps/api/path";
 import { writeFile, readTextFile } from "@tauri-apps/plugin-fs";
 import { useQueryHistoryStore } from "@/state/queryHistoryStore";
@@ -650,6 +650,7 @@ export function QueryTab({
   const editorRef = useRef<HTMLTextAreaElement>(null);
   const lineNumberRef = useRef<HTMLDivElement>(null);
   const highlightRef = useRef<HTMLDivElement>(null);
+  const historyMenuRef = useRef<HTMLDivElement>(null);
   const resultScrollRef = useRef<HTMLDivElement>(null);
   const restoredSessionScrollRef = useRef(false);
   const pendingEditorSelectionRef = useRef<{
@@ -801,7 +802,7 @@ export function QueryTab({
       return;
     }
 
-    refreshDatabases(selectedProfileId).catch(() => {});
+    refreshDatabases(selectedProfileId).catch(() => { });
   }, [
     connectedProfiles,
     loadingDatabases,
@@ -1149,6 +1150,20 @@ export function QueryTab({
   }, [cellContextMenu]);
 
   useEffect(() => {
+    if (!showHistory) return;
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (historyMenuRef.current?.contains(target)) return;
+      setShowHistory(false);
+    };
+
+    window.addEventListener("pointerdown", handlePointerDown);
+    return () => window.removeEventListener("pointerdown", handlePointerDown);
+  }, [showHistory]);
+
+  useEffect(() => {
     setSelectedCell(null);
     setCellContextMenu(null);
     resultScrollRef.current?.scrollTo({ top: 0, left: 0 });
@@ -1194,7 +1209,7 @@ export function QueryTab({
         const val = row[selectedCell.colIdx];
         navigator.clipboard
           .writeText(getDataGridCellText(val))
-          .catch(() => {});
+          .catch(() => { });
         return;
       }
 
@@ -1249,7 +1264,7 @@ export function QueryTab({
     if (!cellContextMenu) return;
     navigator.clipboard
       .writeText(getDataGridCellText(cellContextMenu.value))
-      .catch(() => {});
+      .catch(() => { });
   }, [cellContextMenu]);
 
   const copyRowValues = useCallback(() => {
@@ -1257,7 +1272,7 @@ export function QueryTab({
     const row = searchActiveRows[cellContextMenu.rowIdx]?.row;
     if (!row) return;
     const text = row.map((v) => getDataGridCellText(v)).join("\t");
-    navigator.clipboard.writeText(text).catch(() => {});
+    navigator.clipboard.writeText(text).catch(() => { });
   }, [cellContextMenu, searchActiveRows]);
 
   const copyColumnValues = useCallback(() => {
@@ -1268,7 +1283,7 @@ export function QueryTab({
         return getDataGridCellText(val);
       })
       .join("\n");
-    navigator.clipboard.writeText(text).catch(() => {});
+    navigator.clipboard.writeText(text).catch(() => { });
   }, [cellContextMenu, searchActiveRows]);
 
   const copyRowAsJson = useCallback(() => {
@@ -1278,7 +1293,7 @@ export function QueryTab({
     if (!row) return;
     const obj: Record<string, string | number | null> = {};
     searchActiveResult.columns.forEach((col, i) => { obj[col] = row[i] ?? null; });
-    navigator.clipboard.writeText(JSON.stringify(obj, null, 2)).catch(() => {});
+    navigator.clipboard.writeText(JSON.stringify(obj, null, 2)).catch(() => { });
   }, [cellContextMenu, searchActiveResult, searchActiveRows]);
 
   const copyRowAsCsv = useCallback(() => {
@@ -1294,7 +1309,7 @@ export function QueryTab({
     };
     const header = searchActiveResult.columns.map(escapeCSV).join(",");
     const values = row.map(escapeCSV).join(",");
-    navigator.clipboard.writeText(`${header}\n${values}`).catch(() => {});
+    navigator.clipboard.writeText(`${header}\n${values}`).catch(() => { });
   }, [cellContextMenu, searchActiveResult, searchActiveRows]);
 
   const copyRowAsSqlInsert = useCallback(() => {
@@ -1305,7 +1320,7 @@ export function QueryTab({
     const escId = (v: string) => `\`${v.replace(/`/g, "``")}\``;
     const cols = searchActiveResult.columns.map(escId).join(", ");
     const vals = row.map((v) => v === null ? "NULL" : `'${String(v).replace(/'/g, "''")}'`).join(", ");
-    navigator.clipboard.writeText(`INSERT INTO \`table\` (${cols}) VALUES (${vals});`).catch(() => {});
+    navigator.clipboard.writeText(`INSERT INTO \`table\` (${cols}) VALUES (${vals});`).catch(() => { });
   }, [cellContextMenu, searchActiveResult, searchActiveRows]);
 
   // Ctrl+S listener
@@ -1331,7 +1346,7 @@ export function QueryTab({
       const rows = searchActiveRows
         .map(({ row }) => row.map((v) => getDataGridCellText(v)).join("\t"))
         .join("\n");
-      navigator.clipboard.writeText(`${header}\n${rows}`).catch(() => {});
+      navigator.clipboard.writeText(`${header}\n${rows}`).catch(() => { });
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
@@ -1550,8 +1565,8 @@ export function QueryTab({
 
       const rawText = first.rows.length > 0
         ? first.rows
-            .map((row) => row.map((value) => stringifyExplainValue(value)).join(" "))
-            .join("\n")
+          .map((row) => row.map((value) => stringifyExplainValue(value)).join(" "))
+          .join("\n")
         : first.info;
 
       let parsedJson: unknown | null = null;
@@ -1930,21 +1945,21 @@ export function QueryTab({
     !wordWrap && activeDisplayedRows.length > 200;
   const virtualStartIdx = shouldVirtualizeResults
     ? clamp(
-        Math.floor(resultViewport.scrollTop / QUERY_RESULT_ROW_HEIGHT_PX) -
-          QUERY_RESULT_OVERSCAN_ROWS,
-        0,
-        activeDisplayedRows.length,
-      )
+      Math.floor(resultViewport.scrollTop / QUERY_RESULT_ROW_HEIGHT_PX) -
+      QUERY_RESULT_OVERSCAN_ROWS,
+      0,
+      activeDisplayedRows.length,
+    )
     : 0;
   const virtualEndIdx = shouldVirtualizeResults
     ? clamp(
-        Math.ceil(
-          (resultViewport.scrollTop + resultViewport.clientHeight) /
-            QUERY_RESULT_ROW_HEIGHT_PX,
-        ) + QUERY_RESULT_OVERSCAN_ROWS,
-        0,
-        activeDisplayedRows.length,
-      )
+      Math.ceil(
+        (resultViewport.scrollTop + resultViewport.clientHeight) /
+        QUERY_RESULT_ROW_HEIGHT_PX,
+      ) + QUERY_RESULT_OVERSCAN_ROWS,
+      0,
+      activeDisplayedRows.length,
+    )
     : activeDisplayedRows.length;
   const visibleResultRows = shouldVirtualizeResults
     ? activeDisplayedRows.slice(virtualStartIdx, virtualEndIdx)
@@ -2144,9 +2159,9 @@ export function QueryTab({
           selectionStart === selectionEnd
             ? getWordRangeAtPosition(value, selectionStart)
             : normalizeSelectionRange({
-                start: selectionStart,
-                end: selectionEnd,
-              });
+              start: selectionStart,
+              end: selectionEnd,
+            });
 
         if (!initialRange) return;
 
@@ -2782,7 +2797,7 @@ export function QueryTab({
       className="flex flex-col w-full h-full bg-background text-foreground text-xs overflow-hidden min-w-0 min-h-0 relative"
     >
       {/* ─── Toolbar ─────────────────────────────────── */}
-      <div className="flex items-center gap-0.5 px-2 py-1 border-b bg-muted/20 shrink-0 overflow-x-auto min-h-0">
+      <div className="flex items-center gap-0.5 px-2 py-1 border-b bg-muted/20 shrink-0 overflow-x-clip overflow-y-visible min-h-0">
         {/* Run */}
         <ToolBtn
           icon={
@@ -2836,7 +2851,7 @@ export function QueryTab({
           value={explainMode}
           onChange={(e) => setExplainMode(e.target.value as ExplainMode)}
           disabled={running || isExplaining}
-          className="h-7 shrink-0 rounded border bg-transparent px-2 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus:outline-none"
+          className="h-6 text-xs bg-secondary/50 border rounded px-1.5 focus:outline-none focus:ring-1 focus:ring-primary"
           aria-label="Explain mode"
         >
           <option value="explain">JSON</option>
@@ -2917,7 +2932,7 @@ export function QueryTab({
 
         <div className="w-px h-5 bg-border mx-1" />
 
-        <div className="relative group/history">
+        <div ref={historyMenuRef} className="relative group/history">
           <ToolBtn
             icon={<History className="w-4 h-4" />}
             title="Query History"
@@ -2931,13 +2946,19 @@ export function QueryTab({
                 <span className="text-[10px] font-bold uppercase tracking-wider">Query History</span>
                 <button
                   className={cn(
-                    "text-[10px] text-red-500 hover:underline",
+                    "text-[10px] text-red-400 hover:underline",
                     isHistoryLoading && "opacity-50 cursor-not-allowed hover:no-underline",
                   )}
                   disabled={isHistoryLoading}
-                  onClick={() => { if (window.confirm("Clear non-favorited history?")) clearHistory(selectedProfileId || undefined); }}
+                  onClick={async (e) => {
+                    e.stopPropagation();
+                    const confirmed = await ask("Clear non-favorited history?", { title: "Clear History", kind: "warning" });
+                    if (confirmed) {
+                      clearHistory(selectedProfileId || undefined);
+                    }
+                  }}
                 >
-                  Clear
+                  <Trash2 className="w-4 h-4" />
                 </button>
               </div>
               {/* Search filter */}
@@ -3270,6 +3291,7 @@ export function QueryTab({
               onChange={(e) => {
                 const newVal = e.target.value;
                 const newPos = e.target.selectionStart;
+                if (showHistory) setShowHistory(false);
                 setSql(newVal);
                 syncEditorMetrics(e.target);
                 updateAutocomplete(newVal, newPos);
@@ -3600,92 +3622,92 @@ export function QueryTab({
                       : rowOffset;
 
                     return (
-                    <tr
-                      key={originalRowIdx}
-                      className="group border-b hover:bg-accent/20 transition-colors"
-                      role="row"
-                      aria-rowindex={ri + 2}
-                    >
-                      <td
-                        className="sticky left-0 z-10 bg-background px-2 py-1 border-r text-muted-foreground/40 select-none group-hover:bg-accent/20"
-                        role="rowheader"
-                        aria-colindex={1}
+                      <tr
+                        key={originalRowIdx}
+                        className="group border-b hover:bg-accent/20 transition-colors"
+                        role="row"
+                        aria-rowindex={ri + 2}
                       >
-                        {ri + 1}
-                      </td>
-                      {row.map((val, ci) => {
-                        const isMatch = findQuery && val !== null && String(val).toLowerCase().includes(findQuery.toLowerCase());
-                        const match = findMatches[currentMatchIdx];
-                        const isCurrent = match?.rowIdx === ri && match?.colIdx === ci;
-                        const isSelected = selectedCell?.rowIdx === ri && selectedCell?.colIdx === ci;
-                        const isNumeric = activeNumericColumns.has(ci);
-                        const colWidth = getResultColWidth(activeResultIdx, ci);
-                        const cellText = getDataGridCellText(val);
+                        <td
+                          className="sticky left-0 z-10 bg-background px-2 py-1 border-r text-muted-foreground/40 select-none group-hover:bg-accent/20"
+                          role="rowheader"
+                          aria-colindex={1}
+                        >
+                          {ri + 1}
+                        </td>
+                        {row.map((val, ci) => {
+                          const isMatch = findQuery && val !== null && String(val).toLowerCase().includes(findQuery.toLowerCase());
+                          const match = findMatches[currentMatchIdx];
+                          const isCurrent = match?.rowIdx === ri && match?.colIdx === ci;
+                          const isSelected = selectedCell?.rowIdx === ri && selectedCell?.colIdx === ci;
+                          const isNumeric = activeNumericColumns.has(ci);
+                          const colWidth = getResultColWidth(activeResultIdx, ci);
+                          const cellText = getDataGridCellText(val);
 
-                        return (
-                          <td
-                            key={ci}
-                            id={`qcell-${ri}-${ci}`}
-                            role="gridcell"
-                            aria-colindex={ci + 2}
-                            aria-selected={isSelected}
-                            tabIndex={
-                              isSelected || (!selectedCell && ri === 0 && ci === 0)
-                                ? 0
-                                : -1
-                            }
-                            className={cn(
-                              "px-2 py-1 border-r font-mono transition-all cursor-default align-top bg-background",
-                              isNumeric && "text-right tabular-nums",
-                              val === null
-                                ? "text-muted-foreground/40 italic"
-                                : "",
-                              isCurrent && "ring-2 ring-primary ring-inset z-10 bg-primary/20",
-                              !isCurrent && isMatch && "bg-yellow-500/30",
-                              isSelected && !isCurrent && "ring-1 ring-primary/60 bg-primary/8",
-                            )}
-                            style={
-                              colWidth
-                                ? { width: colWidth, minWidth: colWidth, maxWidth: colWidth }
-                                : undefined
-                            }
-                            title={cellText}
-                            onClick={() => setSelectedCell({ rowIdx: ri, colIdx: ci })}
-                            onFocus={() => setSelectedCell({ rowIdx: ri, colIdx: ci })}
-                            onContextMenu={(e) => {
-                              e.preventDefault();
-                              setSelectedCell({ rowIdx: ri, colIdx: ci });
-                              setCellContextMenu({ x: e.clientX, y: e.clientY, rowIdx: ri, colIdx: ci, value: val });
-                            }}
-                          >
-                            {val === null ? (
-                              <span className="text-muted-foreground/40 italic">NULL</span>
-                            ) : (
-                              <div
-                                className={cn(
-                                  "min-w-0",
-                                  wordWrap
-                                    ? "whitespace-pre-wrap break-all"
-                                    : "overflow-hidden text-ellipsis whitespace-nowrap",
-                                  isNumeric && "text-right",
-                                )}
-                                style={
-                                  !wordWrap
-                                    ? {
+                          return (
+                            <td
+                              key={ci}
+                              id={`qcell-${ri}-${ci}`}
+                              role="gridcell"
+                              aria-colindex={ci + 2}
+                              aria-selected={isSelected}
+                              tabIndex={
+                                isSelected || (!selectedCell && ri === 0 && ci === 0)
+                                  ? 0
+                                  : -1
+                              }
+                              className={cn(
+                                "px-2 py-1 border-r font-mono transition-all cursor-default align-top bg-background",
+                                isNumeric && "text-right tabular-nums",
+                                val === null
+                                  ? "text-muted-foreground/40 italic"
+                                  : "",
+                                isCurrent && "ring-2 ring-primary ring-inset z-10 bg-primary/20",
+                                !isCurrent && isMatch && "bg-yellow-500/30",
+                                isSelected && !isCurrent && "ring-1 ring-primary/60 bg-primary/8",
+                              )}
+                              style={
+                                colWidth
+                                  ? { width: colWidth, minWidth: colWidth, maxWidth: colWidth }
+                                  : undefined
+                              }
+                              title={cellText}
+                              onClick={() => setSelectedCell({ rowIdx: ri, colIdx: ci })}
+                              onFocus={() => setSelectedCell({ rowIdx: ri, colIdx: ci })}
+                              onContextMenu={(e) => {
+                                e.preventDefault();
+                                setSelectedCell({ rowIdx: ri, colIdx: ci });
+                                setCellContextMenu({ x: e.clientX, y: e.clientY, rowIdx: ri, colIdx: ci, value: val });
+                              }}
+                            >
+                              {val === null ? (
+                                <span className="text-muted-foreground/40 italic">NULL</span>
+                              ) : (
+                                <div
+                                  className={cn(
+                                    "min-w-0",
+                                    wordWrap
+                                      ? "whitespace-pre-wrap break-all"
+                                      : "overflow-hidden text-ellipsis whitespace-nowrap",
+                                    isNumeric && "text-right",
+                                  )}
+                                  style={
+                                    !wordWrap
+                                      ? {
                                         maxWidth: colWidth
                                           ? Math.max(colWidth - 16, 64)
                                           : 280,
                                       }
-                                    : undefined
-                                }
-                              >
-                                {String(val)}
-                              </div>
-                            )}
-                          </td>
-                        );
-                      })}
-                    </tr>
+                                      : undefined
+                                  }
+                                >
+                                  {String(val)}
+                                </div>
+                              )}
+                            </td>
+                          );
+                        })}
+                      </tr>
                     );
                   })}
                   {bottomVirtualSpacerHeight > 0 && (

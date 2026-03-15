@@ -658,7 +658,7 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
         const val = colIdx >= 0 ? row[colIdx] : null;
         navigator.clipboard
           .writeText(getDataGridCellText(val))
-          .catch(() => {});
+          .catch(() => { });
         return;
       }
 
@@ -768,7 +768,7 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
     if (!cellContextMenu) return;
     navigator.clipboard
       .writeText(getDataGridCellText(cellContextMenu.value))
-      .catch(() => {});
+      .catch(() => { });
   }, [cellContextMenu]);
 
   const copyRowValues = useCallback(() => {
@@ -782,7 +782,7 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
         return getDataGridCellText(val);
       })
       .join("\t");
-    navigator.clipboard.writeText(text).catch(() => {});
+    navigator.clipboard.writeText(text).catch(() => { });
   }, [cellContextMenu, rows, columns, visibleColumns]);
 
   const copyColumnValues = useCallback(() => {
@@ -794,7 +794,7 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
         return getDataGridCellText(val);
       })
       .join("\n");
-    navigator.clipboard.writeText(text).catch(() => {});
+    navigator.clipboard.writeText(text).catch(() => { });
   }, [cellContextMenu, rows, columns]);
 
   const copyRowAsJson = useCallback(() => {
@@ -806,7 +806,7 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
       const idx = columns.indexOf(col);
       obj[col] = idx >= 0 ? (row[idx] ?? null) : null;
     });
-    navigator.clipboard.writeText(JSON.stringify(obj, null, 2)).catch(() => {});
+    navigator.clipboard.writeText(JSON.stringify(obj, null, 2)).catch(() => { });
   }, [cellContextMenu, rows, columns, visibleColumns]);
 
   const copyRowAsCsv = useCallback(() => {
@@ -824,7 +824,7 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
       const idx = columns.indexOf(col);
       return escapeCSV(idx >= 0 ? row[idx] ?? null : null);
     }).join(",");
-    navigator.clipboard.writeText(`${header}\n${values}`).catch(() => {});
+    navigator.clipboard.writeText(`${header}\n${values}`).catch(() => { });
   }, [cellContextMenu, rows, columns, visibleColumns]);
 
   const copyRowAsSqlInsert = useCallback(() => {
@@ -837,7 +837,7 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
       const v = idx >= 0 ? row[idx] ?? null : null;
       return v === null ? "NULL" : `'${String(v).replace(/'/g, "''")}'`;
     }).join(", ");
-    navigator.clipboard.writeText(`INSERT INTO ${escId(tableName)} (${cols}) VALUES (${vals});`).catch(() => {});
+    navigator.clipboard.writeText(`INSERT INTO ${escId(tableName)} (${cols}) VALUES (${vals});`).catch(() => { });
   }, [cellContextMenu, rows, columns, visibleColumns, tableName]);
 
   // ── Edit handlers ───────────────────────────────────────
@@ -2019,7 +2019,7 @@ const EditableCell = memo(function EditableCell({
         <input
           ref={inputRef}
           type="text"
-          className="w-full h-full px-1.5 py-0 bg-background text-xs font-mono focus:outline-none focus:ring-1 focus:ring-inset focus:ring-primary"
+          className="w-full h-full px-1.5 py-0 bg-background text-xs font-mono focus:outline-1 focus:outline-primary focus:-outline-offset-1"
           value={localValue}
           onChange={(e) => setLocalValue(e.target.value)}
           onBlur={handleBlur}
@@ -2043,12 +2043,12 @@ const EditableCell = memo(function EditableCell({
       aria-selected={isSelected}
       tabIndex={isTabStop ? 0 : -1}
       className={cn(
-        "px-2 py-0 border-r h-7 min-w-[80px] relative group/cell cursor-default bg-background",
+        "px-2 py-0 border-r h-7 min-w-[80px] relative group/cell cursor-default bg-background outline-none",
         isNumeric && "text-right tabular-nums",
         isEdited && "bg-amber-500/10",
-        isCurrent && "ring-2 ring-primary ring-inset z-10 bg-primary/20",
+        isCurrent && "outline-1 outline-primary -outline-offset-1 z-10 bg-primary/20",
         !isCurrent && isMatch && "bg-yellow-500/30",
-        isSelected && !isCurrent && "ring-1 ring-primary/60 ring-inset bg-primary/5",
+        isSelected && !isCurrent && "outline-1 outline-primary/60 -outline-offset-1 bg-primary/5",
         stickyClass,
       )}
       style={stickyStyle}

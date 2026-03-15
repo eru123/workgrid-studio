@@ -2551,7 +2551,7 @@ const TreeRow = memo(function TreeRow({
       aria-selected={selected || undefined}
       aria-label={label}
       className={cn(
-        "flex items-center h-5.5 cursor-pointer hover:bg-accent/50 transition-colors",
+        "flex items-center h-5.5 cursor-pointer hover:bg-accent/50 transition-colors outline-none",
         bold && "font-medium",
         muted && "opacity-60",
         selected && "bg-accent/80 text-accent-foreground",

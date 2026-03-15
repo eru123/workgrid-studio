@@ -392,7 +392,7 @@ export const EditorNode = memo(function EditorNode({ tree }: { tree: SplitTree }
           tabIndex={isActive ? 0 : -1}
           data-tab-id={tab.id}
           className={cn(
-            "group flex items-center gap-1 h-full px-2 text-xs cursor-pointer select-none shrink-0 transition-all border-b-2",
+            "group flex items-center gap-1 h-full px-2 text-xs cursor-pointer select-none shrink-0 transition-all border-t-2",
             isActive
               ? "border-primary bg-background text-foreground"
               : "border-transparent text-muted-foreground hover:text-foreground hover:bg-accent/40",
@@ -608,7 +608,7 @@ export const EditorNode = memo(function EditorNode({ tree }: { tree: SplitTree }
                   tabIndex={isActive ? 0 : -1}
                   data-tab-id={tab.id}
                   className={cn(
-                    "group flex items-center gap-1 h-full px-2 text-xs cursor-pointer select-none shrink-0 transition-all border-b-2",
+                    "group flex items-center gap-1 h-full px-2 text-xs cursor-pointer select-none shrink-0 transition-all border-t-2",
                     isActive
                       ? "border-primary bg-background text-foreground"
                       : "border-transparent text-muted-foreground hover:text-foreground hover:bg-accent/40",
