@@ -2048,7 +2048,7 @@ const EditableCell = memo(function EditableCell({
         isEdited && "bg-amber-500/10",
         isCurrent && "ring-2 ring-primary ring-inset z-10 bg-primary/20",
         !isCurrent && isMatch && "bg-yellow-500/30",
-        isSelected && !isCurrent && "ring-1 ring-primary/60 bg-primary/8",
+        isSelected && !isCurrent && "ring-1 ring-primary/60 ring-inset bg-primary/5",
         stickyClass,
       )}
       style={stickyStyle}
