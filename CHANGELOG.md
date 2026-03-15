@@ -44,6 +44,7 @@
 - feat(privacy): add comprehensive privacy controls and disclosure
 - feat(connection): add auto-reconnect and structured error handling
 - style(query-tab): prevent text wrapping in toolbar controls
+- feat: add GitHub issue templates and update README with contribution guidelines
 
 ## [0.1.5] - 2026-03-14
 - Exclude main branch from changelog workflow
