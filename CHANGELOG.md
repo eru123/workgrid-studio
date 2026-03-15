@@ -10,6 +10,7 @@
 - **Core backend & AI:** Modularized the Rust backend, optimized AI query generation, resolved cryptographic vulnerabilities, and added failsafes for corrupted AI logs.
 - **Ecosystem:** Launched the `wgs-website` React workspace, refreshed application branding/icons, and formalized open-source contribution and security policies.
 - **Maintenance:** Consolidated logging systems, updated CI/CD workflows, bumped dependencies, and improved the app updater endpoint.
+- Create ci.yml
 
 ## [0.1.5] - 2026-03-14
 - Exclude main branch from changelog workflow
