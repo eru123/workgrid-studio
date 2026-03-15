@@ -1,0 +1,100 @@
+name: Bug Report
+description: Report a bug or unexpected behavior in WorkGrid Studio
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for taking the time to report a bug. Please fill in as much detail as possible.
+        If this is a **security vulnerability**, do not open a public issue — see [SECURITY.md](../SECURITY.md) instead.
+
+  - type: checkboxes
+    id: prerequisites
+    attributes:
+      label: Prerequisites
+      options:
+        - label: I have searched existing issues and this has not been reported before.
+          required: true
+        - label: I am using the latest release of WorkGrid Studio.
+          required: true
+        - label: This is not a security vulnerability (those must be reported privately).
+          required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Describe the bug
+      description: A clear and concise description of what the bug is.
+      placeholder: "When I do X, Y happens instead of Z."
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Provide the exact steps needed to reproduce the issue.
+      placeholder: |
+        1. Connect to a MySQL server
+        2. Open a new query tab
+        3. Run the query '...'
+        4. See error
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What did you expect to happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What actually happened? Include any error messages or stack traces.
+    validations:
+      required: true
+
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots or recordings
+      description: If applicable, add screenshots or a screen recording to help explain the problem.
+
+  - type: input
+    id: version
+    attributes:
+      label: WorkGrid Studio version
+      description: Found in the status bar at the bottom of the app, or via Help > About.
+      placeholder: "e.g. 0.2.1"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows 11
+        - Windows 10
+        - macOS (Apple Silicon)
+        - macOS (Intel)
+        - Linux
+    validations:
+      required: true
+
+  - type: input
+    id: db_version
+    attributes:
+      label: Database server version
+      description: MySQL or MariaDB version you are connecting to (if relevant).
+      placeholder: "e.g. MySQL 8.0.36"
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: Any other context, configuration, or information that might be relevant.
