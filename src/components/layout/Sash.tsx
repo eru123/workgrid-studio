@@ -2,6 +2,9 @@ import { useRef, useCallback } from "react";
 import { cn } from "@/lib/utils/cn";
 
 interface SashProps {
+    // Matches the split direction of the panels:
+    // - "horizontal": panels are side-by-side, drag on the x-axis
+    // - "vertical": panels are stacked, drag on the y-axis
     direction?: "horizontal" | "vertical";
     onDrag?: (delta: number) => void;
     className?: string;
@@ -49,13 +52,17 @@ export function Sash({
 
             const onPointerUp = (ue: PointerEvent) => {
                 isDragging.current = false;
-                target.releasePointerCapture(ue.pointerId);
+                if (target.hasPointerCapture(ue.pointerId)) {
+                    target.releasePointerCapture(ue.pointerId);
+                }
                 window.removeEventListener("pointermove", onPointerMove);
                 window.removeEventListener("pointerup", onPointerUp);
+                window.removeEventListener("pointercancel", onPointerUp);
             };
 
             window.addEventListener("pointermove", onPointerMove);
             window.addEventListener("pointerup", onPointerUp);
+            window.addEventListener("pointercancel", onPointerUp);
         },
         [direction]
     );

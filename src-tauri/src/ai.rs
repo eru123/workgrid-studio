@@ -1,0 +1,293 @@
+use std::fs;
+use serde::{Deserialize, Serialize};
+use reqwest::Client;
+use crate::{AppError, AppResult};
+use crate::files::{app_preferences_path, ensure_app_dirs};
+use crate::crypto::vault_get;
+
+#[derive(Serialize)]
+pub struct AnthropicMessage {
+    pub role: String,
+    pub content: String,
+}
+
+#[derive(Serialize)]
+pub struct OpenAIPayload {
+    pub model: String,
+    pub messages: Vec<AnthropicMessage>,
+}
+
+#[derive(Deserialize)]
+pub struct OpenAIChoice {
+    pub message: OpenAIResponseMsg,
+}
+
+#[derive(Deserialize)]
+pub struct OpenAIResponseMsg {
+    pub content: String,
+}
+
+#[derive(Deserialize)]
+pub struct OpenAIResponse {
+    pub choices: Vec<OpenAIChoice>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct AiLogEntry {
+    pub id: String,
+    pub timestamp: String,
+    pub model: String,
+    pub uri: String,
+    pub payload_preview: String,
+    pub response_preview: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AiPreferences {
+    block_ai_requests: Option<bool>,
+}
+
+pub fn append_ai_log(entry: AiLogEntry) {
+    if let Ok(base) = ensure_app_dirs() {
+        let path = base.join("ai_logs.json");
+        let mut logs: Vec<AiLogEntry> = if path.exists() {
+            let content = fs::read_to_string(&path).unwrap_or_else(|_| "[]".to_string());
+            serde_json::from_str(&content).unwrap_or_else(|err| {
+                eprintln!("[workgrid-studio] Failed to parse ai_logs.json: {}. Starting with an empty log.", err);
+                let backup_path = base.join("ai_logs.corrupted.json");
+                let _ = fs::copy(&path, &backup_path);
+                Vec::new()
+            })
+        } else {
+            Vec::new()
+        };
+        logs.push(entry);
+
+        // Keep only last 100 logs to prevent unbounded growth
+        if logs.len() > 100 {
+            logs.remove(0);
+        }
+
+        if let Ok(serialized) = serde_json::to_string(&logs) {
+            let _ = fs::write(path, serialized);
+        }
+    }
+}
+
+#[tauri::command]
+pub fn get_ai_logs() -> AppResult<Vec<AiLogEntry>> {
+    let base = ensure_app_dirs()?;
+    let path = base.join("ai_logs.json");
+    if !path.exists() {
+         return Ok(Vec::new());
+    }
+    let content = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let mut logs: Vec<AiLogEntry> = serde_json::from_str(&content).map_err(|e| e.to_string())?;
+    logs.reverse(); // Newest first
+    Ok(logs)
+}
+
+#[tauri::command]
+pub fn clear_ai_logs() -> AppResult<()> {
+    let base = ensure_app_dirs()?;
+    let path = base.join("ai_logs.json");
+    if path.exists() {
+        fs::remove_file(path).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn ai_generate_query(
+    provider_type: String, // "openai", "gemini", "deepseek", "other"
+    base_url: Option<String>,
+    api_key_ref: String,
+    model_id: String,
+    prompt: String,
+    schema_context: String,
+    current_query: Option<String>,
+) -> AppResult<String> {
+    ensure_ai_requests_enabled()?;
+    let api_key = vault_get(api_key_ref)?;
+    let client = Client::new();
+
+    let system_prompt = format!(
+        "You are an expert MySQL/MariaDB SQL assistant for Workgrid Studio. \
+        Below is the complete DDL (CREATE TABLE, CREATE VIEW, CREATE PROCEDURE, CREATE FUNCTION) \
+        for the user's database:\n\n{}\n\n\
+        Use this schema to understand indexes, constraints, relationships, and stored routines. \
+        Generate the most optimized SQL query for the user's request. \
+        If there are multiple approaches with different performance trade-offs, \
+        output them as separate queries separated by a comment like -- Alternative: ... \
+        Output ONLY raw SQL. Do not wrap it in markdown codeblocks (```sql ... ```). \
+        Do not add explanations outside of SQL comments.",
+        schema_context
+    );
+
+    let mut final_system_prompt = system_prompt.clone();
+    if let Some(q) = current_query {
+        if !q.trim().is_empty() {
+            final_system_prompt.push_str(&format!("\n\nThe user's current SQL editor content is:\n```sql\n{}\n```\nUse this context if the user is asking to fix, modify, or extend their existing query.", q));
+        }
+    }
+
+    let user_prompt = prompt;
+
+    match provider_type.as_str() {
+        "openai" | "deepseek" | "other" => {
+            let url = base_url.unwrap_or_else(|| {
+                if provider_type == "deepseek" {
+                    "https://api.deepseek.com/chat/completions".to_string()
+                } else {
+                    "https://api.openai.com/v1/chat/completions".to_string()
+                }
+            });
+
+            let default_model = if provider_type == "deepseek" { "deepseek-chat" } else { "gpt-4o" };
+            let actual_model = if model_id.is_empty() { default_model.to_string() } else { model_id };
+
+            call_openai_compatible_api(
+                &client,
+                &provider_type,
+                &url,
+                &api_key,
+                &actual_model,
+                &final_system_prompt,
+                &user_prompt,
+            ).await
+        },
+        "gemini" => {
+            // Very simple Gemini impl via proxy or google generative AI SDK format
+            // Here assuming proxy to openai-compatible gemini endpoint
+            let url = base_url.unwrap_or_else(|| "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions".to_string());
+            let actual_model = if model_id.is_empty() { "gemini-2.5-flash".to_string() } else { model_id };
+
+            call_openai_compatible_api(
+                &client,
+                &provider_type,
+                &url,
+                &api_key,
+                &actual_model,
+                &final_system_prompt,
+                &user_prompt,
+            ).await
+        },
+        _ => Err(AppError::validation("Unsupported provider type"))
+    }
+}
+
+fn ensure_ai_requests_enabled() -> AppResult<()> {
+    let Ok(path) = app_preferences_path() else {
+        return Ok(());
+    };
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let Ok(raw) = fs::read_to_string(path) else {
+        return Ok(());
+    };
+    let Ok(prefs) = serde_json::from_str::<AiPreferences>(&raw) else {
+        return Ok(());
+    };
+
+    if prefs.block_ai_requests.unwrap_or(false) {
+        return Err(AppError::validation(
+            "AI requests are disabled in Settings > Privacy.",
+        ));
+    }
+
+    Ok(())
+}
+
+async fn call_openai_compatible_api(
+    client: &Client,
+    provider_type: &str,
+    url: &str,
+    api_key: &str,
+    actual_model: &str,
+    system_prompt: &str,
+    user_prompt: &str,
+) -> AppResult<String> {
+    let payload = OpenAIPayload {
+        model: actual_model.to_string(),
+        messages: vec![
+            AnthropicMessage { role: "system".to_string(), content: system_prompt.to_string() },
+            AnthropicMessage { role: "user".to_string(), content: user_prompt.to_string() },
+        ],
+    };
+
+    println!("Sending {} completion request to {} (model: {})", provider_type, url, actual_model);
+
+    let payload_json = serde_json::to_string(&payload).unwrap_or_default();
+
+    let res = client.post(url)
+        .bearer_auth(api_key)
+        .json(&payload)
+        .send()
+        .await;
+
+    let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    let entry_id = uuid::Uuid::new_v4().to_string();
+
+    match res {
+        Ok(response) => {
+            let status = response.status();
+            if !status.is_success() {
+                let text = response.text().await.unwrap_or_default();
+                println!("AI Request Error ({}): {}", status, text);
+
+                append_ai_log(AiLogEntry {
+                    id: entry_id,
+                    timestamp,
+                    model: actual_model.to_string(),
+                    uri: url.to_string(),
+                    payload_preview: payload_json,
+                    response_preview: format!("HTTP {} - {}", status, text),
+                });
+
+                return Err(AppError::network(format!("API Error ({}): {}", status, text)));
+            }
+
+            let raw_text = response.text().await.unwrap_or_default();
+            let parsed: Result<OpenAIResponse, _> = serde_json::from_str(&raw_text);
+
+            append_ai_log(AiLogEntry {
+                id: entry_id,
+                timestamp,
+                model: actual_model.to_string(),
+                uri: url.to_string(),
+                payload_preview: payload_json,
+                response_preview: raw_text.clone(),
+            });
+
+            let parsed = parsed.map_err(|e| format!("Failed to parse response: {}\nRaw: {}", e, raw_text))?;
+
+            if let Some(choice) = parsed.choices.first() {
+                let content = choice.message.content.trim().to_string();
+                // Strip markdown codeblocks if AI disobeyed
+                let cleaned = content
+                    .strip_prefix("```sql").unwrap_or(&content)
+                    .strip_prefix("```").unwrap_or(&content)
+                    .strip_suffix("```").unwrap_or(&content)
+                    .trim()
+                    .to_string();
+                Ok(cleaned)
+            } else {
+                Err(AppError::external("No choices returned from AI provider"))
+            }
+        },
+        Err(e) => {
+            append_ai_log(AiLogEntry {
+                id: entry_id,
+                timestamp,
+                model: actual_model.to_string(),
+                uri: url.to_string(),
+                payload_preview: payload_json,
+                response_preview: format!("Connection failed: {}", e),
+            });
+            Err(AppError::network(format!("HTTP request failed: {}", e)))
+        }
+    }
+}

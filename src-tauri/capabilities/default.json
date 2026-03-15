@@ -12,17 +12,13 @@
     {
       "identifier": "fs:allow-read-file",
       "allow": [
-        {
-          "path": "**"
-        }
+        { "path": "$HOME/**" }
       ]
     },
     {
       "identifier": "fs:allow-write-file",
       "allow": [
-        {
-          "path": "**"
-        }
+        { "path": "$HOME/**" }
       ]
     },
     "fs:allow-stat",

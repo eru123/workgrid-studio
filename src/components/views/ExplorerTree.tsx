@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo, memo } from "react";
+import { useState, useCallback, useEffect, useMemo, memo, useRef } from "react";
 import { useSchemaStore } from "@/state/schemaStore";
 import { CreateDatabaseModal } from "./CreateDatabaseModal";
 import { ConfirmModal } from "./ConfirmModal";
@@ -6,6 +6,7 @@ import { EditDatabaseModal } from "./EditDatabaseModal";
 import { ContextSubmenu } from "./ContextSubmenu";
 import { useProfilesStore } from "@/state/profilesStore";
 import { useLayoutStore } from "@/state/layoutStore";
+import { useSavedQueriesStore } from "@/state/savedQueriesStore";
 import {
   dbListDatabases,
   dbListTables,
@@ -14,10 +15,18 @@ import {
   dbExecuteQuery,
   dbImportCsv,
   dbImportSql,
+  type ImportResult,
 } from "@/lib/db";
 import { cn } from "@/lib/utils/cn";
 import { useAppStore } from "@/state/appStore";
+import {
+  appendConnectionOutput,
+  formatConnectionTarget,
+  formatOutputError,
+} from "@/lib/output";
 import { open } from "@tauri-apps/plugin-dialog";
+import { homeDir } from "@tauri-apps/api/path";
+import { listen } from "@tauri-apps/api/event";
 import {
   Database,
   Table2,
@@ -40,13 +49,16 @@ import {
   Square,
   PlusSquare,
   FileCode2,
+  FileText,
   Server,
   Plus,
   TableProperties,
   Rows3,
   Import,
+  Search,
 } from "lucide-react";
 import { SiPostgresql, SiMysql, SiSqlite, SiMariadb } from "react-icons/si";
+import { appendOutput } from "@/lib/output";
 
 const DB_ICONS: Record<string, React.ElementType> = {
   postgres: SiPostgresql,
@@ -56,6 +68,35 @@ const DB_ICONS: Record<string, React.ElementType> = {
   mssql: Database,
 };
 
+function getConnectionStatusMeta(status?: string) {
+  switch (status) {
+    case "connected":
+      return {
+        label: "Connected",
+        dotClassName: "bg-green-500",
+        badgeClassName: "text-green-400 bg-green-500/10",
+      };
+    case "connecting":
+      return {
+        label: "Connecting",
+        dotClassName: "bg-yellow-500",
+        badgeClassName: "text-yellow-400 bg-yellow-500/10",
+      };
+    case "error":
+      return {
+        label: "Error",
+        dotClassName: "bg-red-500",
+        badgeClassName: "text-red-400 bg-red-500/10",
+      };
+    default:
+      return {
+        label: "Disconnected",
+        dotClassName: "bg-muted-foreground/50",
+        badgeClassName: "text-muted-foreground bg-muted/50",
+      };
+  }
+}
+
 type ExpandedSet = Record<string, boolean>;
 
 type ContextMenuTarget =
@@ -63,10 +104,49 @@ type ContextMenuTarget =
   | { type: "database"; profileId: string; databases: string[] }
   | { type: "table"; profileId: string; database: string; table: string };
 
+interface ImportProgressState {
+  jobId: string;
+  kind: "sql" | "csv";
+  phase: "started" | "progress" | "completed" | "error";
+  itemsProcessed: number;
+  itemsTotal: number;
+  rowsProcessed: number;
+  rowsTotal: number;
+  percent: number;
+  message: string;
+  summary?: ImportResult | null;
+  targetLabel: string;
+  fileName: string;
+}
+
+// ─── Highlight helper ────────────────────────────────────────────────
+function HighlightMatch({ text, query }: { text: string; query: string }) {
+  if (!query.trim()) return <>{text}</>;
+  let re: RegExp;
+  try { re = new RegExp(`(${query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`, "gi"); }
+  catch { return <>{text}</>; }
+  const parts = text.split(re);
+  return (
+    <>
+      {parts.map((part, i) =>
+        re.test(part) ? (
+          <mark key={i} className="bg-yellow-400/30 text-foreground rounded-sm px-px">{part}</mark>
+        ) : (
+          <span key={i}>{part}</span>
+        )
+      )}
+    </>
+  );
+}
+
 export function ExplorerTree() {
   const connectedProfiles = useSchemaStore((s) => s.connectedProfiles);
+  const schemaDatabases = useSchemaStore((s) => s.databases);
+  const schemaTables = useSchemaStore((s) => s.tables);
+  const schemaColumns = useSchemaStore((s) => s.columns);
   const profiles = useProfilesStore((s) => s.profiles);
   const setActiveView = useLayoutStore((s) => s.setActiveView);
+  const openTab = useLayoutStore((s) => s.openTab);
   const [expanded, setExpanded] = useState<ExpandedSet>({});
 
   const connectedList = profiles.filter(
@@ -94,6 +174,58 @@ export function ExplorerTree() {
   } | null>(null);
   const [dbFilter, setDbFilter] = useState("");
   const [tableFilter, setTableFilter] = useState("");
+  const [globalSearch, setGlobalSearch] = useState("");
+  const [searchFocusIdx, setSearchFocusIdx] = useState(0);
+  const globalSearchRef = useRef<HTMLInputElement>(null);
+  const [importJobs, setImportJobs] = useState<Record<string, ImportProgressState>>({});
+
+  // ── Global search results ────────────────────────────────
+  type SearchResult =
+    | { kind: "database"; profileId: string; profileName: string; database: string }
+    | { kind: "table"; profileId: string; profileName: string; database: string; table: string }
+    | { kind: "column"; profileId: string; profileName: string; database: string; table: string; column: string };
+
+  const searchResults = useMemo((): SearchResult[] => {
+    const q = globalSearch.trim();
+    if (!q) return [];
+    let re: RegExp;
+    try { re = new RegExp(q, "i"); }
+    catch { return []; }
+    const results: SearchResult[] = [];
+    for (const profile of connectedList) {
+      const profileName = connectedProfiles[profile.id]?.name ?? profile.name;
+      const dbs = schemaDatabases[profile.id] ?? [];
+      for (const database of dbs) {
+        if (re.test(database)) {
+          results.push({ kind: "database", profileId: profile.id, profileName, database });
+        }
+        const tables = schemaTables[`${profile.id}::${database}`] ?? [];
+        for (const table of tables) {
+          if (re.test(table)) {
+            results.push({ kind: "table", profileId: profile.id, profileName, database, table });
+          }
+          const cols = schemaColumns[`${profile.id}::${database}::${table}`] ?? [];
+          for (const col of cols) {
+            if (re.test(col.name)) {
+              results.push({ kind: "column", profileId: profile.id, profileName, database, table, column: col.name });
+            }
+          }
+        }
+      }
+    }
+    return results.slice(0, 100);
+  }, [globalSearch, connectedList, connectedProfiles, schemaDatabases, schemaTables, schemaColumns]);
+
+  const openSearchResult = useCallback((result: SearchResult) => {
+    if (result.kind === "database") {
+      openTab({ title: result.database, type: "database-view", meta: { profileId: result.profileId, database: result.database } });
+    } else if (result.kind === "table") {
+      openTab({ title: `Data: ${result.table}`, type: "table-data", meta: { profileId: result.profileId, database: result.database, table: result.table } });
+    } else {
+      openTab({ title: `Data: ${result.table}`, type: "table-data", meta: { profileId: result.profileId, database: result.database, table: result.table } });
+    }
+    setGlobalSearch("");
+  }, [openTab]);
 
   // Hide context menu on click outside
   useEffect(() => {
@@ -106,9 +238,137 @@ export function ExplorerTree() {
     };
   }, []);
 
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+
+    void listen<ImportProgressState>("import-progress", (event) => {
+      if (disposed) return;
+      const payload = event.payload;
+      setImportJobs((prev) => {
+        const existing = prev[payload.jobId];
+        if (!existing) return prev;
+
+        return {
+          ...prev,
+          [payload.jobId]: {
+            ...existing,
+            ...payload,
+            summary: existing.summary ?? null,
+          },
+        };
+      });
+    }).then((fn) => {
+      unlisten = fn;
+    });
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
+
   const toggle = useCallback((key: string) => {
     setExpanded((prev) => ({ ...prev, [key]: !prev[key] }));
   }, []);
+
+  const runImportJob = useCallback(
+    async ({
+      kind,
+      targetLabel,
+      filePath,
+      run,
+    }: {
+      kind: "sql" | "csv";
+      targetLabel: string;
+      filePath: string;
+      run: (jobId: string) => Promise<ImportResult>;
+    }) => {
+      const jobId = crypto.randomUUID();
+      const fileName = filePath.split(/[/\\]/).pop() || filePath;
+
+      setImportJobs((prev) => ({
+        ...prev,
+        [jobId]: {
+          jobId,
+          kind,
+          phase: "started",
+          itemsProcessed: 0,
+          itemsTotal: 0,
+          rowsProcessed: 0,
+          rowsTotal: 0,
+          percent: 0,
+          message: `Preparing ${kind.toUpperCase()} import...`,
+          summary: null,
+          targetLabel,
+          fileName,
+        },
+      }));
+
+      appendOutput("info", `Starting ${kind.toUpperCase()} import for ${targetLabel} from ${fileName}.`);
+
+      try {
+        const result = await run(jobId);
+
+        setImportJobs((prev) => ({
+          ...prev,
+          [jobId]: {
+            ...(prev[jobId] ?? {
+              jobId,
+              kind,
+              targetLabel,
+              fileName,
+            }),
+            kind,
+            phase: "completed",
+            itemsProcessed: result.itemsCommitted,
+            itemsTotal: result.itemsAttempted,
+            rowsProcessed: result.rowsCommitted,
+            rowsTotal: result.rowsAttempted,
+            percent: 100,
+            message: result.summary,
+            summary: result,
+            targetLabel,
+            fileName,
+          },
+        }));
+
+        appendOutput("success", `${kind.toUpperCase()} import completed for ${targetLabel}: ${result.summary}`);
+        useAppStore.getState().addToast({
+          title: `${kind.toUpperCase()} Import Complete`,
+          description: result.summary,
+        });
+      } catch (error) {
+        const message = String(error);
+
+        setImportJobs((prev) => ({
+          ...prev,
+          [jobId]: {
+            ...(prev[jobId] ?? {
+              jobId,
+              kind,
+              targetLabel,
+              fileName,
+            }),
+            kind,
+            phase: "error",
+            message,
+            summary: null,
+            targetLabel,
+            fileName,
+          },
+        }));
+
+        appendOutput("error", `${kind.toUpperCase()} import failed for ${targetLabel}: ${message}`);
+        useAppStore.getState().addToast({
+          title: `${kind.toUpperCase()} Import Failed`,
+          description: message,
+          variant: "destructive",
+        });
+      }
+    },
+    [],
+  );
 
   if (connectedList.length === 0) {
     return (
@@ -141,7 +401,39 @@ export function ExplorerTree() {
   }
 
   return (
-    <div className="flex flex-col h-full bg-background select-none text-[12px]">
+    <div className="relative flex h-full flex-col bg-background text-[12px] select-none">
+      {/* Global Search */}
+      <div className="shrink-0 flex items-center h-7 border-b bg-muted/10 px-2 gap-1.5 focus-within:bg-muted/20 transition-colors">
+        <Search className="w-3 h-3 text-muted-foreground shrink-0" />
+        <input
+          ref={globalSearchRef}
+          type="text"
+          placeholder="Search across all servers…"
+          value={globalSearch}
+          onChange={(e) => { setGlobalSearch(e.target.value); setSearchFocusIdx(0); }}
+          onKeyDown={(e) => {
+            if (e.key === "ArrowDown") { e.preventDefault(); setSearchFocusIdx((i) => Math.max(0, Math.min(i + 1, searchResults.length - 1))); }
+            else if (e.key === "ArrowUp") { e.preventDefault(); setSearchFocusIdx((i) => Math.max(i - 1, 0)); }
+            else if (e.key === "Enter" && searchResults.length > 0) { 
+              const idx = Math.max(0, Math.min(searchFocusIdx, searchResults.length - 1));
+              openSearchResult(searchResults[idx]); 
+            }
+            else if (e.key === "Escape") { setGlobalSearch(""); }
+          }}
+          className="bg-transparent border-none outline-none w-full text-[11px] text-foreground placeholder:text-muted-foreground/60 h-full"
+        />
+        {globalSearch && (
+          <button
+            type="button"
+            className="shrink-0 rounded p-0.5 text-muted-foreground hover:text-foreground"
+            onClick={() => setGlobalSearch("")}
+            aria-label="Clear global search"
+          >
+            <X className="w-3 h-3" />
+          </button>
+        )}
+      </div>
+
       {/* Filter Bar */}
       <div className="shrink-0 flex items-center h-6.5 border-b bg-muted/20 text-[11px]">
         <div className="flex-1 flex items-center h-full px-2 border-r focus-within:bg-muted/30 transition-colors">
@@ -154,10 +446,14 @@ export function ExplorerTree() {
             className="bg-transparent border-none outline-none w-full text-foreground placeholder:text-muted-foreground/60 h-full"
           />
           {dbFilter && (
-            <X
-              className="w-3 h-3 text-muted-foreground cursor-pointer hover:text-foreground shrink-0"
+            <button
+              type="button"
+              className="shrink-0 rounded p-0.5 text-muted-foreground hover:text-foreground"
               onClick={() => setDbFilter("")}
-            />
+              aria-label="Clear database filter"
+            >
+              <X className="w-3 h-3" />
+            </button>
           )}
         </div>
         <div className="flex-1 flex items-center h-full px-2 focus-within:bg-muted/30 transition-colors">
@@ -170,16 +466,63 @@ export function ExplorerTree() {
             className="bg-transparent border-none outline-none w-full text-foreground placeholder:text-muted-foreground/60 h-full font-mono"
           />
           {tableFilter && (
-            <X
-              className="w-3 h-3 text-muted-foreground cursor-pointer hover:text-foreground shrink-0"
+            <button
+              type="button"
+              className="shrink-0 rounded p-0.5 text-muted-foreground hover:text-foreground"
               onClick={() => setTableFilter("")}
-            />
+              aria-label="Clear table filter"
+            >
+              <X className="w-3 h-3" />
+            </button>
           )}
         </div>
       </div>
 
+      {/* Global Search Results */}
+      {globalSearch.trim() && (
+        <div className="flex-1 overflow-y-auto overflow-x-hidden">
+          {searchResults.length === 0 ? (
+            <div className="px-3 py-4 text-[11px] text-muted-foreground text-center">No results</div>
+          ) : (
+            <div className="py-0.5">
+              {searchResults.map((r, i) => {
+                const isFocused = i === searchFocusIdx;
+                return (
+                  <button
+                    key={i}
+                    className={cn(
+                      "w-full text-left px-3 py-1 flex flex-col gap-0.5 hover:bg-accent transition-colors",
+                      isFocused && "bg-accent"
+                    )}
+                    onClick={() => openSearchResult(r)}
+                    onMouseEnter={() => setSearchFocusIdx(i)}
+                  >
+                    <div className="flex items-center gap-1.5 text-[11px] font-medium truncate">
+                      {r.kind === "database" && <Database className="w-3 h-3 text-blue-400 shrink-0" />}
+                      {r.kind === "table" && <Table2 className="w-3 h-3 text-green-400 shrink-0" />}
+                      {r.kind === "column" && <Hash className="w-3 h-3 text-muted-foreground shrink-0" />}
+                      <span className="truncate">
+                        <HighlightMatch text={r.kind === "database" ? r.database : r.kind === "table" ? r.table : r.column} query={globalSearch} />
+                      </span>
+                    </div>
+                    <div className="text-[10px] text-muted-foreground truncate pl-4.5">
+                      {r.profileName}
+                      {r.kind !== "database" && <> › <HighlightMatch text={r.database} query={globalSearch} /></>}
+                      {r.kind === "column" && <> › <HighlightMatch text={r.table} query={globalSearch} /></>}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Tree (hidden when global search is active) */}
       <div
-        className="flex-1 overflow-y-auto overflow-x-hidden pt-1"
+        className={cn("flex-1 overflow-y-auto overflow-x-hidden pt-1", globalSearch.trim() && "hidden")}
+        role="tree"
+        aria-label="Connected databases"
         onContextMenu={(e) => {
           // If we clicked directly on this container (empty space)
           // and not on a child element, show context menu for the last server
@@ -285,10 +628,24 @@ export function ExplorerTree() {
           if (target.type === "server") {
             const handleDisconnect = async () => {
               setContextMenu(null);
+              appendConnectionOutput(
+                profile,
+                "info",
+                `Disconnecting from ${formatConnectionTarget(profile)}...`,
+              );
               try {
                 await dbDisconnect(profileId);
-              } catch {
-                /* ignore */
+                appendConnectionOutput(
+                  profile,
+                  "success",
+                  `Disconnected from ${formatConnectionTarget(profile)}.`,
+                );
+              } catch (e) {
+                appendConnectionOutput(
+                  profile,
+                  "warning",
+                  `Disconnect failed for ${formatConnectionTarget(profile)}: ${formatOutputError(e)}`,
+                );
               }
               useProfilesStore
                 .getState()
@@ -598,6 +955,23 @@ export function ExplorerTree() {
                       onClick={() => {
                         setContextMenu(null);
                         useLayoutStore.getState().openTab({
+                          title: `Schema: ${targetDbs[0]}`,
+                          type: "schema",
+                          meta: {
+                            profileId,
+                            database: targetDbs[0],
+                          },
+                        });
+                      }}
+                    >
+                      <Link2 className="w-3.5 h-3.5 text-muted-foreground" />{" "}
+                      Schema Diagram
+                    </button>
+                    <button
+                      className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2"
+                      onClick={() => {
+                        setContextMenu(null);
+                        useLayoutStore.getState().openTab({
                           title: `Query: ${targetDbs[0]}`,
                           type: "sql",
                           meta: { profileId, database: targetDbs[0] },
@@ -628,26 +1002,18 @@ export function ExplorerTree() {
                         setContextMenu(null);
                         const file = await open({
                            multiple: false,
+                           defaultPath: await homeDir(),
                            filters: [{ name: 'SQL Script', extensions: ['sql'] }]
                         });
                         if (file) {
-                          useAppStore.getState().addToast({
-                            title: "Importing...",
-                            description: "Executing SQL file in background.",
+                          const selectedFile = Array.isArray(file) ? file[0] : file;
+                          await runImportJob({
+                            kind: "sql",
+                            targetLabel: `${profile.name} / ${targetDbs[0]}`,
+                            filePath: selectedFile,
+                            run: (jobId) =>
+                              dbImportSql(profileId, targetDbs[0], selectedFile, jobId),
                           });
-                          try {
-                            const res = await dbImportSql(profileId, targetDbs[0], Array.isArray(file) ? file[0] : file);
-                            useAppStore.getState().addToast({
-                              title: "Import Success",
-                              description: res
-                            });
-                          } catch (err: any) {
-                            useAppStore.getState().addToast({
-                              title: "Import Failed",
-                              description: String(err),
-                              variant: "destructive"
-                            });
-                          }
                         }
                       }}
                     >
@@ -823,26 +1189,18 @@ export function ExplorerTree() {
                     setContextMenu(null);
                     const file = await open({
                        multiple: false,
+                       defaultPath: await homeDir(),
                        filters: [{ name: 'CSV File', extensions: ['csv'] }]
                     });
                     if (file) {
-                      useAppStore.getState().addToast({
-                        title: "Importing...",
-                        description: "Importing CSV data in background.",
+                      const selectedFile = Array.isArray(file) ? file[0] : file;
+                      await runImportJob({
+                        kind: "csv",
+                        targetLabel: `${profile.name} / ${targetDb}.${targetTable}`,
+                        filePath: selectedFile,
+                        run: (jobId) =>
+                          dbImportCsv(profileId, targetDb, targetTable, selectedFile, jobId),
                       });
-                      try {
-                        const res = await dbImportCsv(profileId, targetDb, targetTable, Array.isArray(file) ? file[0] : file);
-                        useAppStore.getState().addToast({
-                          title: "Import Success",
-                          description: res
-                        });
-                      } catch (err: any) {
-                        useAppStore.getState().addToast({
-                          title: "Import Failed",
-                          description: String(err),
-                          variant: "destructive"
-                        });
-                      }
                     }
                   }}
                 >
@@ -927,13 +1285,102 @@ export function ExplorerTree() {
           }}
         />
       )}
+
+      {Object.keys(importJobs).length > 0 && (
+        <div className="pointer-events-none absolute inset-x-2 bottom-2 z-30 flex max-h-64 flex-col gap-2 overflow-y-auto">
+          {Object.values(importJobs)
+            .sort((left, right) => left.fileName.localeCompare(right.fileName))
+            .map((job) => {
+              const percent = Math.max(0, Math.min(100, Math.round(job.percent || 0)));
+              const toneClass =
+                job.phase === "error"
+                  ? "border-red-500/40 bg-red-500/10"
+                  : job.phase === "completed"
+                    ? "border-green-500/40 bg-green-500/10"
+                    : "border-primary/30 bg-background/95";
+
+              return (
+                <div
+                  key={job.jobId}
+                  className={cn(
+                    "pointer-events-auto rounded-lg border p-3 shadow-lg backdrop-blur",
+                    toneClass,
+                  )}
+                >
+                  <div className="mb-2 flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="text-[11px] font-semibold uppercase tracking-wide text-foreground">
+                        {job.kind.toUpperCase()} import
+                      </div>
+                      <div className="truncate text-[11px] text-muted-foreground">
+                        {job.targetLabel}
+                      </div>
+                    </div>
+                    {(job.phase === "completed" || job.phase === "error") && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setImportJobs((prev) => {
+                            const next = { ...prev };
+                            delete next[job.jobId];
+                            return next;
+                          })
+                        }
+                        className="rounded p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                        aria-label="Dismiss import summary"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="mb-2 h-2 overflow-hidden rounded-full bg-muted/40">
+                    <div
+                      className={cn(
+                        "h-full transition-[width]",
+                        job.phase === "error"
+                          ? "bg-red-400"
+                          : job.phase === "completed"
+                            ? "bg-green-400"
+                            : "bg-primary",
+                      )}
+                      style={{ width: `${job.phase === "error" ? percent : Math.max(percent, 4)}%` }}
+                    />
+                  </div>
+
+                  <div className="text-[11px] text-foreground">{job.message}</div>
+                  <div className="mt-1 flex flex-wrap items-center gap-2 text-[10px] text-muted-foreground">
+                    <span>{job.fileName}</span>
+                    {(job.rowsTotal > 0 || job.summary?.rowsAttempted) && (
+                      <span>
+                        Rows {job.summary?.rowsCommitted ?? job.rowsProcessed}/
+                        {job.summary?.rowsAttempted ?? job.rowsTotal}
+                      </span>
+                    )}
+                    {(job.itemsTotal > 0 || job.summary?.itemsAttempted) && (
+                      <span>
+                        Items {job.summary?.itemsCommitted ?? job.itemsProcessed}/
+                        {job.summary?.itemsAttempted ?? job.itemsTotal}
+                      </span>
+                    )}
+                    {job.summary && (
+                      <span>
+                        Skipped {job.summary.rowsSkipped}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+        </div>
+      )}
     </div>
   );
 }
 
 // ─── Profile Node (root) → lazy loads databases ─────────────────────
 
-function ProfileNode({
+const ProfileNode = memo(function ProfileNode({
   profileId,
   name,
   color,
@@ -969,13 +1416,15 @@ function ProfileNode({
   const databases = useSchemaStore((s) => s.databases[profileId]);
   const loading = useSchemaStore((s) => s.loadingDatabases[profileId]);
   const error = useSchemaStore((s) => s.errors[`dbs-${profileId}`]);
+  const latency = useSchemaStore((s) => s.latencies[profileId] ?? null);
   const setDatabases = useSchemaStore((s) => s.setDatabases);
   const setLoading = useSchemaStore((s) => s.setLoading);
   const setError = useSchemaStore((s) => s.setError);
   const clearError = useSchemaStore((s) => s.clearError);
   const openTab = useLayoutStore((s) => s.openTab);
-  
+
   const connectionStatus = useProfilesStore((s) => s.profiles.find((p) => p.id === profileId)?.connectionStatus);
+  const statusMeta = getConnectionStatusMeta(connectionStatus);
 
   const nodeKey = `profile-${profileId}`;
   const isOpen = expanded[nodeKey] ?? true;
@@ -1052,11 +1501,41 @@ function ProfileNode({
         })()}
         label={name}
         badge={filteredDatabases ? String(filteredDatabases.length) : undefined}
+        suffix={
+          <span className="ml-1 flex items-center gap-1 shrink-0">
+            <span
+              className={cn(
+                "inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[9px] font-medium",
+                statusMeta.badgeClassName,
+              )}
+            >
+              <span className={cn("h-1.5 w-1.5 rounded-full", statusMeta.dotClassName)} />
+              {statusMeta.label}
+            </span>
+            {latency !== null && (
+              <span className={cn(
+                "text-[9px] tabular-nums font-mono px-1 rounded shrink-0",
+                latency === -1
+                  ? "text-red-400 bg-red-400/10"
+                  : latency > 200
+                  ? "text-amber-400 bg-amber-400/10"
+                  : "text-muted-foreground/60"
+              )}>
+                {latency === -1 ? "err" : `${latency}ms`}
+              </span>
+            )}
+          </span>
+        }
         bold
       />
 
       {isOpen && (
         <>
+          <SavedQueriesNode
+            profileId={profileId}
+            expanded={expanded}
+            toggle={toggle}
+          />
           {loading && (
             <TreeRow
               depth={1}
@@ -1095,11 +1574,114 @@ function ProfileNode({
       )}
     </>
   );
-}
+});
 
 // ─── Database Node → single-click opens tab, expand loads tables ────
 
-function DatabaseNode({
+const SavedQueriesNode = memo(function SavedQueriesNode({
+  profileId,
+  expanded,
+  toggle,
+}: {
+  profileId: string;
+  expanded: ExpandedSet;
+  toggle: (key: string) => void;
+}) {
+  const savedQueries = useSavedQueriesStore((s) => s.byProfile[profileId] ?? []);
+  const loading = useSavedQueriesStore((s) => s.loadingByProfile[profileId] ?? false);
+  const error = useSavedQueriesStore((s) => s.errorByProfile[profileId] ?? null);
+  const loadProfileQueries = useSavedQueriesStore((s) => s.loadProfileQueries);
+  const openTab = useLayoutStore((s) => s.openTab);
+
+  const nodeKey = `saved-queries-${profileId}`;
+  const isOpen = expanded[nodeKey] ?? true;
+
+  useEffect(() => {
+    if (isOpen) {
+      void loadProfileQueries(profileId);
+    }
+  }, [isOpen, loadProfileQueries, profileId]);
+
+  return (
+    <>
+      <TreeRow
+        depth={1}
+        isOpen={isOpen}
+        onChevronClick={() => toggle(nodeKey)}
+        onLabelClick={() => toggle(nodeKey)}
+        icon={<FileCode2 className="w-3.5 h-3.5 text-emerald-400/80" />}
+        label="Saved Queries"
+        badge={savedQueries.length > 0 ? String(savedQueries.length) : undefined}
+      />
+
+      {isOpen && (
+        <>
+          {loading && (
+            <TreeRow
+              depth={2}
+              icon={<Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />}
+              label="Loading saved queries..."
+              muted
+            />
+          )}
+          {error && (
+            <TreeRow
+              depth={2}
+              icon={<AlertCircle className="w-3 h-3 text-red-400" />}
+              label={error}
+              muted
+            />
+          )}
+          {!loading && !error && savedQueries.length === 0 && (
+            <TreeRow
+              depth={2}
+              icon={<FileCode2 className="w-3 h-3 text-muted-foreground/40" />}
+              label="No saved queries yet"
+              muted
+            />
+          )}
+          {savedQueries.map((query) => (
+            <TreeRow
+              key={query.id}
+              depth={2}
+              onLabelClick={() =>
+                openTab({
+                  title: query.name,
+                  type: "sql",
+                  meta: {
+                    profileId,
+                    database: query.database ?? "",
+                    savedQueryId: query.id,
+                    savedQueryPath: query.filePath,
+                    filePath: query.absolutePath,
+                  },
+                })
+              }
+              icon={<FileText className="w-3.5 h-3.5 text-primary/80" />}
+              label={query.name}
+              suffix={
+                <span className="ml-1 flex items-center gap-1 text-[10px] text-muted-foreground">
+                  {query.database && (
+                    <span className="rounded bg-muted/40 px-1 py-0.5 font-mono">
+                      {query.database}
+                    </span>
+                  )}
+                  {query.scheduleEnabled && query.scheduleMinutes && (
+                    <span className="rounded bg-primary/10 px-1 py-0.5 text-primary">
+                      {query.scheduleMinutes}m
+                    </span>
+                  )}
+                </span>
+              }
+            />
+          ))}
+        </>
+      )}
+    </>
+  );
+});
+
+const DatabaseNode = memo(function DatabaseNode({
   profileId,
   profileName,
   database,
@@ -1172,7 +1754,7 @@ function DatabaseNode({
   }, [tables, tableFilter]);
 
   // Single click on label → open database tab OR select if ctrl/cmd held
-  const handleLabelClick = (e: React.MouseEvent) => {
+  const handleLabelClick = (e: React.MouseEvent | React.KeyboardEvent) => {
     if (e.ctrlKey || e.metaKey) {
       onSelectDatabase(cacheKey, true);
     } else {
@@ -1246,11 +1828,11 @@ function DatabaseNode({
       )}
     </>
   );
-}
+});
 
 // ─── Table Node → lazy loads columns ────────────────────────────────
 
-function TableNode({
+const TableNode = memo(function TableNode({
   profileId,
   database,
   table,
@@ -1372,7 +1954,7 @@ function TableNode({
       )}
     </>
   );
-}
+});
 
 // ─── Highlight matching text in a label ────────────────────────────────
 
@@ -1424,7 +2006,7 @@ const TreeRow = memo(function TreeRow({
   depth: number;
   isOpen?: boolean;
   onChevronClick?: () => void;
-  onLabelClick?: (e: React.MouseEvent) => void;
+  onLabelClick?: (e: React.MouseEvent | React.KeyboardEvent) => void;
   onDoubleClick?: () => void;
   onContextMenu?: (e: React.MouseEvent) => void;
   icon: React.ReactNode;
@@ -1437,9 +2019,15 @@ const TreeRow = memo(function TreeRow({
   highlight?: string;
 }) {
   const isFolder = isOpen !== undefined;
+  const isInteractive = Boolean(onChevronClick || onLabelClick || onDoubleClick);
 
   return (
     <div
+      role="treeitem"
+      tabIndex={isInteractive ? 0 : -1}
+      aria-expanded={isFolder ? isOpen : undefined}
+      aria-selected={selected || undefined}
+      aria-label={label}
       className={cn(
         "flex items-center h-5.5 cursor-pointer hover:bg-accent/50 transition-colors",
         bold && "font-medium",
@@ -1449,6 +2037,38 @@ const TreeRow = memo(function TreeRow({
       style={{ paddingLeft: `${depth * 14 + 6}px` }}
       onDoubleClick={onDoubleClick}
       onContextMenu={onContextMenu}
+      onKeyDown={(e) => {
+        if (e.key === "ArrowRight" && isFolder && !isOpen) {
+          e.preventDefault();
+          onChevronClick?.();
+          return;
+        }
+
+        if (e.key === "ArrowLeft" && isFolder && isOpen) {
+          e.preventDefault();
+          onChevronClick?.();
+          return;
+        }
+
+        if (e.key === " ") {
+          e.preventDefault();
+          if (isFolder) {
+            onChevronClick?.();
+          } else {
+            onLabelClick?.(e);
+          }
+          return;
+        }
+
+        if (e.key === "Enter") {
+          e.preventDefault();
+          if (onLabelClick) {
+            onLabelClick(e);
+          } else {
+            onDoubleClick?.();
+          }
+        }
+      }}
     >
       {/* Chevron — has its own click handler */}
       {isFolder ? (

@@ -47,6 +47,16 @@ const QueryTab = lazy(() =>
     default: m.QueryTab,
   })),
 );
+const ResultsTab = lazy(() =>
+  import("@/components/views/ResultsTab").then((m) => ({
+    default: m.ResultsTab,
+  })),
+);
+const SchemaDiagramTab = lazy(() =>
+  import("@/components/views/SchemaDiagramTab").then((m) => ({
+    default: m.SchemaDiagramTab,
+  })),
+);
 const TableDataTab = lazy(() =>
   import("@/components/views/TableDataTab").then((m) => ({
     default: m.TableDataTab,
@@ -110,8 +120,21 @@ const TabContent = memo(function TabContent({ tab, leafId }: { tab: EditorTab, l
         return (
           <QueryTab
             tabId={tab.id}
+            leafId={leafId}
             profileId={tab.meta?.profileId ?? ""}
             database={tab.meta?.database}
+            savedQueryId={tab.meta?.savedQueryId}
+            savedQueryPath={tab.meta?.savedQueryPath}
+            savedQueryName={tab.title}
+          />
+        );
+      case "results":
+        return <ResultsTab tabId={tab.id} />;
+      case "schema":
+        return (
+          <SchemaDiagramTab
+            profileId={tab.meta?.profileId ?? ""}
+            database={tab.meta?.database ?? ""}
           />
         );
       default:
@@ -128,6 +151,8 @@ const TabContent = memo(function TabContent({ tab, leafId }: { tab: EditorTab, l
 
 const TAB_TYPE_LABELS: Record<EditorTab["type"], string> = {
   sql: "SQL Query (Ctrl+N)",
+  results: "Frozen Results",
+  schema: "Schema Diagram",
   "database-view": "Database View",
   "table-designer": "Table Designer",
   "table-data": "Table Data",
@@ -145,6 +170,8 @@ function tabIcon(type: EditorTab["type"], isActive: boolean) {
   let icon;
   switch (type) {
     case "sql":          icon = <Terminal className={cls} />; break;
+    case "results":      icon = <Rows3 className={cls} />; break;
+    case "schema":       icon = <Database className={cls} />; break;
     case "database-view": icon = <Database className={cls} />; break;
     case "table-designer": icon = <Table2 className={cls} />; break;
     case "table-data":   icon = <Rows3 className={cls} />; break;
@@ -166,6 +193,7 @@ export function EditorNode({ tree }: { tree: SplitTree }) {
   const closeTabsToRight = useLayoutStore((s) => s.closeTabsToRight);
   const closeAllTabs = useLayoutStore((s) => s.closeAllTabs);
   const splitLeaf = useLayoutStore((s) => s.splitLeaf);
+  const splitLeafAndMove = useLayoutStore((s) => s.splitLeafAndMove);
   const closeLeaf = useLayoutStore((s) => s.closeLeaf);
   const setActiveLeaf = useLayoutStore((s) => s.setActiveLeaf);
   const setActiveTab = useLayoutStore((s) => s.setActiveTab);
@@ -182,10 +210,24 @@ export function EditorNode({ tree }: { tree: SplitTree }) {
     tabId: string;
   } | null>(null);
 
+  const [isDragging, setIsDragging] = useState<boolean>(false);
   const [dragOverTabId, setDragOverTabId] = useState<string | null>(null);
   const [isDragOverPane, setIsDragOverPane] = useState<boolean>(false);
+  const [dragOverSplit, setDragOverSplit] = useState<"horizontal" | "vertical" | null>(null);
   const [renamingTabId, setRenamingTabId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
+
+  // Track any drag-in-progress globally so all panes show their edge drop zones
+  useEffect(() => {
+    const onStart = () => setIsDragging(true);
+    const onEnd = () => { setIsDragging(false); setDragOverSplit(null); };
+    window.addEventListener("dragstart", onStart);
+    window.addEventListener("dragend", onEnd);
+    return () => {
+      window.removeEventListener("dragstart", onStart);
+      window.removeEventListener("dragend", onEnd);
+    };
+  }, []);
 
   const handleDragStart = (e: React.DragEvent, tabId: string, leafId: string) => {
     e.dataTransfer.effectAllowed = "move";
@@ -297,6 +339,8 @@ export function EditorNode({ tree }: { tree: SplitTree }) {
         >
           <div
             className="absolute inset-0 flex items-end overflow-x-auto overflow-y-hidden"
+            role="tablist"
+            aria-label="Editor tabs"
             onDragEnter={(e) => handleDragEnter(e, null)}
             onDragOver={handleDragOver}
             onDrop={(e) => handleDrop(e, tree.id)}
@@ -307,6 +351,11 @@ export function EditorNode({ tree }: { tree: SplitTree }) {
               return (
                 <div
                   key={tab.id}
+                  role="tab"
+                  aria-selected={isActive}
+                  aria-label={`${tab.title} (${TAB_TYPE_LABELS[tab.type] ?? tab.type})`}
+                  tabIndex={isActive ? 0 : -1}
+                  data-tab-id={tab.id}
                   className={cn(
                     "group flex items-center gap-1 h-full px-2 text-xs cursor-pointer select-none shrink-0 transition-all border-b-2",
                     isActive
@@ -325,6 +374,45 @@ export function EditorNode({ tree }: { tree: SplitTree }) {
                     handleDrop(e, tree.id, idx);
                   }}
                   onClick={() => setActiveTab(tab.id, tree.id)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      setActiveTab(tab.id, tree.id);
+                      return;
+                    }
+
+                    if (
+                      e.key !== "ArrowRight" &&
+                      e.key !== "ArrowLeft" &&
+                      e.key !== "Home" &&
+                      e.key !== "End"
+                    ) {
+                      return;
+                    }
+
+                    const tabEls = Array.from(
+                      e.currentTarget.parentElement?.querySelectorAll<HTMLElement>('[role="tab"]') ?? [],
+                    );
+                    if (tabEls.length === 0) return;
+
+                    let nextIndex = idx;
+                    if (e.key === "ArrowRight") {
+                      nextIndex = (idx + 1) % tabEls.length;
+                    } else if (e.key === "ArrowLeft") {
+                      nextIndex = (idx - 1 + tabEls.length) % tabEls.length;
+                    } else if (e.key === "Home") {
+                      nextIndex = 0;
+                    } else if (e.key === "End") {
+                      nextIndex = tabEls.length - 1;
+                    }
+
+                    e.preventDefault();
+                    tabEls[nextIndex]?.focus();
+                    const nextTabId = tabEls[nextIndex]?.dataset.tabId;
+                    if (nextTabId) {
+                      setActiveTab(nextTabId, tree.id);
+                    }
+                  }}
                   onAuxClick={(e) => {
                     if (e.button === 1) {
                       e.preventDefault();
@@ -442,6 +530,7 @@ export function EditorNode({ tree }: { tree: SplitTree }) {
               }}
               className="h-full px-2 text-muted-foreground hover:text-foreground hover:bg-accent/40 transition-colors shrink-0"
               title="New SQL Query (Ctrl+N)"
+              aria-label="New SQL Query (Ctrl+N)"
             >
               <Plus className="w-3.5 h-3.5" />
             </button>
@@ -455,6 +544,7 @@ export function EditorNode({ tree }: { tree: SplitTree }) {
                 onClick={() => splitLeaf(tree.id, "horizontal")}
                 className="p-1 rounded text-muted-foreground/60 hover:text-foreground hover:bg-accent/60 transition-colors"
                 title="Split Right"
+                aria-label="Split Right"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="18" x="3" y="3" rx="2" ry="2" /><line x1="15" x2="15" y1="3" y2="21" /></svg>
               </button>
@@ -462,6 +552,7 @@ export function EditorNode({ tree }: { tree: SplitTree }) {
                 onClick={() => splitLeaf(tree.id, "vertical")}
                 className="p-1 rounded text-muted-foreground/60 hover:text-foreground hover:bg-accent/60 transition-colors"
                 title="Split Down"
+                aria-label="Split Down"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="18" x="3" y="3" rx="2" ry="2" /><line x1="3" x2="21" y1="15" y2="15" /></svg>
               </button>
@@ -473,6 +564,7 @@ export function EditorNode({ tree }: { tree: SplitTree }) {
                 }}
                 className="p-1 rounded text-muted-foreground/60 hover:text-red-400 hover:bg-red-400/10 transition-colors ml-1"
                 title="Close Pane"
+                aria-label="Close Pane"
               >
                 <X className="w-3.5 h-3.5" />
               </button>
@@ -577,6 +669,63 @@ export function EditorNode({ tree }: { tree: SplitTree }) {
             ))
           ) : (
             <WelcomeTab />
+          )}
+
+          {/* Edge drop zones — only visible when a tab drag is in progress */}
+          {isDragging && (
+            <>
+              {/* Right edge → horizontal split */}
+              <div
+                className={cn(
+                  "absolute top-0 right-0 h-full w-[20%] z-50 flex items-center justify-center transition-colors",
+                  dragOverSplit === "horizontal"
+                    ? "bg-primary/20 border-r-2 border-primary"
+                    : "bg-transparent"
+                )}
+                onDragEnter={(e) => { e.preventDefault(); e.stopPropagation(); setDragOverSplit("horizontal"); setIsDragOverPane(false); }}
+                onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = "move"; }}
+                onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOverSplit(null); }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setDragOverSplit(null);
+                  if (activeDragPayload) {
+                    splitLeafAndMove(activeDragPayload.tabId, activeDragPayload.sourceLeafId, tree.id, "horizontal");
+                    activeDragPayload = null;
+                  }
+                }}
+              >
+                {dragOverSplit === "horizontal" && (
+                  <span className="text-[10px] text-primary font-semibold pointer-events-none">Split Right</span>
+                )}
+              </div>
+
+              {/* Bottom edge → vertical split */}
+              <div
+                className={cn(
+                  "absolute bottom-0 left-0 w-full h-[20%] z-50 flex items-center justify-center transition-colors",
+                  dragOverSplit === "vertical"
+                    ? "bg-primary/20 border-b-2 border-primary"
+                    : "bg-transparent"
+                )}
+                onDragEnter={(e) => { e.preventDefault(); e.stopPropagation(); setDragOverSplit("vertical"); setIsDragOverPane(false); }}
+                onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = "move"; }}
+                onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOverSplit(null); }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setDragOverSplit(null);
+                  if (activeDragPayload) {
+                    splitLeafAndMove(activeDragPayload.tabId, activeDragPayload.sourceLeafId, tree.id, "vertical");
+                    activeDragPayload = null;
+                  }
+                }}
+              >
+                {dragOverSplit === "vertical" && (
+                  <span className="text-[10px] text-primary font-semibold pointer-events-none">Split Down</span>
+                )}
+              </div>
+            </>
           )}
         </div>
       </div>

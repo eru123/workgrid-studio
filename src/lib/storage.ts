@@ -20,6 +20,20 @@ export async function writeData<T>(filename: string, data: T): Promise<void> {
     await invoke<void>("app_write_file", { filename, contents: json });
 }
 
+export async function readTextData(filename: string, fallback = ""): Promise<string> {
+    try {
+        const raw = await invoke<string>("app_read_file", { filename });
+        if (!raw || raw.trim() === "") return fallback;
+        return raw;
+    } catch {
+        return fallback;
+    }
+}
+
+export async function writeTextData(filename: string, contents: string): Promise<void> {
+    await invoke<void>("app_write_file", { filename, contents });
+}
+
 export async function deleteData(filename: string): Promise<void> {
     await invoke<void>("app_delete_file", { filename });
 }

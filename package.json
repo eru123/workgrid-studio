@@ -7,6 +7,7 @@
     "dev": "vite",
     "prebuild": "pnpm version:sync && pnpm version:check",
     "build": "tsc && vite build",
+    "bundle:analyze": "tsc && vite build --mode analyze",
     "preview": "vite preview",
     "tauri": "tauri",
     "version:current": "node scripts/versioning.mjs current",
@@ -41,6 +42,7 @@
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^4.6.0",
+    "rollup-plugin-visualizer": "^7.0.1",
     "tailwindcss": "^4",
     "typescript": "~5.8.3",
     "vite": "^7.0.4"

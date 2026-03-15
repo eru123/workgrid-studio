@@ -1,0 +1,63 @@
+name: Feature Request
+description: Suggest a new feature or improvement for WorkGrid Studio
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for suggesting an improvement! Please describe the problem you are trying to solve and your proposed solution.
+
+  - type: checkboxes
+    id: prerequisites
+    attributes:
+      label: Prerequisites
+      options:
+        - label: I have searched existing issues and this has not been requested before.
+          required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem statement
+      description: What problem does this feature solve? Describe the situation where you felt something was missing or painful.
+      placeholder: "When working with large schemas, I find it difficult to..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: Describe the feature or change you would like to see.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Have you considered any alternative solutions or workarounds? Why are they insufficient?
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Area of the app
+      description: Which part of WorkGrid Studio does this relate to?
+      options:
+        - Query editor
+        - Schema explorer
+        - Connection management
+        - Table designer
+        - Results grid
+        - Auto-updater
+        - Performance
+        - UI / UX
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: Add any screenshots, mockups, links to similar features in other tools, or any other relevant context.

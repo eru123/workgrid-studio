@@ -16,6 +16,12 @@ export interface QueryHistoryItem {
 
 interface QueryHistoryState {
     history: QueryHistoryItem[];
+    isLoading: boolean;
+    /** True once the persisted history has been read from disk. Writes are
+     *  suppressed until hydrated to prevent an early empty-state save from
+     *  wiping previously stored history (C8 race-condition fix). */
+    _hydrated: boolean;
+    loadHistory: () => Promise<void>;
     addHistoryItem: (item: Omit<QueryHistoryItem, "id" | "timestamp">) => void;
     deleteHistoryItem: (id: string) => void;
     toggleFavorite: (id: string) => void;
@@ -25,10 +31,25 @@ interface QueryHistoryState {
 /**
  * Store for executed query history.
  * Persists to history.json.
+ *
+ * Call loadHistory() explicitly from App.tsx on startup rather than relying
+ * on a module-level side-effect, which could race with first writes.
  */
 export const useQueryHistoryStore = create<QueryHistoryState>()(
-    (set) => ({
+    (set, get) => ({
         history: [],
+        isLoading: true,
+        _hydrated: false,
+
+        loadHistory: async () => {
+            if (get()._hydrated || !get().isLoading) return;
+            try {
+                const data = await readData<QueryHistoryItem[]>("history.json", []);
+                set({ history: data, isLoading: false, _hydrated: true });
+            } catch {
+                set({ history: [], isLoading: false, _hydrated: true });
+            }
+        },
 
         addHistoryItem: (item) => {
             const newItem: QueryHistoryItem = {
@@ -38,30 +59,30 @@ export const useQueryHistoryStore = create<QueryHistoryState>()(
             };
 
             set((state) => {
-                // Keep only top 100 items, and remove duplicates of the same query within the same profile/db
+                // Keep only top 100 items, removing duplicates of the same query per profile/db
                 const filtered = state.history.filter(
                     (h) => !(h.profileId === item.profileId && h.query.trim() === item.query.trim())
                 );
                 const next = [newItem, ...filtered].slice(0, 100);
-                debouncedSave(next);
+                if (state._hydrated) debouncedSave(next);
                 return { history: next };
             });
         },
 
         deleteHistoryItem: (id) => {
             set((state) => {
-                const next = state.history.filter(h => h.id !== id);
-                debouncedSave(next);
+                const next = state.history.filter((h) => h.id !== id);
+                if (state._hydrated) debouncedSave(next);
                 return { history: next };
             });
         },
 
         toggleFavorite: (id) => {
             set((state) => {
-                const next = state.history.map(h =>
+                const next = state.history.map((h) =>
                     h.id === id ? { ...h, favorited: !h.favorited } : h
                 );
-                debouncedSave(next);
+                if (state._hydrated) debouncedSave(next);
                 return { history: next };
             });
         },
@@ -69,19 +90,14 @@ export const useQueryHistoryStore = create<QueryHistoryState>()(
         clearHistory: (profileId) => {
             set((state) => {
                 const next = profileId
-                    ? state.history.filter(h => h.profileId !== profileId || h.favorited)
-                    : state.history.filter(h => h.favorited);
-                debouncedSave(next);
+                    ? state.history.filter((h) => h.profileId !== profileId || h.favorited)
+                    : state.history.filter((h) => h.favorited);
+                if (state._hydrated) debouncedSave(next);
                 return { history: next };
             });
         },
     })
 );
-
-// Initialization: Load from disk
-readData<QueryHistoryItem[]>("history.json", []).then((data) => {
-    useQueryHistoryStore.setState({ history: data });
-});
 
 let saveTimeout: ReturnType<typeof setTimeout> | null = null;
 function debouncedSave(data: QueryHistoryItem[]) {

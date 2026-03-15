@@ -4,6 +4,7 @@ import { useModelsStore } from "@/state/modelsStore";
 import { useSchemaStore } from "@/state/schemaStore";
 import { useProfilesStore } from "@/state/profilesStore";
 import { aiGenerateQuery, dbGetSchemaDdl } from "@/lib/db";
+import { ensureAiUseAllowed } from "@/lib/privacy";
 import { cn } from "@/lib/utils/cn";
 import { Send, Loader2, Sparkles, Copy, ExternalLink, Trash2, ChevronDown } from "lucide-react";
 
@@ -49,6 +50,9 @@ export function AiChatSidebar() {
     const connectedProfiles = useSchemaStore((s) => s.connectedProfiles);
     const schemaDatabases = useSchemaStore((s) => s.databases);
     const profiles = useProfilesStore((s) => s.profiles);
+    const aiBlocked = useProfilesStore(
+        (s) => s.globalPreferences.blockAiRequests ?? false,
+    );
     const connectedIds = Object.keys(connectedProfiles);
     const firstConnectedId = connectedIds[0] || "";
     const firstProfile = profiles.find((p) => p.id === firstConnectedId);
@@ -78,6 +82,16 @@ export function AiChatSidebar() {
 
     const handleSend = async () => {
         if (!input.trim() || isLoading) return;
+
+        if (
+            activeModel &&
+            !ensureAiUseAllowed({
+                providerName: activeModel.providerName,
+                includesSchemaContext: Boolean(firstConnectedId && firstDb),
+            })
+        ) {
+            return;
+        }
 
         const userMsg: ChatMessage = {
             id: crypto.randomUUID(),
@@ -230,6 +244,11 @@ export function AiChatSidebar() {
 
             {/* Input area */}
             <div className="shrink-0 border-t p-2">
+                {aiBlocked && (
+                    <p className="mb-2 text-[10px] text-muted-foreground">
+                        AI requests are disabled in Settings &gt; Privacy.
+                    </p>
+                )}
                 <div className="flex gap-1.5">
                     <textarea
                         value={input}
@@ -242,11 +261,11 @@ export function AiChatSidebar() {
                         }}
                         placeholder="Ask about your database..."
                         className="flex-1 bg-muted/30 border rounded px-2.5 py-1.5 text-xs resize-none h-16 focus:outline-none focus:ring-1 focus:ring-indigo-500/50"
-                        disabled={isLoading}
+                        disabled={isLoading || aiBlocked}
                     />
                     <button
                         onClick={handleSend}
-                        disabled={isLoading || !input.trim()}
+                        disabled={isLoading || !input.trim() || aiBlocked}
                         className="shrink-0 w-8 h-8 self-end rounded bg-indigo-500 text-white flex items-center justify-center hover:bg-indigo-600 transition-colors disabled:opacity-40"
                         title="Send (Enter)"
                     >

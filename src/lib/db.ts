@@ -161,8 +161,20 @@ export async function clearProfileLog(profileId: string, logType: LogType): Prom
     return invoke<void>("clear_profile_log", { profileId, logType });
 }
 
-export async function dbExecuteQuery(profileId: string, query: string): Promise<void> {
-    return invoke<void>("db_execute_query", { profileId, query });
+export interface QueryExecutionOptions {
+    timeoutMs?: number;
+}
+
+export async function dbExecuteQuery(
+    profileId: string,
+    query: string,
+    options: QueryExecutionOptions = {},
+): Promise<void> {
+    return invoke<void>("db_execute_query", {
+        profileId,
+        query,
+        timeoutMs: options.timeoutMs,
+    });
 }
 
 export interface CollationResponse {
@@ -183,8 +195,16 @@ export interface QueryResultSet {
     info: string;
 }
 
-export async function dbQuery(profileId: string, query: string): Promise<QueryResultSet[]> {
-    return invoke<QueryResultSet[]>("db_query", { profileId, query });
+export async function dbQuery(
+    profileId: string,
+    query: string,
+    options: QueryExecutionOptions = {},
+): Promise<QueryResultSet[]> {
+    return invoke<QueryResultSet[]>("db_query", {
+        profileId,
+        query,
+        timeoutMs: options.timeoutMs,
+    });
 }
 
 // ─── Vault (Secure Storage) ─────────────────────────────────────────
@@ -260,10 +280,59 @@ export async function clearAiLogs(): Promise<void> {
 
 // ─── Data Import ───────────────────────────────────────────────────
 
-export async function dbImportSql(profileId: string, database: string, filePath: string): Promise<string> {
-    return invoke<string>("db_import_sql", { profileId, database, filePath });
+export interface ImportResult {
+    kind: "sql" | "csv";
+    itemsAttempted: number;
+    itemsCommitted: number;
+    rowsAttempted: number;
+    rowsCommitted: number;
+    rowsSkipped: number;
+    elapsedMs: number;
+    errors: string[];
+    summary: string;
 }
 
-export async function dbImportCsv(profileId: string, database: string, table: string, filePath: string): Promise<string> {
-    return invoke<string>("db_import_csv", { profileId, database, table, filePath });
+export interface ImportProgressEvent {
+    jobId: string;
+    kind: "sql" | "csv";
+    phase: "started" | "progress" | "completed" | "error";
+    itemsProcessed: number;
+    itemsTotal: number;
+    rowsProcessed: number;
+    rowsTotal: number;
+    percent: number;
+    message: string;
+}
+
+export async function dbImportSql(
+    profileId: string,
+    database: string,
+    filePath: string,
+    jobId: string,
+): Promise<ImportResult> {
+    return invoke<ImportResult>("db_import_sql", { profileId, database, filePath, jobId });
+}
+
+export async function dbImportCsv(
+    profileId: string,
+    database: string,
+    table: string,
+    filePath: string,
+    jobId: string,
+): Promise<ImportResult> {
+    return invoke<ImportResult>("db_import_csv", { profileId, database, table, filePath, jobId });
+}
+
+// ─── SSH Host Key ──────────────────────────────────────────────────
+
+export async function dbForgetHostKey(profileId: string, sshHost: string, sshPort: number): Promise<void> {
+    return invoke<void>("forget_host_key", { profileId, sshHost, sshPort });
+}
+
+export async function clearAllLogs(): Promise<void> {
+    return invoke<void>("clear_all_logs");
+}
+
+export async function deleteAllAppData(): Promise<void> {
+    return invoke<void>("app_delete_all_data");
 }

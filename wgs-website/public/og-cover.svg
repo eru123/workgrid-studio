@@ -1,0 +1,25 @@
+<svg width="1200" height="630" viewBox="0 0 1200 630" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1200" height="630" fill="#F5EFE5"/>
+  <rect x="54" y="54" width="1092" height="522" rx="36" fill="#FFF8EF"/>
+  <rect x="84" y="84" width="470" height="462" rx="28" fill="#102333"/>
+  <rect x="604" y="84" width="512" height="170" rx="28" fill="#FFFFFF"/>
+  <rect x="604" y="284" width="246" height="262" rx="28" fill="#FFFFFF"/>
+  <rect x="870" y="284" width="246" height="262" rx="28" fill="#FFFFFF"/>
+  <circle cx="109" cy="109" r="8" fill="#1F918F"/>
+  <circle cx="133" cy="109" r="8" fill="#F2BF54"/>
+  <circle cx="157" cy="109" r="8" fill="#F46B3F"/>
+  <text x="130" y="178" fill="#FFF8EF" font-family="'IBM Plex Mono', monospace" font-size="22" letter-spacing="2.2">WORKGRID STUDIO</text>
+  <text x="130" y="266" fill="#FFF8EF" font-family="'Space Grotesk', sans-serif" font-size="72" font-weight="700">Database work,</text>
+  <text x="130" y="338" fill="#FFF8EF" font-family="'Space Grotesk', sans-serif" font-size="72" font-weight="700">orchestrated.</text>
+  <text x="130" y="406" fill="#B7C6D4" font-family="'Space Grotesk', sans-serif" font-size="28">AI-assisted SQL, explain plans, tasks, and privacy controls</text>
+  <rect x="640" y="118" width="170" height="34" rx="17" fill="#FFF1E7"/>
+  <text x="664" y="141" fill="#CF5330" font-family="'IBM Plex Mono', monospace" font-size="16">workgrid-studio.skiddph.com</text>
+  <text x="640" y="198" fill="#102333" font-family="'Space Grotesk', sans-serif" font-size="44" font-weight="700">Cloudflare Pages</text>
+  <text x="640" y="238" fill="#51606D" font-family="'Space Grotesk', sans-serif" font-size="24">Static frontend, responsive layout, production metadata included.</text>
+  <rect x="640" y="320" width="170" height="170" rx="26" fill="#FFF1E7"/>
+  <rect x="906" y="320" width="170" height="170" rx="26" fill="#EAF7F6"/>
+  <text x="674" y="386" fill="#102333" font-family="'Space Grotesk', sans-serif" font-size="26" font-weight="700">AI-ready</text>
+  <text x="674" y="422" fill="#51606D" font-family="'Space Grotesk', sans-serif" font-size="20">OpenAI, Gemini, DeepSeek</text>
+  <text x="940" y="386" fill="#102333" font-family="'Space Grotesk', sans-serif" font-size="26" font-weight="700">Local-first</text>
+  <text x="940" y="422" fill="#51606D" font-family="'Space Grotesk', sans-serif" font-size="20">Privacy and updater controls</text>
+</svg>

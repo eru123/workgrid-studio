@@ -4,14 +4,20 @@ import { useProfilesStore } from "@/state/profilesStore";
 import { useSchemaStore } from "@/state/schemaStore";
 import { useModelsStore } from "@/state/modelsStore";
 import { useTasksStore } from "@/state/tasksStore";
+import { useSavedQueriesStore } from "@/state/savedQueriesStore";
 import { useAppVersion } from "@/hooks/useAppVersion";
 import { Sash } from "./Sash";
 import { EditorNode } from "./EditorNode";
 import { ExplorerTree } from "@/components/views/ExplorerTree";
-import { readProfileLog, clearProfileLog, getAiLogs, clearAiLogs, AiLogEntry, dbPing } from "@/lib/db";
+import { readProfileLog, clearProfileLog, getAiLogs, clearAiLogs, AiLogEntry, dbPing, dbQuery } from "@/lib/db";
 import { cn } from "@/lib/utils/cn";
 import { useProfileManager } from "@/hooks/useProfileManager";
 import { useAppStore, StatusBarInfo } from "@/state/appStore";
+import {
+  appendConnectionOutput,
+  formatConnectionTarget,
+  formatOutputError,
+} from "@/lib/output";
 import {
   FolderTree,
   CheckSquare,
@@ -39,11 +45,20 @@ const activityItems: { id: ActivityView; icon: any; label: string }[] = [
   { id: "tasks", icon: CheckSquare, label: "Tasks" },
 ];
 
+const RECONNECT_BASE_DELAY_MS = 2_000;
+const RECONNECT_MAX_DELAY_MS = 60_000;
+const RECONNECT_MAX_ATTEMPTS = 6;
+
 export function Workbench() {
   const appVersion = useAppVersion();
+  const profiles = useProfilesStore((s) => s.profiles);
   const connectedProfiles = useSchemaStore((s) => s.connectedProfiles);
   const connectedCount = Object.keys(connectedProfiles).length;
   const tasks = useTasksStore((s) => s.tasks);
+  const savedQueriesByProfile = useSavedQueriesStore((s) => s.byProfile);
+  const loadAllSavedQueries = useSavedQueriesStore((s) => s.loadAllQueries);
+  const readSavedQueryText = useSavedQueriesStore((s) => s.readQueryText);
+  const recordSavedQueryRun = useSavedQueriesStore((s) => s.recordQueryRun);
   const pendingTaskCount = tasks.filter((t) => t.status !== "done").length;
   const activityBarWidth = useLayoutStore((s) => s.activityBarWidth);
   const primarySidebarWidth = useLayoutStore((s) => s.primarySidebarWidth);
@@ -68,6 +83,10 @@ export function Workbench() {
   const toggleSecondarySidebar = useLayoutStore((s) => s.toggleSecondarySidebar);
   const adjustSecondarySidebarWidth = useLayoutStore((s) => s.adjustSecondarySidebarWidth);
   const bottomPanelRef = useRef<HTMLDivElement>(null);
+  const reconnectAttemptsRef = useRef<Record<string, number>>({});
+  const reconnectTimeoutsRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const scheduledQueryIntervalsRef = useRef<Record<string, ReturnType<typeof setInterval>>>({});
+  const scheduledQueryRunningRef = useRef<Record<string, boolean>>({});
 
   const handleBottomPanelSplitDrag = useCallback(
     (delta: number) => {
@@ -82,6 +101,89 @@ export function Workbench() {
   );
   
   const { handleConnect } = useProfileManager();
+
+  const clearReconnectSchedule = useCallback((profileId: string, resetAttempt = true) => {
+    const timeout = reconnectTimeoutsRef.current[profileId];
+    if (timeout) {
+      clearTimeout(timeout);
+      delete reconnectTimeoutsRef.current[profileId];
+    }
+    if (resetAttempt) {
+      delete reconnectAttemptsRef.current[profileId];
+    }
+  }, []);
+
+  const scheduleReconnect = useCallback(function scheduleReconnect(profileId: string) {
+    if (reconnectTimeoutsRef.current[profileId]) return;
+
+    const profile = useProfilesStore.getState().profiles.find((entry) => entry.id === profileId);
+    if (
+      !profile ||
+      profile.connectionStatus === "disconnected" ||
+      profile.connectionStatus === "connecting" ||
+      profile.unreadableSecrets?.password ||
+      (profile.ssh &&
+        (profile.unreadableSecrets?.sshPassword || profile.unreadableSecrets?.sshPassphrase)) ||
+      (profile.type !== "mysql" && profile.type !== "mariadb")
+    ) {
+      clearReconnectSchedule(profileId, true);
+      return;
+    }
+
+    const attempt = (reconnectAttemptsRef.current[profileId] ?? 0) + 1;
+    if (attempt > RECONNECT_MAX_ATTEMPTS) {
+      appendConnectionOutput(
+        profile,
+        "warning",
+        `Auto-reconnect stopped for ${formatConnectionTarget(profile)} after ${RECONNECT_MAX_ATTEMPTS} failed attempts. Connect manually to try again.`,
+      );
+      clearReconnectSchedule(profileId, true);
+      return;
+    }
+
+    reconnectAttemptsRef.current[profileId] = attempt;
+    const delay = Math.min(
+      RECONNECT_MAX_DELAY_MS,
+      RECONNECT_BASE_DELAY_MS * 2 ** (attempt - 1),
+    );
+
+    appendConnectionOutput(
+      profile,
+      "warning",
+      `Scheduling reconnect to ${formatConnectionTarget(profile)} in ${Math.ceil(delay / 1000)}s (attempt ${attempt}/${RECONNECT_MAX_ATTEMPTS}).`,
+    );
+
+    reconnectTimeoutsRef.current[profileId] = setTimeout(async () => {
+      delete reconnectTimeoutsRef.current[profileId];
+
+      const latestProfile = useProfilesStore.getState().profiles.find((entry) => entry.id === profileId);
+      if (
+        !latestProfile ||
+        latestProfile.connectionStatus === "connected" ||
+        latestProfile.connectionStatus === "disconnected"
+      ) {
+        clearReconnectSchedule(profileId, true);
+        return;
+      }
+
+      await handleConnect(profileId, {
+        silentFailureToast: true,
+        reconnectAttempt: attempt,
+      });
+
+      const refreshedProfile = useProfilesStore.getState().profiles.find((entry) => entry.id === profileId);
+      if (
+        refreshedProfile &&
+        refreshedProfile.connectionStatus !== "connected" &&
+        refreshedProfile.connectionStatus !== "disconnected"
+      ) {
+        scheduleReconnect(profileId);
+        return;
+      }
+
+      clearReconnectSchedule(profileId, true);
+    }, delay);
+  }, [clearReconnectSchedule, handleConnect]);
 
   // Theme Toggle Logic
   const globalPrefs = useProfilesStore((s) => s.globalPreferences);
@@ -104,25 +206,190 @@ export function Workbench() {
     useLayoutStore.getState().loadLayoutPrefs();
   }, []);
 
+  useEffect(() => {
+    const profileIds = profiles.map((profile) => profile.id);
+    if (profileIds.length === 0) return;
+    void loadAllSavedQueries(profileIds);
+  }, [loadAllSavedQueries, profiles]);
+
+  useEffect(() => {
+    const clearScheduledInterval = (queryId: string) => {
+      const timer = scheduledQueryIntervalsRef.current[queryId];
+      if (timer) {
+        clearInterval(timer);
+        delete scheduledQueryIntervalsRef.current[queryId];
+      }
+      delete scheduledQueryRunningRef.current[queryId];
+    };
+
+    const desiredQueryIds = new Set<string>();
+
+    Object.values(savedQueriesByProfile)
+      .flat()
+      .forEach((savedQuery) => {
+        if (
+          !savedQuery.scheduleEnabled ||
+          !savedQuery.scheduleMinutes ||
+          savedQuery.scheduleMinutes <= 0
+        ) {
+          clearScheduledInterval(savedQuery.id);
+          return;
+        }
+
+        const profile = profiles.find((entry) => entry.id === savedQuery.profileId);
+        if (!profile || profile.connectionStatus !== "connected") {
+          clearScheduledInterval(savedQuery.id);
+          return;
+        }
+
+        desiredQueryIds.add(savedQuery.id);
+
+        if (scheduledQueryIntervalsRef.current[savedQuery.id]) {
+          return;
+        }
+
+        const executeSavedQuery = async () => {
+          if (scheduledQueryRunningRef.current[savedQuery.id]) return;
+          scheduledQueryRunningRef.current[savedQuery.id] = true;
+
+          try {
+            const queryText = await readSavedQueryText(savedQuery.filePath);
+            if (!queryText.trim()) {
+              appendConnectionOutput(
+                profile,
+                "warning",
+                `Scheduled query "${savedQuery.name}" was skipped because its file is empty.`,
+              );
+              return;
+            }
+
+            const startTime = performance.now();
+            const fullQuery = savedQuery.database
+              ? `USE \`${savedQuery.database.replace(/`/g, "``")}\`;\n${queryText}`
+              : queryText;
+
+            appendConnectionOutput(
+              profile,
+              "info",
+              `Running scheduled query "${savedQuery.name}"${savedQuery.database ? ` on ${savedQuery.database}` : ""}.`,
+            );
+
+            const resultSets = await dbQuery(savedQuery.profileId, fullQuery);
+            const filteredResults = savedQuery.database ? resultSets.slice(1) : resultSets;
+            const totalRows = filteredResults.reduce(
+              (sum, result) => sum + result.rows.length,
+              0,
+            );
+            const elapsed = performance.now() - startTime;
+            const summary = `${filteredResults.length} result set(s), ${totalRows.toLocaleString()} row(s) in ${elapsed < 1000 ? `${Math.round(elapsed)}ms` : `${(elapsed / 1000).toFixed(2)}s`}.`;
+
+            appendConnectionOutput(
+              profile,
+              "success",
+              `Scheduled query "${savedQuery.name}" completed: ${summary}`,
+            );
+            await recordSavedQueryRun(savedQuery.profileId, savedQuery.id, {
+              lastRunAt: new Date().toISOString(),
+              lastRunStatus: "success",
+              lastRunSummary: summary,
+            });
+          } catch (error) {
+            const message = String(error);
+            appendConnectionOutput(
+              profile,
+              "error",
+              `Scheduled query "${savedQuery.name}" failed: ${message}`,
+            );
+            await recordSavedQueryRun(savedQuery.profileId, savedQuery.id, {
+              lastRunAt: new Date().toISOString(),
+              lastRunStatus: "error",
+              lastRunSummary: message,
+            });
+          } finally {
+            scheduledQueryRunningRef.current[savedQuery.id] = false;
+          }
+        };
+
+        scheduledQueryIntervalsRef.current[savedQuery.id] = setInterval(
+          executeSavedQuery,
+          savedQuery.scheduleMinutes * 60_000,
+        );
+      });
+
+    Object.keys(scheduledQueryIntervalsRef.current).forEach((queryId) => {
+      if (!desiredQueryIds.has(queryId)) {
+        clearScheduledInterval(queryId);
+      }
+    });
+
+    return () => {
+      Object.keys(scheduledQueryIntervalsRef.current).forEach(clearScheduledInterval);
+    };
+  }, [
+    loadAllSavedQueries,
+    profiles,
+    readSavedQueryText,
+    recordSavedQueryRun,
+    savedQueriesByProfile,
+  ]);
+
   // Connection Keep-Alive Loop
   useEffect(() => {
     const pinger = setInterval(async () => {
       const { profiles, setConnectionStatus } = useProfilesStore.getState();
+      const { setLatency } = useSchemaStore.getState();
       const connected = profiles.filter((p) => p.connectionStatus === "connected");
       for (const p of connected) {
         try {
-          await dbPing(p.id);
-        } catch {
-          console.warn(`[Keep-Alive] Ping failed for ${p.id}, marking error and reconnecting...`);
+          const ms = await dbPing(p.id);
+          setLatency(p.id, ms);
+        } catch (e) {
+          console.warn(`[Keep-Alive] Ping failed for ${p.id}, marking error and scheduling reconnect...`);
+          appendConnectionOutput(
+            p,
+            "warning",
+            `Keep-alive ping failed for ${formatConnectionTarget(p)}: ${formatOutputError(e)}.`,
+          );
+          setLatency(p.id, -1);
           setConnectionStatus(p.id, "error");
-          // Attempt a silent reconnect via the manager
-          await handleConnect(p.id);
+          scheduleReconnect(p.id);
         }
       }
     }, 15_000); // 15 seconds
-    
+
     return () => clearInterval(pinger);
-  }, [handleConnect]);
+  }, [scheduleReconnect]);
+
+  useEffect(() => {
+    const activeProfileIds = new Set(profiles.map((profile) => profile.id));
+
+    for (const profileId of Object.keys(reconnectTimeoutsRef.current)) {
+      if (!activeProfileIds.has(profileId)) {
+        clearReconnectSchedule(profileId, true);
+      }
+    }
+
+    for (const profile of profiles) {
+      if (
+        profile.connectionStatus === "connected" ||
+        profile.connectionStatus === "disconnected"
+      ) {
+        clearReconnectSchedule(profile.id, true);
+      } else if (profile.connectionStatus === "connecting") {
+        clearReconnectSchedule(profile.id, false);
+      }
+    }
+  }, [clearReconnectSchedule, profiles]);
+
+  useEffect(() => {
+    return () => {
+      for (const timeout of Object.values(reconnectTimeoutsRef.current)) {
+        clearTimeout(timeout);
+      }
+      reconnectTimeoutsRef.current = {};
+      reconnectAttemptsRef.current = {};
+    };
+  }, []);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -149,6 +416,10 @@ export function Workbench() {
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-background text-foreground">
+      <a href="#main-content" className="skip-link">
+        Skip to main content
+      </a>
+
       {/* Activity Bar */}
       <div
         className="shrink-0 bg-muted/20 border-r flex flex-col items-center py-2 justify-between"
@@ -175,6 +446,7 @@ export function Workbench() {
                     : "text-muted-foreground hover:text-foreground hover:bg-accent/50",
                 )}
                 title={item.label}
+                aria-label={item.label}
               >
                 {isActive && (
                   <div className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-5 bg-foreground rounded-r" />
@@ -196,6 +468,7 @@ export function Workbench() {
             onClick={() => openTab({ title: "Settings", type: "settings", meta: {} })}
             className="w-10 h-10 flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors"
             title="Settings"
+            aria-label="Settings"
           >
             <Settings className="w-5 h-5" />
           </button>
@@ -209,6 +482,7 @@ export function Workbench() {
                 : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
             )}
             title="AI Chat"
+            aria-label="AI Chat"
           >
             <Sparkles className="w-5 h-5" />
           </button>
@@ -217,6 +491,7 @@ export function Workbench() {
             onClick={handleToggleTheme}
             className="w-10 h-10 flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors"
             title={`Theme: ${theme.charAt(0).toUpperCase() + theme.slice(1)}`}
+            aria-label={`Theme: ${theme.charAt(0).toUpperCase() + theme.slice(1)}`}
           >
             {theme === "dark" && <Moon className="w-5 h-5" />}
             {theme === "light" && <Sun className="w-5 h-5" />}
@@ -226,6 +501,7 @@ export function Workbench() {
             onClick={toggleSidebar}
             className="w-10 h-10 flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors"
             title="Toggle Sidebar (Ctrl+B)"
+            aria-label="Toggle Sidebar (Ctrl+B)"
           >
             <Sidebar className="w-5 h-5" />
           </button>
@@ -233,6 +509,7 @@ export function Workbench() {
             onClick={togglePanel}
             className="w-10 h-10 flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors"
             title="Toggle Panel (Ctrl+`)"
+            aria-label="Toggle Panel (Ctrl+`)"
           >
             <PanelBottom className="w-5 h-5" />
           </button>
@@ -286,15 +563,19 @@ export function Workbench() {
             )}
           </div>
           <Sash
-            direction="vertical"
-            className="right-0 translate-x-0.5"
+            direction="horizontal"
+            className="absolute top-0 bottom-0 right-0 w-1 translate-x-0.5 cursor-col-resize"
             onDrag={adjustSidebarWidth}
           />
         </div>
       )}
 
       {/* Main Content Area */}
-      <div className="flex-1 flex flex-col relative min-w-0">
+      <main
+        id="main-content"
+        tabIndex={-1}
+        className="flex-1 flex flex-col relative min-w-0"
+      >
         {/* Editor Group */}
         <div className="flex-1 flex overflow-hidden min-h-0 min-w-0">
           <div className="flex-1 relative p-0.5 min-w-0 min-h-0">
@@ -325,8 +606,8 @@ export function Workbench() {
             style={{ height: bottomPanelHeight }}
           >
             <Sash
-              direction="horizontal"
-              className="top-0 -translate-y-0.5"
+              direction="vertical"
+              className="absolute top-0 left-0 right-0 h-1 -translate-y-0.5 cursor-row-resize"
               onDrag={(delta) => adjustPanelHeight(-delta)}
             />
             {isBottomPanelSplit ? (
@@ -337,8 +618,8 @@ export function Workbench() {
                 >
                   <BottomPanel />
                   <Sash
-                    direction="vertical"
-                    className="right-0 translate-x-0.5"
+                    direction="horizontal"
+                    className="absolute top-0 bottom-0 right-0 w-1 translate-x-0.5 cursor-col-resize"
                     onDrag={handleBottomPanelSplitDrag}
                   />
                 </div>
@@ -356,7 +637,7 @@ export function Workbench() {
 
         {/* Status Bar */}
         <StatusBar appVersion={appVersion} />
-      </div>
+      </main>
     </div>
   );
 }
@@ -424,6 +705,8 @@ function parseProblems(
 
 function BottomPanel({ isSecondary }: { isSecondary?: boolean }) {
   const profiles = useProfilesStore((s) => s.profiles);
+  const outputEntries = useAppStore((s) => s.outputEntries);
+  const clearOutputEntries = useAppStore((s) => s.clearOutputEntries);
   const connectedProfiles = profiles.filter(
     (p) => p.connectionStatus === "connected",
   );
@@ -538,10 +821,14 @@ function BottomPanel({ isSecondary }: { isSecondary?: boolean }) {
 
   // Auto-scroll to bottom when log content changes
   useEffect(() => {
-    if (scrollRef.current && (activeTab === "logs" || activeTab === "ailogs") && autoScroll) {
+    if (
+      scrollRef.current &&
+      (activeTab === "output" || activeTab === "logs" || activeTab === "ailogs") &&
+      autoScroll
+    ) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [logContent, aiLogs, activeTab, autoScroll]);
+  }, [outputEntries, logContent, aiLogs, activeTab, autoScroll]);
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
@@ -552,7 +839,9 @@ function BottomPanel({ isSecondary }: { isSecondary?: boolean }) {
   };
 
   const handleClear = async () => {
-    if (activeTab === "logs") {
+    if (activeTab === "output") {
+      clearOutputEntries();
+    } else if (activeTab === "logs") {
       if (!selectedProfileId) return;
       try {
         await clearProfileLog(selectedProfileId, logFilter);
@@ -654,113 +943,159 @@ function BottomPanel({ isSecondary }: { isSecondary?: boolean }) {
           AI Logs
         </button>
 
-        {/* Right-side controls */}
-        {(activeTab === "logs" || activeTab === "problems" || activeTab === "ailogs") && (
-          <div className="ml-auto flex items-center gap-2">
-            {/* Logs-specific: Profile selector */}
-            {activeTab === "logs" && connectedProfiles.length > 0 && (
-              <select
-                value={selectedProfileId}
-                onChange={(e) => setSelectedProfileId(e.target.value)}
-                className="h-6 text-[11px] rounded border bg-secondary/50 text-foreground px-1.5 outline-none"
-              >
-                {connectedProfiles.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
-            )}
+        <div className="ml-auto flex items-center gap-2">
+          {/* Logs-specific: Profile selector */}
+          {activeTab === "logs" && connectedProfiles.length > 0 && (
+            <select
+              value={selectedProfileId}
+              onChange={(e) => setSelectedProfileId(e.target.value)}
+              className="h-6 text-[11px] rounded border bg-secondary/50 text-foreground px-1.5 outline-none"
+              aria-label="Select log profile"
+            >
+              {connectedProfiles.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          )}
 
-            {/* Logs-specific: Log type filter */}
-            {activeTab === "logs" && (
-              <select
-                value={logFilter}
-                onChange={(e) => setLogFilter(e.target.value as LogFilter)}
-                className="h-6 text-[11px] rounded border bg-secondary/50 text-foreground px-1.5 outline-none"
-              >
-                <option value="mysql">Query Log</option>
-                <option value="error">Error Log</option>
-              </select>
-            )}
+          {/* Logs-specific: Log type filter */}
+          {activeTab === "logs" && (
+            <select
+              value={logFilter}
+              onChange={(e) => setLogFilter(e.target.value as LogFilter)}
+              className="h-6 text-[11px] rounded border bg-secondary/50 text-foreground px-1.5 outline-none"
+              aria-label="Select log type"
+            >
+              <option value="mysql">Query Log</option>
+              <option value="error">Error Log</option>
+            </select>
+          )}
 
-            {/* Refresh */}
+          {/* Refresh */}
+          {activeTab !== "output" && (
             <button
               onClick={handleRefresh}
               className="p-1 text-muted-foreground hover:text-foreground transition-colors"
               title="Refresh"
+              aria-label="Refresh"
             >
               <RefreshCw
                 className={cn("w-3.5 h-3.5", isRefreshing && "animate-spin")}
               />
             </button>
+          )}
 
-            {/* Clear */}
+          {/* Clear */}
+          <button
+            onClick={handleClear}
+            className="p-1 text-muted-foreground hover:text-red-400 transition-colors"
+            title={
+              activeTab === "output"
+                ? "Clear output"
+                : activeTab === "problems"
+                  ? "Clear all problems"
+                  : activeTab === "ailogs"
+                    ? "Clear AI logs"
+                    : "Clear log"
+            }
+            aria-label={
+              activeTab === "output"
+                ? "Clear output"
+                : activeTab === "problems"
+                  ? "Clear all problems"
+                  : activeTab === "ailogs"
+                    ? "Clear AI logs"
+                    : "Clear log"
+            }
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
+
+          {/* Auto Scroll Toggle */}
+          {(activeTab === "output" || activeTab === "logs" || activeTab === "ailogs") && (
             <button
-              onClick={handleClear}
-              className="p-1 text-muted-foreground hover:text-red-400 transition-colors"
-              title={
-                activeTab === "problems" ? "Clear all problems" : "Clear log"
-              }
+              onClick={() => setAutoScroll(!autoScroll)}
+              className={cn(
+                "p-1 transition-colors relative",
+                autoScroll ? "text-primary hover:text-primary/80" : "text-muted-foreground hover:text-foreground"
+              )}
+              title="Toggle Auto-Scroll"
+              aria-label="Toggle Auto-Scroll"
             >
-              <Trash2 className="w-3.5 h-3.5" />
+              <ArrowDownToLine className="w-3.5 h-3.5" />
+              {autoScroll && (
+                <span className="absolute bottom-1 right-1 w-1.5 h-1.5 bg-primary rounded-full shadow-sm shadow-foreground/20" />
+              )}
             </button>
-            
-            {/* Auto Scroll Toggle */}
-            {(activeTab === "logs" || activeTab === "ailogs") && (
-              <button
-                onClick={() => setAutoScroll(!autoScroll)}
-                className={cn(
-                  "p-1 transition-colors relative",
-                  autoScroll ? "text-primary hover:text-primary/80" : "text-muted-foreground hover:text-foreground"
-                )}
-                title="Toggle Auto-Scroll"
-              >
-                <ArrowDownToLine className="w-3.5 h-3.5" />
-                {autoScroll && (
-                  <span className="absolute bottom-1 right-1 w-1.5 h-1.5 bg-primary rounded-full shadow-sm shadow-foreground/20" />
-                )}
-              </button>
+          )}
+
+          {/* Split Panel Toggle */}
+          <button
+            onClick={toggleBottomPanelSplit}
+            className={cn(
+              "p-1 transition-colors",
+              isBottomPanelSplit && !isSecondary ? "text-primary hover:text-primary/80" : "text-muted-foreground hover:text-foreground"
             )}
-
-            {/* Split Panel Toggle */}
-            <button
-              onClick={toggleBottomPanelSplit}
-              className={cn(
-                "p-1 transition-colors",
-                isBottomPanelSplit && !isSecondary ? "text-primary hover:text-primary/80" : "text-muted-foreground hover:text-foreground"
-              )}
-              title={isBottomPanelSplit && !isSecondary ? "Close Split View" : "Split View"}
-            >
-              <Columns2 className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        )}
-        
-        {/* If right-side controls aren't rendered, we still need the split button far right for 'output' tab */}
-        {!(activeTab === "logs" || activeTab === "problems" || activeTab === "ailogs") && (
-          <div className="ml-auto flex items-center gap-2">
-            {/* Split Panel Toggle */}
-            <button
-              onClick={toggleBottomPanelSplit}
-              className={cn(
-                "p-1 transition-colors",
-                isBottomPanelSplit && !isSecondary ? "text-primary hover:text-primary/80" : "text-muted-foreground hover:text-foreground"
-              )}
-              title={isBottomPanelSplit && !isSecondary ? "Close Split View" : "Split View"}
-            >
-              <Columns2 className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        )}
+            title={isBottomPanelSplit && !isSecondary ? "Close Split View" : "Split View"}
+            aria-label={isBottomPanelSplit && !isSecondary ? "Close Split View" : "Split View"}
+          >
+            <Columns2 className="w-3.5 h-3.5" />
+          </button>
+        </div>
       </div>
 
       {/* Panel content */}
       <div ref={scrollRef} className="flex-1 overflow-auto">
         {/* ── Output ─────────────────────────────────────────── */}
         {activeTab === "output" && (
-          <div className="p-3 font-mono text-xs leading-5 text-muted-foreground">
-            WorkGrid Studio ready.
+          <div className="text-xs">
+            {outputEntries.length === 0 ? (
+              <div className="p-3 font-mono text-muted-foreground">
+                Connection activity and debugging events will appear here.
+              </div>
+            ) : (
+              <div className="divide-y divide-border/40 font-mono">
+                {outputEntries.map((entry) => (
+                  <div
+                    key={entry.id}
+                    className="flex items-start gap-2 px-3 py-1.5 hover:bg-accent/30 transition-colors"
+                  >
+                    <span className="shrink-0 whitespace-nowrap text-[10px] text-muted-foreground/60">
+                      {entry.timestamp}
+                    </span>
+                    <span
+                      className={cn(
+                        "shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide",
+                        entry.level === "info" && "bg-blue-500/15 text-blue-400",
+                        entry.level === "success" && "bg-emerald-500/15 text-emerald-400",
+                        entry.level === "warning" && "bg-yellow-500/15 text-yellow-400",
+                        entry.level === "error" && "bg-red-500/15 text-red-400",
+                      )}
+                    >
+                      {entry.level}
+                    </span>
+                    {entry.profileName && (
+                      <span className="shrink-0 rounded-full bg-secondary/70 px-1.5 py-0.5 text-[10px] text-foreground/70">
+                        {entry.profileName}
+                      </span>
+                    )}
+                    <span
+                      className={cn(
+                        "flex-1 break-all leading-relaxed",
+                        entry.level === "error" && "text-red-400",
+                        entry.level === "warning" && "text-yellow-300",
+                        entry.level === "success" && "text-emerald-300",
+                        entry.level === "info" && "text-foreground/80",
+                      )}
+                    >
+                      {entry.message}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 

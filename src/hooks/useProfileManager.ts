@@ -11,9 +11,19 @@ import {
 import { useSchemaStore } from "@/state/schemaStore";
 import { useLayoutStore } from "@/state/layoutStore";
 import { useAppStore } from "@/state/appStore";
-import { dbConnect, dbDisconnect, dbListDatabases } from "@/lib/db";
+import { dbConnect, dbDisconnect } from "@/lib/db";
+import {
+    appendConnectionOutput,
+    formatConnectionTarget,
+    formatOutputError,
+} from "@/lib/output";
 
 export type ViewMode = "list" | "create" | "edit";
+
+interface HandleConnectOptions {
+    silentFailureToast?: boolean;
+    reconnectAttempt?: number;
+}
 
 /**
  * Shared profile management hook used by ServersSidebar (and any future
@@ -95,10 +105,30 @@ export function useProfileManager() {
     };
 
     const handleDelete = async (id: string) => {
-        try {
-            await dbDisconnect(id);
-        } catch {
-            /* ignore */
+        const profile = useProfilesStore.getState().profiles.find((p) => p.id === id);
+        const shouldDisconnect = profile?.connectionStatus === "connected"
+            || profile?.connectionStatus === "connecting";
+
+        if (shouldDisconnect && profile) {
+            appendConnectionOutput(
+                profile,
+                "info",
+                `Disconnecting before deleting profile from ${formatConnectionTarget(profile)}...`,
+            );
+            try {
+                await dbDisconnect(id);
+                appendConnectionOutput(
+                    profile,
+                    "success",
+                    `Disconnected from ${formatConnectionTarget(profile)}.`,
+                );
+            } catch (e) {
+                appendConnectionOutput(
+                    profile,
+                    "warning",
+                    `Disconnect before delete reported an error for ${formatConnectionTarget(profile)}: ${formatOutputError(e)}`,
+                );
+            }
         }
         removeConnection(id);
         deleteProfile(id);
@@ -106,30 +136,100 @@ export function useProfileManager() {
 
     // ── Connection ────────────────────────────────────────
 
-    const handleConnect = async (id: string) => {
-        const profile = profiles.find((p) => p.id === id);
+    const handleConnect = async (
+        id: string,
+        options: HandleConnectOptions = {},
+    ) => {
+        const profile = useProfilesStore.getState().profiles.find((p) => p.id === id);
         if (!profile) return;
+        const target = formatConnectionTarget(profile);
+        const { silentFailureToast = false, reconnectAttempt } = options;
+
+        if (profile.unreadableSecrets?.password) {
+            setConnectionStatus(id, "error");
+            appendConnectionOutput(
+                profile,
+                "error",
+                `Stored password for ${target} could not be decrypted. Re-enter the password in the profile and save it again before connecting.`,
+            );
+            if (!silentFailureToast) {
+                useAppStore.getState().addToast({
+                    title: "Stored Password Unavailable",
+                    description: "This profile's saved password could not be decrypted. Re-enter it and save the profile again.",
+                    variant: "destructive",
+                });
+            }
+            return;
+        }
+
+        if (
+            profile.ssh &&
+            (profile.unreadableSecrets?.sshPassword || profile.unreadableSecrets?.sshPassphrase)
+        ) {
+            setConnectionStatus(id, "error");
+            appendConnectionOutput(
+                profile,
+                "error",
+                `Stored SSH credentials for ${target} could not be decrypted. Re-enter the SSH secret in the profile and save it again before connecting.`,
+            );
+            if (!silentFailureToast) {
+                useAppStore.getState().addToast({
+                    title: "Stored SSH Secret Unavailable",
+                    description: "This profile's saved SSH credential could not be decrypted. Re-enter it and save the profile again.",
+                    variant: "destructive",
+                });
+            }
+            return;
+        }
 
         if (profile.type !== "mysql" && profile.type !== "mariadb") {
             setConnectionStatus(id, "error");
-            useAppStore.getState().addToast({
-                title: "Connection Failed",
-                description: "Only MySQL and MariaDB are supported in this version.",
-                variant: "destructive",
-            });
+            appendConnectionOutput(
+                profile,
+                "error",
+                `Connection blocked for ${target}: only MySQL and MariaDB are supported in this version.`,
+            );
+            if (!silentFailureToast) {
+                useAppStore.getState().addToast({
+                    title: "Connection Failed",
+                    description: "Only MySQL and MariaDB are supported in this version.",
+                    variant: "destructive",
+                });
+            }
             return;
         }
 
         if (profile.connectionStatus === "connected") {
+            appendConnectionOutput(
+                profile,
+                "info",
+                `Disconnecting from ${target}...`,
+            );
             try {
                 await dbDisconnect(id);
-            } catch {
-                /* ignore */
+                appendConnectionOutput(
+                    profile,
+                    "success",
+                    `Disconnected from ${target}.`,
+                );
+            } catch (e) {
+                appendConnectionOutput(
+                    profile,
+                    "warning",
+                    `Disconnect failed for ${target}: ${formatOutputError(e)}`,
+                );
             }
             setConnectionStatus(id, "disconnected");
             removeConnection(id);
         } else {
             setConnectionStatus(id, "connecting");
+            appendConnectionOutput(
+                profile,
+                "info",
+                reconnectAttempt
+                    ? `Reconnecting to ${target} (attempt ${reconnectAttempt})...`
+                    : `Connecting to ${target}...`,
+            );
             try {
                 await dbConnect({
                     profile_id: id,
@@ -156,32 +256,37 @@ export function useProfileManager() {
                     ssh_compression: profile.sshCompression ?? true,
                 });
                 setConnectionStatus(id, "connected");
+                appendConnectionOutput(
+                    profile,
+                    "success",
+                    reconnectAttempt
+                        ? `Reconnected to ${target} on attempt ${reconnectAttempt}.`
+                        : `Connected to ${target}.`,
+                );
                 addConnection(id, profile.name, profile.color);
-                // Pre-load database list so Explorer is ready on arrival
-                const schemaStore = useSchemaStore.getState();
-                schemaStore.setLoading(id, "databases", true);
-                try {
-                    const dbs = await dbListDatabases(id);
-                    schemaStore.setDatabases(id, dbs);
-                } catch {
-                    /* non-fatal */
-                } finally {
-                    schemaStore.setLoading(id, "databases", false);
-                }
                 setActiveView("explorer");
             } catch (e) {
                 setConnectionStatus(id, "error");
-                useAppStore.getState().addToast({
-                    title: "Connection Failed",
-                    description: String(e),
-                    variant: "destructive",
-                });
+                appendConnectionOutput(
+                    profile,
+                    "error",
+                    reconnectAttempt
+                        ? `Reconnect attempt ${reconnectAttempt} failed for ${target}: ${formatOutputError(e)}`
+                        : `Connection failed for ${target}: ${formatOutputError(e)}`,
+                );
+                if (!silentFailureToast) {
+                    useAppStore.getState().addToast({
+                        title: "Connection Failed",
+                        description: String(e),
+                        variant: "destructive",
+                    });
+                }
             }
         }
     };
 
     const handleDoubleClick = async (id: string) => {
-        const profile = profiles.find((p) => p.id === id);
+        const profile = useProfilesStore.getState().profiles.find((p) => p.id === id);
         if (!profile) return;
 
         if (profile.connectionStatus === "connected") {

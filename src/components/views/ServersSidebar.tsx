@@ -1,5 +1,7 @@
 import { useState, useEffect } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
+import { homeDir, join } from "@tauri-apps/api/path";
+import { dbForgetHostKey } from "@/lib/db";
 import {
   DatabaseType,
   DB_TYPE_LABELS,
@@ -8,6 +10,7 @@ import {
 } from "@/state/profilesStore";
 import { useProfileManager } from "@/hooks/useProfileManager";
 import { useProfilesStore } from "@/state/profilesStore";
+import { useAppStore } from "@/state/appStore";
 import { ProfileListSkeleton } from "@/components/ui/Skeleton";
 import { cn } from "@/lib/utils/cn";
 import {
@@ -33,11 +36,41 @@ const DB_ICONS: Record<DatabaseType, React.ElementType> = {
   mssql: Database,
 };
 
+function getConnectionStatusMeta(status?: string) {
+  switch (status) {
+    case "connected":
+      return {
+        label: "Connected",
+        dotClassName: "bg-green-500",
+        badgeClassName: "text-green-400 bg-green-500/10",
+      };
+    case "connecting":
+      return {
+        label: "Connecting",
+        dotClassName: "bg-yellow-500",
+        badgeClassName: "text-yellow-400 bg-yellow-500/10",
+      };
+    case "error":
+      return {
+        label: "Error",
+        dotClassName: "bg-red-500",
+        badgeClassName: "text-red-400 bg-red-500/10",
+      };
+    default:
+      return {
+        label: "Disconnected",
+        dotClassName: "bg-muted-foreground/50",
+        badgeClassName: "text-muted-foreground bg-muted/50",
+      };
+  }
+}
+
 export function ServersSidebar() {
   const isLoaded = useProfilesStore((s) => s._loaded);
   const {
     profiles,
     viewMode,
+    editingId,
     formData,
     handleCreate,
     handleEdit,
@@ -80,6 +113,7 @@ export function ServersSidebar() {
           onClick={handleCreate}
           className="flex items-center justify-center w-6 h-6 rounded text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors"
           title="New Connection"
+          aria-label="New Connection"
         >
           <Plus className="w-4 h-4" />
         </button>
@@ -114,6 +148,12 @@ export function ServersSidebar() {
           </div>
         ) : (
           profiles.map((profile) => {
+            const statusMeta = getConnectionStatusMeta(profile.connectionStatus);
+            const connectionTarget =
+              profile.type === "sqlite"
+                ? profile.filePath || "No file set"
+                : `${profile.host}:${profile.port ?? "—"}`;
+
             return (
               <div
                 key={profile.id}
@@ -131,8 +171,15 @@ export function ServersSidebar() {
                   role="button"
                   tabIndex={0}
                   onDoubleClick={() => handleDoubleClick(profile.id)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      handleDoubleClick(profile.id);
+                    }
+                  }}
                   className="w-full text-left px-3 py-1.5 flex items-center gap-2.5 transition-colors group relative hover:bg-accent/50 cursor-pointer"
                   title="Double-click to connect / open"
+                  aria-label={`${profile.name}. ${statusMeta.label}. ${connectionTarget}. Press Enter to connect or open.`}
                 >
                   {/* DB Icon + status */}
                   <div className="relative shrink-0 flex items-center justify-center w-5 h-5">
@@ -150,15 +197,13 @@ export function ServersSidebar() {
                         />
                       );
                     })()}
-                    {profile.connectionStatus === "connected" && (
-                      <div className="absolute -bottom-0.5 right-0 w-2 h-2 rounded-full bg-green-500 border border-background" />
-                    )}
-                    {profile.connectionStatus === "connecting" && (
-                      <div className="absolute -bottom-0.5 right-0 w-2 h-2 rounded-full bg-yellow-500 border border-background animate-pulse" />
-                    )}
-                    {profile.connectionStatus === "error" && (
-                      <div className="absolute -bottom-0.5 right-0 w-2 h-2 rounded-full bg-red-500 border border-background" />
-                    )}
+                    <div
+                      className={cn(
+                        "absolute -bottom-0.5 right-0 h-2 w-2 rounded-full border border-background",
+                        statusMeta.dotClassName,
+                        profile.connectionStatus === "connecting" && "animate-pulse",
+                      )}
+                    />
                   </div>
 
                   <div className="flex-1 min-w-0">
@@ -169,6 +214,23 @@ export function ServersSidebar() {
                       {profile.type === "sqlite"
                         ? profile.filePath || "No file set"
                         : `${profile.host}:${profile.port ?? "—"}`}
+                    </div>
+                    <div className="mt-1 flex items-center">
+                      <span
+                        className={cn(
+                          "inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[9px] font-medium",
+                          statusMeta.badgeClassName,
+                        )}
+                      >
+                        <span
+                          className={cn(
+                            "h-1.5 w-1.5 rounded-full",
+                            statusMeta.dotClassName,
+                            profile.connectionStatus === "connecting" && "animate-pulse",
+                          )}
+                        />
+                        {statusMeta.label}
+                      </span>
                     </div>
                   </div>
 
@@ -181,11 +243,15 @@ export function ServersSidebar() {
                         }}
                         title="Disconnect"
                         className="w-6 h-6 flex items-center justify-center rounded hover:bg-red-500/20 hover:text-red-500 transition-colors"
+                        aria-label={`Disconnect ${profile.name}`}
                       >
                         <PlugZap className="w-3.5 h-3.5" />
                       </button>
                     ) : profile.connectionStatus === "connecting" ? (
-                      <div className="w-6 h-6 flex items-center justify-center">
+                      <div
+                        className="w-6 h-6 flex items-center justify-center"
+                        aria-label={`Connecting ${profile.name}`}
+                      >
                         <Loader2 className="w-3.5 h-3.5 animate-spin" />
                       </div>
                     ) : (
@@ -196,6 +262,7 @@ export function ServersSidebar() {
                         }}
                         title="Connect"
                         className="w-6 h-6 flex items-center justify-center rounded hover:bg-primary/20 hover:text-primary transition-colors opacity-0 group-hover:opacity-100 focus:opacity-100"
+                        aria-label={`Connect ${profile.name}`}
                       >
                         <Plug className="w-3.5 h-3.5" />
                       </button>
@@ -211,6 +278,7 @@ export function ServersSidebar() {
                       }}
                       className="w-6 h-6 flex items-center justify-center rounded hover:bg-muted transition-colors opacity-0 group-hover:opacity-100 focus:opacity-100"
                       title="More Actions"
+                      aria-label={`More actions for ${profile.name}`}
                     >
                       <MoreVertical className="w-3.5 h-3.5" />
                     </button>
@@ -297,6 +365,7 @@ export function ServersSidebar() {
                 <button
                   onClick={handleCancel}
                   className="text-muted-foreground hover:text-foreground rounded-full p-1 hover:bg-accent transition-colors"
+                  aria-label="Close connection form"
                 >
                   <X className="w-4 h-4" />
                 </button>
@@ -556,6 +625,7 @@ export function ServersSidebar() {
                                 const selected = await open({
                                   multiple: false,
                                   directory: false,
+                                  defaultPath: await homeDir(),
                                   filters: [{ name: "Certificate", extensions: ["pem", "crt"] }],
                                 });
                                 if (typeof selected === "string") {
@@ -597,6 +667,7 @@ export function ServersSidebar() {
                                 const selected = await open({
                                   multiple: false,
                                   directory: false,
+                                  defaultPath: await homeDir(),
                                   filters: [{ name: "Certificate", extensions: ["pem", "crt"] }],
                                 });
                                 if (typeof selected === "string") {
@@ -638,6 +709,7 @@ export function ServersSidebar() {
                                 const selected = await open({
                                   multiple: false,
                                   directory: false,
+                                  defaultPath: await homeDir(),
                                   filters: [{ name: "Key", extensions: ["pem", "key"] }],
                                 });
                                 if (typeof selected === "string") {
@@ -750,6 +822,7 @@ export function ServersSidebar() {
                                   const selected = await open({
                                     multiple: false,
                                     directory: false,
+                                    defaultPath: await join(await homeDir(), ".ssh"),
                                     filters: [{ name: "Key", extensions: ["*", "pem", "key"] }],
                                   });
                                   if (typeof selected === "string") {
@@ -826,6 +899,42 @@ export function ServersSidebar() {
                                 />
                               </div>
                             </div>
+
+                            {viewMode === "edit" && editingId && formData.sshHost && (
+                              <div className="flex items-center justify-between pt-1">
+                                <div className="space-y-0.5">
+                                  <label className="text-xs font-medium">Stored Host Key</label>
+                                  <p className="text-[10px] text-muted-foreground">
+                                    Remove cached fingerprint for this host
+                                  </p>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={async () => {
+                                    try {
+                                      await dbForgetHostKey(
+                                        editingId,
+                                        formData.sshHost!,
+                                        formData.sshPort ?? 22,
+                                      );
+                                      useAppStore.getState().addToast({
+                                        title: "Host Key Forgotten",
+                                        description: `Fingerprint for ${formData.sshHost}:${formData.sshPort ?? 22} removed. Next connection will perform a fresh TOFU exchange.`,
+                                      });
+                                    } catch (err) {
+                                      useAppStore.getState().addToast({
+                                        title: "Failed to Forget Host Key",
+                                        description: String(err),
+                                        variant: "destructive",
+                                      });
+                                    }
+                                  }}
+                                  className="h-7 px-2.5 rounded-md border border-destructive/40 bg-destructive/10 text-destructive hover:bg-destructive/20 text-[10px] font-medium transition-colors"
+                                >
+                                  Forget Key
+                                </button>
+                              </div>
+                            )}
                           </div>
                         </div>
                       </div>

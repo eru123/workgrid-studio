@@ -1,0 +1,5 @@
+User-agent: *
+Allow: /
+
+Host: workgrid-studio.skiddph.com
+Sitemap: https://workgrid-studio.skiddph.com/sitemap.xml

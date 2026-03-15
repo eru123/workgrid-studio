@@ -25,16 +25,17 @@ jobs:
     outputs:
       version: ${{ steps.read-version.outputs.version }}
       tag: ${{ steps.read-version.outputs.tag }}
+      notes: ${{ steps.changelog.outputs.notes }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version: 24
 
       - name: Bump and sync version files
         run: node scripts/versioning.mjs bump "${{ github.event.inputs.bump }}"
@@ -92,14 +93,14 @@ jobs:
 
     steps:
       - name: Checkout version tag
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ needs.prepare-version.outputs.tag }}
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version: 24
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -129,7 +130,7 @@ jobs:
         with:
           tagName: ${{ needs.prepare-version.outputs.tag }}
           releaseName: Workgrid Studio v${{ needs.prepare-version.outputs.version }}
-          releaseBody: "${{ steps.changelog.outputs.notes }}"
+          releaseBody: "${{ needs.prepare-version.outputs.notes }}"
           releaseDraft: true
           prerelease: true
           args: --verbose

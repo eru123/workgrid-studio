@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { useModelsStore, ModelProvider } from "@/state/modelsStore";
+import { useProfilesStore } from "@/state/profilesStore";
 import { vaultSet, vaultDelete, aiGenerateQuery } from "@/lib/db";
+import { ensureAiUseAllowed } from "@/lib/privacy";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/Card";
@@ -8,6 +10,9 @@ import { Loader2, CheckCircle2, XCircle } from "lucide-react";
 
 export function ModelsPage() {
     const { providers, addProvider, deleteProvider, selectedProviderId, setSelectedProviderId } = useModelsStore();
+    const aiBlocked = useProfilesStore(
+        (s) => s.globalPreferences.blockAiRequests ?? false,
+    );
     const [isAdding, setIsAdding] = useState(false);
     const [isTesting, setIsTesting] = useState<Record<string, boolean>>({});
     const [testResult, setTestResult] = useState<Record<string, "success" | "error" | null>>({});
@@ -51,6 +56,9 @@ export function ModelsPage() {
     };
 
     const handleTest = async (p: ModelProvider) => {
+        if (!ensureAiUseAllowed({ providerName: p.name, includesSchemaContext: false })) {
+            return;
+        }
         setIsTesting((s) => ({ ...s, [p.id]: true }));
         setTestResult((s) => ({ ...s, [p.id]: null }));
         try {
@@ -153,7 +161,7 @@ export function ModelsPage() {
                                 <Button
                                     variant="outline"
                                     size="sm"
-                                    disabled={isTesting[p.id]}
+                                    disabled={isTesting[p.id] || aiBlocked}
                                     onClick={() => handleTest(p)}
                                     className="gap-2"
                                 >
@@ -172,6 +180,11 @@ export function ModelsPage() {
                     </div>
                 )}
             </div>
+            {aiBlocked && (
+                <p className="text-xs text-muted-foreground">
+                    AI requests are currently disabled in Settings &gt; Privacy, so provider tests are blocked.
+                </p>
+            )}
         </div>
     );
 }
