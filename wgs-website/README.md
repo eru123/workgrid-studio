@@ -22,7 +22,9 @@ The Cloudflare Pages output directory is `dist/`.
 This package already points all site metadata to `https://workgrid-studio.skiddph.com`:
 
 - canonical URL
+- prerendered homepage HTML
 - Open Graph and Twitter URLs
+- JSON-LD structured data
 - `robots.txt`
 - `sitemap.xml`
 - web manifest
