@@ -807,6 +807,23 @@ export function ExplorerTree() {
                       onClick={() => {
                         setContextMenu(null);
                         useLayoutStore.getState().openTab({
+                          title: `Schema: ${targetDbs[0]}`,
+                          type: "schema",
+                          meta: {
+                            profileId,
+                            database: targetDbs[0],
+                          },
+                        });
+                      }}
+                    >
+                      <Link2 className="w-3.5 h-3.5 text-muted-foreground" />{" "}
+                      Schema Diagram
+                    </button>
+                    <button
+                      className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2"
+                      onClick={() => {
+                        setContextMenu(null);
+                        useLayoutStore.getState().openTab({
                           title: `Query: ${targetDbs[0]}`,
                           type: "sql",
                           meta: { profileId, database: targetDbs[0] },

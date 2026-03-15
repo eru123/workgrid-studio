@@ -42,6 +42,8 @@ export type SplitDirection = "horizontal" | "vertical";
 
 export type EditorTabType =
   | "sql"
+  | "results"
+  | "schema"
   | "models"
   | "tasks"
   | "database-view"
@@ -113,7 +115,7 @@ interface LayoutState {
   restoreLastClosedTab: () => void;
 
   // Tab operations
-  openTab: (tab: Omit<EditorTab, "id">, leafId?: string) => void;
+  openTab: (tab: Omit<EditorTab, "id"> & { id?: string }, leafId?: string) => void;
   closeTab: (tabId: string, leafId: string) => void;
   closeOtherTabs: (tabId: string, leafId: string) => void;
   closeTabsToRight: (tabId: string, leafId: string) => void;
@@ -288,7 +290,7 @@ export const useLayoutStore = create<LayoutState>((set) => ({
 
       const newTab: EditorTab = {
         ...tabData,
-        id: `tab-${crypto.randomUUID()}`,
+        id: tabData.id ?? `tab-${crypto.randomUUID()}`,
       };
       return {
         editorTree: updateLeaf(state.editorTree, targetLeaf.id, (leaf) => ({

@@ -47,6 +47,16 @@ const QueryTab = lazy(() =>
     default: m.QueryTab,
   })),
 );
+const ResultsTab = lazy(() =>
+  import("@/components/views/ResultsTab").then((m) => ({
+    default: m.ResultsTab,
+  })),
+);
+const SchemaDiagramTab = lazy(() =>
+  import("@/components/views/SchemaDiagramTab").then((m) => ({
+    default: m.SchemaDiagramTab,
+  })),
+);
 const TableDataTab = lazy(() =>
   import("@/components/views/TableDataTab").then((m) => ({
     default: m.TableDataTab,
@@ -110,8 +120,18 @@ const TabContent = memo(function TabContent({ tab, leafId }: { tab: EditorTab, l
         return (
           <QueryTab
             tabId={tab.id}
+            leafId={leafId}
             profileId={tab.meta?.profileId ?? ""}
             database={tab.meta?.database}
+          />
+        );
+      case "results":
+        return <ResultsTab tabId={tab.id} />;
+      case "schema":
+        return (
+          <SchemaDiagramTab
+            profileId={tab.meta?.profileId ?? ""}
+            database={tab.meta?.database ?? ""}
           />
         );
       default:
@@ -128,6 +148,8 @@ const TabContent = memo(function TabContent({ tab, leafId }: { tab: EditorTab, l
 
 const TAB_TYPE_LABELS: Record<EditorTab["type"], string> = {
   sql: "SQL Query (Ctrl+N)",
+  results: "Frozen Results",
+  schema: "Schema Diagram",
   "database-view": "Database View",
   "table-designer": "Table Designer",
   "table-data": "Table Data",
@@ -145,6 +167,8 @@ function tabIcon(type: EditorTab["type"], isActive: boolean) {
   let icon;
   switch (type) {
     case "sql":          icon = <Terminal className={cls} />; break;
+    case "results":      icon = <Rows3 className={cls} />; break;
+    case "schema":       icon = <Database className={cls} />; break;
     case "database-view": icon = <Database className={cls} />; break;
     case "table-designer": icon = <Table2 className={cls} />; break;
     case "table-data":   icon = <Rows3 className={cls} />; break;
