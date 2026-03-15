@@ -1720,7 +1720,7 @@ const SavedQueriesNode = memo(function SavedQueriesNode({
   expanded: ExpandedSet;
   toggle: (key: string) => void;
 }) {
-  const savedQueries = useSavedQueriesStore((s) => s.byProfile[profileId] ?? []);
+  const savedQueries = useSavedQueriesStore((s) => s.byProfile[profileId]) ?? [];
   const loading = useSavedQueriesStore((s) => s.loadingByProfile[profileId] ?? false);
   const error = useSavedQueriesStore((s) => s.errorByProfile[profileId] ?? null);
   const loadProfileQueries = useSavedQueriesStore((s) => s.loadProfileQueries);
@@ -1840,7 +1840,7 @@ const DatabaseNode = memo(function DatabaseNode({
 }) {
   const cacheKey = `${profileId}::${database}`;
   const tables = useSchemaStore((s) => s.tables[cacheKey]);
-  const tableInfos = useSchemaStore((s) => s.tableInfos[cacheKey] ?? []);
+  const tableInfos = useSchemaStore((s) => s.tableInfos[cacheKey]) ?? [];
   const loading = useSchemaStore((s) => s.loadingTables[cacheKey]);
   const error = useSchemaStore((s) => s.errors[`tbl-${cacheKey}`]);
   const refreshTables = useSchemaStore((s) => s.refreshTables);

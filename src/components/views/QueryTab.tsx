@@ -734,9 +734,12 @@ export function QueryTab({
   const saveSavedQuery = useSavedQueriesStore((s) => s.saveQuery);
   const readSavedQueryText = useSavedQueriesStore((s) => s.readQueryText);
   const loadProfileSavedQueries = useSavedQueriesStore((s) => s.loadProfileQueries);
-  const savedQueries = useSavedQueriesStore(
-    (s) => s.byProfile[selectedProfileId || profileId] ?? [],
-  );
+
+  // Must be declared before any hook selector that references it (avoids TDZ)
+  const [selectedProfileId, setSelectedProfileId] = useState(profileId);
+
+  const savedQueries =
+    useSavedQueriesStore((s) => s.byProfile[selectedProfileId || profileId]) ?? [];
   const aiBlocked = useProfilesStore(
     (s) => s.globalPreferences.blockAiRequests ?? false,
   );
@@ -751,8 +754,6 @@ export function QueryTab({
   const queryTimeoutMs = useProfilesStore(
     (s) => s.globalPreferences.queryTimeoutMs ?? 30000,
   );
-
-  const [selectedProfileId, setSelectedProfileId] = useState(profileId);
   const [selectedDb, setSelectedDb] = useState(initialDatabase ?? "");
   const loadedSavedQueryPathRef = useRef<string | null>(null);
 
