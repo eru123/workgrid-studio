@@ -1,6 +1,10 @@
 # Changelog
 
 ## [Unreleased]
+- feat: add comprehensive project setup and layout management
+- Update contribution guidelines to include linting and pre-commit hooks
+- chore: bump workgrid-studio version to 0.1.6
+- chore: bump version to v0.1.6
 
 ## [0.1.6] - 2026-03-15
 - **[Breaking] Vault & Security:** Migrated to secure, per-installation vault encryption via the OS credential store. Added Content Security Policy (CSP) and restricted file-system permissions.
