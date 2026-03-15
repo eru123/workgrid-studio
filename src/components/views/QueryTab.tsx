@@ -73,7 +73,7 @@ import {
 } from "@/lib/utils/dataGrid";
 import { FindToolbar } from "@/components/ui/FindToolbar";
 import { CellContextMenu } from "@/components/ui/CellContextMenu";
-import { Skeleton } from "@/components/ui/Skeleton";
+import { DataGridSkeleton, Skeleton } from "@/components/ui/Skeleton";
 import {
   ExplainPlanView,
   type ExplainMode,
@@ -92,6 +92,7 @@ interface Props {
   savedQueryId?: string;
   savedQueryPath?: string;
   savedQueryName?: string;
+  initialTabMeta?: Record<string, string>;
 }
 
 interface EditorEdit {
@@ -535,13 +536,16 @@ export function QueryTab({
   savedQueryId,
   savedQueryPath,
   savedQueryName,
+  initialTabMeta,
 }: Props) {
   // ── State ──────────────────────────────────────────────────
   const [sql, setSql] = useState("");
   const [lastSavedSql, setLastSavedSql] = useState("");
   const [results, setResults] = useState<QueryResultSet[]>([]);
   const [hasRun, setHasRun] = useState(false);
-  const [activeResultIdx, setActiveResultIdx] = useState(0);
+  const [activeResultIdx, setActiveResultIdx] = useState(
+    Number(initialTabMeta?.activeResultIdx ?? 0) || 0,
+  );
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [executionTime, setExecutionTime] = useState<number | null>(null);
@@ -647,6 +651,7 @@ export function QueryTab({
   const lineNumberRef = useRef<HTMLDivElement>(null);
   const highlightRef = useRef<HTMLDivElement>(null);
   const resultScrollRef = useRef<HTMLDivElement>(null);
+  const restoredSessionScrollRef = useRef(false);
   const pendingEditorSelectionRef = useRef<{
     start: number;
     end: number;
@@ -676,6 +681,8 @@ export function QueryTab({
 
   // ── Matching brackets ─────────────────────────────────────
   const deferredSql = useDeferredValue(sql);
+  const deferredEditorScrollTop = useDeferredValue(editorViewport.scrollTop);
+  const deferredResultScrollTop = useDeferredValue(resultViewport.scrollTop);
   const deferredMatchBrackets = useMemo(() => {
     return findMatchingBrackets(
       deferredSql,
@@ -899,6 +906,11 @@ export function QueryTab({
   }, [readSavedQueryText, savedQueryPath]);
 
   useEffect(() => {
+    if (savedQueryPath || !initialTabMeta?.initialSql || sql.trim()) return;
+    setSql(initialTabMeta.initialSql);
+  }, [initialTabMeta?.initialSql, savedQueryPath, sql]);
+
+  useEffect(() => {
     if (!savedQueryId) return;
     void loadProfileSavedQueries(selectedProfileId || profileId);
   }, [loadProfileSavedQueries, profileId, savedQueryId, selectedProfileId]);
@@ -914,14 +926,20 @@ export function QueryTab({
           savedQueryId: savedQueryId ?? currentSavedQuery?.id ?? "",
           savedQueryPath: savedQueryPath ?? currentSavedQuery?.filePath ?? "",
           filePath: currentSavedQuery?.absolutePath ?? "",
+          editorScrollTop: String(Math.round(deferredEditorScrollTop)),
+          resultScrollTop: String(Math.round(deferredResultScrollTop)),
+          activeResultIdx: String(activeResultIdx),
         },
       });
     }
   }, [
+    activeResultIdx,
     connectedProfiles,
     currentSavedQuery?.absolutePath,
     currentSavedQuery?.filePath,
     currentSavedQuery?.id,
+    deferredEditorScrollTop,
+    deferredResultScrollTop,
     savedQueryId,
     savedQueryPath,
     selectedDb,
@@ -1423,6 +1441,7 @@ export function QueryTab({
 
         // Update status bar
         useAppStore.getState().setStatusBarInfo({
+          profileId: selectedProfileId,
           connectionName: connectedProfiles[selectedProfileId]?.name,
           database: selectedDb || undefined,
           executionTimeMs: elapsed,
@@ -2402,6 +2421,35 @@ export function QueryTab({
       highlightRef.current.scrollLeft = textarea.scrollLeft;
     }
   }, [editorFontSize, splitPercent, syncEditorMetrics, wordWrap]);
+
+  useEffect(() => {
+    if (restoredSessionScrollRef.current) return;
+
+    const editorScrollTop = Number(initialTabMeta?.editorScrollTop ?? 0);
+    const resultScrollTop = Number(initialTabMeta?.resultScrollTop ?? 0);
+    const textarea = editorRef.current;
+
+    if (textarea && Number.isFinite(editorScrollTop) && editorScrollTop > 0) {
+      textarea.scrollTop = editorScrollTop;
+      if (lineNumberRef.current) {
+        lineNumberRef.current.scrollTop = editorScrollTop;
+      }
+      if (highlightRef.current) {
+        highlightRef.current.scrollTop = editorScrollTop;
+      }
+    }
+
+    if (
+      resultScrollRef.current &&
+      Number.isFinite(resultScrollTop) &&
+      resultScrollTop > 0 &&
+      (results.length > 0 || hasRun)
+    ) {
+      resultScrollRef.current.scrollTop = resultScrollTop;
+    }
+
+    restoredSessionScrollRef.current = true;
+  }, [hasRun, initialTabMeta, results.length]);
 
   // Track textarea content width for word-wrap line number sync
   useEffect(() => {
@@ -3406,10 +3454,19 @@ export function QueryTab({
             />
           </div>
         ) : running && (
-          <div className="flex-1 flex items-center justify-center text-muted-foreground/50">
-            <div className="text-center">
-              <Loader2 className="w-6 h-6 mx-auto mb-2 animate-spin opacity-50" />
-              <div>Executing query…</div>
+          <div className="flex-1 min-h-0 overflow-hidden bg-background">
+            <div className="h-full w-full">
+              <div className="flex items-center justify-between border-b bg-muted/10 px-3 py-2 text-[11px] text-muted-foreground">
+                <span className="inline-flex items-center gap-2">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  Executing query...
+                </span>
+                <span className="font-mono">Preparing result grid</span>
+              </div>
+              <DataGridSkeleton
+                columns={Math.max(activeResult?.columns.length ?? 4, 4)}
+                rows={10}
+              />
             </div>
           </div>
         )}

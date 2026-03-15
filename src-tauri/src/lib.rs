@@ -1,17 +1,17 @@
-use std::sync::Mutex;
-use std::sync::Arc;
+use mysql_async::Pool;
+use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
 use std::sync::mpsc;
-use std::collections::HashMap;
-use mysql_async::Pool;
+use std::sync::Arc;
+use std::sync::Mutex;
 
-pub mod db;
-pub mod ssh;
-pub mod crypto;
 pub mod ai;
+pub mod crypto;
+pub mod db;
 pub mod error;
 pub mod files;
 pub mod logging;
+pub mod ssh;
 
 pub use error::{AppError, AppResult};
 
@@ -38,6 +38,12 @@ impl DbState {
             pools: Mutex::new(HashMap::new()),
             tunnels: Mutex::new(HashMap::new()),
         }
+    }
+}
+
+impl Default for DbState {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -89,6 +95,10 @@ pub fn run() {
             db::db_ping,
             db::db_import_sql,
             db::db_import_csv,
+            db::db_export_table_csv,
+            db::db_export_table_json,
+            db::db_export_table_inserts,
+            db::db_export_sql_dump,
             ssh::forget_host_key
         ])
         .run(tauri::generate_context!())

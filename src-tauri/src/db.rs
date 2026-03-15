@@ -1,12 +1,12 @@
-use tauri::{AppHandle, Emitter, State};
+use crate::crypto::{decrypt_password, encrypt_password};
+use crate::logging::{log_error, log_info, log_query, log_query_result};
+use crate::ssh::{establish_ssh_tunnel, shutdown_tunnel};
+use crate::{AppError, AppResult, DbState};
 use mysql_async::prelude::*;
-use mysql_async::{Opts, OptsBuilder, Pool, PoolOpts, PoolConstraints, TxOpts};
+use mysql_async::{Opts, OptsBuilder, Pool, PoolConstraints, PoolOpts, TxOpts};
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
-use crate::{AppError, AppResult, DbState};
-use crate::ssh::{establish_ssh_tunnel, shutdown_tunnel};
-use crate::crypto::{encrypt_password, decrypt_password};
-use crate::logging::{log_query, log_query_result, log_info, log_error};
+use tauri::{AppHandle, Emitter, State};
 
 // ─── DB Types ───────────────────────────────────────────────────────
 
@@ -43,7 +43,9 @@ pub struct ConnectParams {
     pub ssh_compression: bool,
 }
 
-pub fn default_true() -> bool { true }
+pub fn default_true() -> bool {
+    true
+}
 
 #[derive(Debug, Serialize, Clone)]
 pub struct ColumnInfo {
@@ -157,17 +159,15 @@ fn emit_import_progress(app: &AppHandle, event: &ImportProgressEvent) {
 // ─── Helpers ────────────────────────────────────────────────────────
 
 pub fn get_pool(state: &State<'_, DbState>, profile_id: &str) -> AppResult<Pool> {
-    let pools = state.pools.lock().map_err(|e| format!("Lock error: {}", e))?;
-    Ok(
-        pools
-            .get(profile_id)
-            .cloned()
-            .ok_or_else(|| {
-                let msg = "Not connected. Please connect first.".to_string();
-                log_error(profile_id, &msg);
-                msg
-            })?,
-    )
+    let pools = state
+        .pools
+        .lock()
+        .map_err(|e| format!("Lock error: {}", e))?;
+    Ok(pools.get(profile_id).cloned().ok_or_else(|| {
+        let msg = "Not connected. Please connect first.".to_string();
+        log_error(profile_id, &msg);
+        msg
+    })?)
 }
 
 pub fn split_sql_statements(sql: &str) -> Vec<String> {
@@ -219,7 +219,7 @@ fn normalized_query_timeout_ms(timeout_ms: Option<u64>) -> u64 {
 }
 
 fn format_timeout_label(timeout_ms: u64) -> String {
-    if timeout_ms % 1000 == 0 {
+    if timeout_ms.is_multiple_of(1000) {
         format!("{}s", timeout_ms / 1000)
     } else {
         format!("{:.1}s", timeout_ms as f64 / 1000.0)
@@ -258,10 +258,7 @@ where
 // ─── DB Commands ────────────────────────────────────────────────────
 
 #[tauri::command]
-pub async fn db_connect(
-    state: State<'_, DbState>,
-    params: ConnectParams,
-) -> AppResult<String> {
+pub async fn db_connect(state: State<'_, DbState>, params: ConnectParams) -> AppResult<String> {
     let mut params = params;
     let pid = params.profile_id.clone();
     let db_type = params.db_type.as_str();
@@ -321,11 +318,17 @@ pub async fn db_connect(
             // Debug telemetry: log active tunnel count after cleanup.
             #[cfg(debug_assertions)]
             if let Ok(tunnels) = state.tunnels.lock() {
-                eprintln!("[workgrid-studio] [debug] active SSH tunnel count after reconnect cleanup: {}", tunnels.len());
+                eprintln!(
+                    "[workgrid-studio] [debug] active SSH tunnel count after reconnect cleanup: {}",
+                    tunnels.len()
+                );
             }
         }
         let handle = establish_ssh_tunnel(&pid, &conn_params)?;
-        log_info(&pid, &format!("SSH Tunnel established: localhost:{}", handle.local_port));
+        log_info(
+            &pid,
+            &format!("SSH Tunnel established: localhost:{}", handle.local_port),
+        );
 
         // Redirect connection to local port
         conn_params.host = "127.0.0.1".to_string();
@@ -336,7 +339,14 @@ pub async fn db_connect(
     }
 
     let target = format!("{}@{}:{}", params.user, params.host, params.port);
-    log_info(&pid, &format!("Connecting to {} ({}) ...", target, if db_type.is_empty() { "mysql" } else { db_type }));
+    log_info(
+        &pid,
+        &format!(
+            "Connecting to {} ({}) ...",
+            target,
+            if db_type.is_empty() { "mysql" } else { db_type }
+        ),
+    );
 
     let mut builder = OptsBuilder::default()
         .ip_or_hostname(conn_params.host.clone())
@@ -402,7 +412,8 @@ pub async fn db_connect(
             let identity = mysql_async::ClientIdentity::new(cert_path.into(), key_path.into());
             ssl_opts = ssl_opts.with_client_identity(Some(identity));
         } else if has_cert || has_key {
-            let msg = "Both Client Certificate and Client Key must be provided for mutual TLS.".to_string();
+            let msg = "Both Client Certificate and Client Key must be provided for mutual TLS."
+                .to_string();
             log_error(&pid, &msg);
             return Err(AppError::validation(msg));
         }
@@ -410,8 +421,7 @@ pub async fn db_connect(
         builder = builder.ssl_opts(Some(ssl_opts));
     }
 
-    let pool_opts = PoolOpts::new()
-        .with_constraints(PoolConstraints::new(0, 5).unwrap());
+    let pool_opts = PoolOpts::new().with_constraints(PoolConstraints::new(0, 5).unwrap());
     builder = builder.pool_opts(Some(pool_opts));
 
     let opts: Opts = builder.into();
@@ -436,7 +446,9 @@ pub async fn db_connect(
     })?;
 
     if let Some(old_pool) = pools.remove(&pid) {
-        let _ = old_pool.disconnect();
+        tauri::async_runtime::spawn(async move {
+            let _ = old_pool.disconnect().await;
+        });
     }
     pools.insert(pid.clone(), pool);
 
@@ -444,10 +456,7 @@ pub async fn db_connect(
 }
 
 #[tauri::command]
-pub async fn db_disconnect(
-    state: State<'_, DbState>,
-    profile_id: String,
-) -> AppResult<String> {
+pub async fn db_disconnect(state: State<'_, DbState>, profile_id: String) -> AppResult<String> {
     log_info(&profile_id, "Disconnecting...");
 
     // Remove the pool while holding the lock, then drop the lock before awaiting disconnect.
@@ -477,7 +486,10 @@ pub async fn db_disconnect(
     // Debug telemetry: log active tunnel count after disconnect.
     #[cfg(debug_assertions)]
     if let Ok(tunnels) = state.tunnels.lock() {
-        eprintln!("[workgrid-studio] [debug] active SSH tunnel count after disconnect: {}", tunnels.len());
+        eprintln!(
+            "[workgrid-studio] [debug] active SSH tunnel count after disconnect: {}",
+            tunnels.len()
+        );
     }
 
     log_info(&profile_id, "Disconnected");
@@ -485,10 +497,7 @@ pub async fn db_disconnect(
 }
 
 #[tauri::command]
-pub async fn db_ping(
-    state: State<'_, DbState>,
-    profile_id: String,
-) -> AppResult<u128> {
+pub async fn db_ping(state: State<'_, DbState>, profile_id: String) -> AppResult<u128> {
     let pool = get_pool(&state, &profile_id)?;
     let start = std::time::Instant::now();
 
@@ -585,7 +594,10 @@ pub async fn db_list_columns(
         msg
     })?;
 
-    match conn.query::<(String, String, String, String, Option<String>, String), _>(&query).await {
+    match conn
+        .query::<(String, String, String, String, Option<String>, String), _>(&query)
+        .await
+    {
         Ok(rows) => {
             log_query_result(&profile_id, &query, rows.len());
             let columns: Vec<ColumnInfo> = rows
@@ -636,19 +648,28 @@ pub async fn db_get_databases_info(
         msg
     })?;
 
-    match conn.query::<(String, i64, i64, i64, String, Option<String>), _>(query).await {
+    match conn
+        .query::<(String, i64, i64, i64, String, Option<String>), _>(query)
+        .await
+    {
         Ok(rows) => {
-            log_query_result(&profile_id, "SELECT databases info FROM information_schema", rows.len());
+            log_query_result(
+                &profile_id,
+                "SELECT databases info FROM information_schema",
+                rows.len(),
+            );
             let infos: Vec<DatabaseInfo> = rows
                 .into_iter()
-                .map(|(name, size_bytes, tables, views, collation, last_mod)| DatabaseInfo {
-                    name,
-                    size_bytes,
-                    tables,
-                    views,
-                    default_collation: collation,
-                    last_modified: last_mod,
-                })
+                .map(
+                    |(name, size_bytes, tables, views, collation, last_mod)| DatabaseInfo {
+                        name,
+                        size_bytes,
+                        tables,
+                        views,
+                        default_collation: collation,
+                        last_modified: last_mod,
+                    },
+                )
                 .collect();
             drop(conn);
             Ok(infos)
@@ -688,21 +709,44 @@ pub async fn db_get_tables_info(
         msg
     })?;
 
-    match conn.exec::<(String, Option<i64>, Option<i64>, Option<String>, Option<String>, Option<String>, Option<String>, String), _, _>(query, params! { "db" => database.clone() }).await {
+    match conn
+        .exec::<(
+            String,
+            Option<i64>,
+            Option<i64>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            String,
+        ), _, _>(query, params! { "db" => database.clone() })
+        .await
+    {
         Ok(rows) => {
-            log_query_result(&profile_id, &format!("SELECT tables info FROM information_schema for {}", database), rows.len());
+            log_query_result(
+                &profile_id,
+                &format!(
+                    "SELECT tables info FROM information_schema for {}",
+                    database
+                ),
+                rows.len(),
+            );
             let infos: Vec<TableInfo> = rows
                 .into_iter()
-                .map(|(name, rows, size_bytes, created, updated, engine, comment, type_)| TableInfo {
-                    name,
-                    rows,
-                    size_bytes,
-                    created,
-                    updated,
-                    engine,
-                    comment,
-                    type_,
-                })
+                .map(
+                    |(name, rows, size_bytes, created, updated, engine, comment, type_)| {
+                        TableInfo {
+                            name,
+                            rows,
+                            size_bytes,
+                            created,
+                            updated,
+                            engine,
+                            comment,
+                            type_,
+                        }
+                    },
+                )
                 .collect();
             drop(conn);
             Ok(infos)
@@ -730,7 +774,12 @@ pub async fn db_get_variables(
 
     // Try to get scopes from performance_schema
     let mut scope_map = std::collections::HashMap::new();
-    if let Ok(scopes) = conn.query::<(String, String), _>("SELECT VARIABLE_NAME, VARIABLE_SCOPE FROM performance_schema.variables_info").await {
+    if let Ok(scopes) = conn
+        .query::<(String, String), _>(
+            "SELECT VARIABLE_NAME, VARIABLE_SCOPE FROM performance_schema.variables_info",
+        )
+        .await
+    {
         for (name, scope) in scopes {
             scope_map.insert(name.to_lowercase(), scope.to_uppercase());
         }
@@ -748,7 +797,8 @@ pub async fn db_get_variables(
         .await
         .map_err(|e| e.to_string())?;
 
-    let mut map: std::collections::BTreeMap<String, (String, String)> = std::collections::BTreeMap::new();
+    let mut map: std::collections::BTreeMap<String, (String, String)> =
+        std::collections::BTreeMap::new();
 
     for (name, value) in session_rows {
         map.entry(name).or_insert((String::new(), String::new())).0 = value;
@@ -853,17 +903,34 @@ pub async fn db_get_processes(
         msg
     })?;
 
+    type ProcessListRow = (
+        u64,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<i64>,
+        Option<String>,
+        Option<String>,
+    );
+
     let query = "SELECT ID, USER, HOST, DB, COMMAND, TIME, STATE, INFO FROM information_schema.PROCESSLIST ORDER BY TIME DESC";
-    let rows: Vec<(u64, Option<String>, Option<String>, Option<String>, Option<String>, Option<i64>, Option<String>, Option<String>)> = conn
-        .query(query)
-        .await
-        .map_err(|e| e.to_string())?;
+    let rows: Vec<ProcessListRow> = conn.query(query).await.map_err(|e| e.to_string())?;
 
     let infos: Vec<ProcessInfo> = rows
         .into_iter()
-        .map(|(id, user, host, db, command, time, state, info)| ProcessInfo {
-            id, user, host, db, command, time, state, info
-        })
+        .map(
+            |(id, user, host, db, command, time, state, info)| ProcessInfo {
+                id,
+                user,
+                host,
+                db,
+                command,
+                time,
+                state,
+                info,
+            },
+        )
         .collect();
 
     Ok(infos)
@@ -934,7 +1001,10 @@ pub async fn db_get_collations(
     }
 
     let mut default_collation = String::from("utf8mb4_general_ci");
-    if let Ok(mut rows) = conn.query::<mysql_async::Row, _>("SHOW CHARACTER SET WHERE Charset = 'utf8mb4'").await {
+    if let Ok(mut rows) = conn
+        .query::<mysql_async::Row, _>("SHOW CHARACTER SET WHERE Charset = 'utf8mb4'")
+        .await
+    {
         if let Some(row) = rows.pop() {
             if let Some(col) = row.get::<String, usize>(2) {
                 default_collation = col;
@@ -976,7 +1046,9 @@ pub async fn db_query(
             stmt,
             timeout_ms,
             conn.query::<mysql_async::Row, _>(stmt.as_str()),
-        ).await {
+        )
+        .await
+        {
             Ok(rows) => {
                 if rows.is_empty() {
                     let affected = conn.affected_rows();
@@ -1007,9 +1079,10 @@ pub async fn db_query(
                                     // Try to interpret as UTF-8 string
                                     match String::from_utf8(b.clone()) {
                                         Ok(s) => serde_json::Value::String(s),
-                                        Err(_) => serde_json::Value::String(
-                                            format!("[binary {} bytes]", b.len())
-                                        ),
+                                        Err(_) => serde_json::Value::String(format!(
+                                            "[binary {} bytes]",
+                                            b.len()
+                                        )),
                                     }
                                 }
                                 mysql_async::Value::Int(n) => {
@@ -1031,16 +1104,18 @@ pub async fn db_query(
                                     }
                                 }
                                 mysql_async::Value::Date(y, m, d, h, mi, s, _us) => {
-                                    serde_json::Value::String(
-                                        format!("{:04}-{:02}-{:02} {:02}:{:02}:{:02}", y, m, d, h, mi, s)
-                                    )
+                                    serde_json::Value::String(format!(
+                                        "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
+                                        y, m, d, h, mi, s
+                                    ))
                                 }
                                 mysql_async::Value::Time(neg, d, h, mi, s, _us) => {
                                     let sign = if *neg { "-" } else { "" };
-                                    let total_hours = (*d as u32) * 24 + (*h as u32);
-                                    serde_json::Value::String(
-                                        format!("{}{:02}:{:02}:{:02}", sign, total_hours, mi, s)
-                                    )
+                                    let total_hours = *d * 24 + u32::from(*h);
+                                    serde_json::Value::String(format!(
+                                        "{}{:02}:{:02}:{:02}",
+                                        sign, total_hours, mi, s
+                                    ))
                                 }
                             };
                             vals.push(val);
@@ -1075,11 +1150,14 @@ pub async fn db_get_schema_ddl(
     database: String,
 ) -> AppResult<String> {
     let pool = get_pool(&state, &profile_id)?;
-    let mut conn = pool.get_conn().await
+    let mut conn = pool
+        .get_conn()
+        .await
         .map_err(|e| format!("Connection error: {}", e))?;
 
     // Switch to the target database
-    conn.query_drop(format!("USE `{}`", database)).await
+    conn.query_drop(format!("USE `{}`", database))
+        .await
         .map_err(|e| format!("USE error: {}", e))?;
 
     let mut ddl_parts: Vec<String> = Vec::new();
@@ -1156,7 +1234,10 @@ pub async fn db_import_sql(
 ) -> AppResult<ImportResult> {
     let started_at = Instant::now();
     let pool = get_pool(&state, &profile_id)?;
-    let mut conn = pool.get_conn().await.map_err(|e| format!("Connection error: {}", e))?;
+    let mut conn = pool
+        .get_conn()
+        .await
+        .map_err(|e| format!("Connection error: {}", e))?;
 
     // Switch to target DB if provided
     if !database.is_empty() {
@@ -1172,76 +1253,90 @@ pub async fn db_import_sql(
     let total = stmts.len();
     let mut executed = 0;
 
-    emit_import_progress(&app, &ImportProgressEvent {
-        job_id: job_id.clone(),
-        kind: "sql".to_string(),
-        phase: "started".to_string(),
-        items_processed: 0,
-        items_total: total,
-        rows_processed: 0,
-        rows_total: 0,
-        percent: 0.0,
-        message: format!("Executing {} SQL statement(s)...", total),
-    });
+    emit_import_progress(
+        &app,
+        &ImportProgressEvent {
+            job_id: job_id.clone(),
+            kind: "sql".to_string(),
+            phase: "started".to_string(),
+            items_processed: 0,
+            items_total: total,
+            rows_processed: 0,
+            rows_total: 0,
+            percent: 0.0,
+            message: format!("Executing {} SQL statement(s)...", total),
+        },
+    );
 
     for stmt in stmts {
         if let Err(e) = conn.query_drop(&stmt).await {
-            let message = format!(
-                "Execution failed at statement {}: {}",
-                executed + 1,
-                e
+            let message = format!("Execution failed at statement {}: {}", executed + 1, e);
+            log_error(
+                &profile_id,
+                &format!("SQL execution error at stmt {}: {}", executed + 1, e),
             );
-            log_error(&profile_id, &format!("SQL execution error at stmt {}: {}", executed + 1, e));
-            emit_import_progress(&app, &ImportProgressEvent {
+            emit_import_progress(
+                &app,
+                &ImportProgressEvent {
+                    job_id: job_id.clone(),
+                    kind: "sql".to_string(),
+                    phase: "error".to_string(),
+                    items_processed: executed,
+                    items_total: total,
+                    rows_processed: 0,
+                    rows_total: 0,
+                    percent: if total == 0 {
+                        0.0
+                    } else {
+                        (executed as f64 / total as f64) * 100.0
+                    },
+                    message: message.clone(),
+                },
+            );
+            return Err(AppError::database(message));
+        }
+        executed += 1;
+
+        emit_import_progress(
+            &app,
+            &ImportProgressEvent {
                 job_id: job_id.clone(),
                 kind: "sql".to_string(),
-                phase: "error".to_string(),
+                phase: "progress".to_string(),
                 items_processed: executed,
                 items_total: total,
                 rows_processed: 0,
                 rows_total: 0,
                 percent: if total == 0 {
-                    0.0
+                    100.0
                 } else {
                     (executed as f64 / total as f64) * 100.0
                 },
-                message: message.clone(),
-            });
-            return Err(AppError::database(message));
-        }
-        executed += 1;
+                message: format!("Executed {}/{} SQL statement(s).", executed, total),
+            },
+        );
+    }
 
-        emit_import_progress(&app, &ImportProgressEvent {
+    let elapsed_ms = started_at.elapsed().as_millis();
+    let summary = format!(
+        "Imported {} SQL statement(s) in {}ms.",
+        executed, elapsed_ms
+    );
+
+    emit_import_progress(
+        &app,
+        &ImportProgressEvent {
             job_id: job_id.clone(),
             kind: "sql".to_string(),
-            phase: "progress".to_string(),
+            phase: "completed".to_string(),
             items_processed: executed,
             items_total: total,
             rows_processed: 0,
             rows_total: 0,
-            percent: if total == 0 {
-                100.0
-            } else {
-                (executed as f64 / total as f64) * 100.0
-            },
-            message: format!("Executed {}/{} SQL statement(s).", executed, total),
-        });
-    }
-
-    let elapsed_ms = started_at.elapsed().as_millis();
-    let summary = format!("Imported {} SQL statement(s) in {}ms.", executed, elapsed_ms);
-
-    emit_import_progress(&app, &ImportProgressEvent {
-        job_id: job_id.clone(),
-        kind: "sql".to_string(),
-        phase: "completed".to_string(),
-        items_processed: executed,
-        items_total: total,
-        rows_processed: 0,
-        rows_total: 0,
-        percent: 100.0,
-        message: summary.clone(),
-    });
+            percent: 100.0,
+            message: summary.clone(),
+        },
+    );
 
     Ok(ImportResult {
         kind: "sql".to_string(),
@@ -1268,7 +1363,10 @@ pub async fn db_import_csv(
 ) -> AppResult<ImportResult> {
     let started_at = Instant::now();
     let pool = get_pool(&state, &profile_id)?;
-    let mut conn = pool.get_conn().await.map_err(|e| format!("Connection error: {}", e))?;
+    let mut conn = pool
+        .get_conn()
+        .await
+        .map_err(|e| format!("Connection error: {}", e))?;
 
     if !database.is_empty() {
         conn.query_drop(format!("USE `{}`", database.replace("`", "``")))
@@ -1280,7 +1378,10 @@ pub async fn db_import_csv(
         .from_path(&file_path)
         .map_err(|e| format!("Failed to read CSV file: {}", e))?;
 
-    let headers = rdr.headers().map_err(|e| format!("Failed to read headers: {}", e))?.clone();
+    let headers = rdr
+        .headers()
+        .map_err(|e| format!("Failed to read headers: {}", e))?
+        .clone();
     let cols: Vec<String> = headers
         .iter()
         .map(|h| format!("`{}`", h.replace('`', "``")))
@@ -1297,17 +1398,20 @@ pub async fn db_import_csv(
     let total_rows = records.len();
     let mut committed_rows = 0usize;
 
-    emit_import_progress(&app, &ImportProgressEvent {
-        job_id: job_id.clone(),
-        kind: "csv".to_string(),
-        phase: "started".to_string(),
-        items_processed: 0,
-        items_total: total_rows,
-        rows_processed: 0,
-        rows_total: total_rows,
-        percent: 0.0,
-        message: format!("Importing {} CSV row(s) into {}...", total_rows, table),
-    });
+    emit_import_progress(
+        &app,
+        &ImportProgressEvent {
+            job_id: job_id.clone(),
+            kind: "csv".to_string(),
+            phase: "started".to_string(),
+            items_processed: 0,
+            items_total: total_rows,
+            rows_processed: 0,
+            rows_total: total_rows,
+            percent: 0.0,
+            message: format!("Importing {} CSV row(s) into {}...", total_rows, table),
+        },
+    );
 
     // Wrap every insert in a single transaction so a mid-import failure leaves
     // the table in its original state (no partial imports committed).
@@ -1353,40 +1457,46 @@ pub async fn db_import_csv(
                 chunk_start * batch_size + chunk.len(),
                 e
             );
-            emit_import_progress(&app, &ImportProgressEvent {
+            emit_import_progress(
+                &app,
+                &ImportProgressEvent {
+                    job_id: job_id.clone(),
+                    kind: "csv".to_string(),
+                    phase: "error".to_string(),
+                    items_processed: committed_rows,
+                    items_total: total_rows,
+                    rows_processed: committed_rows,
+                    rows_total: total_rows,
+                    percent: if total_rows == 0 {
+                        0.0
+                    } else {
+                        (committed_rows as f64 / total_rows as f64) * 100.0
+                    },
+                    message: message.clone(),
+                },
+            );
+            message
+        })?;
+        committed_rows += chunk.len();
+
+        emit_import_progress(
+            &app,
+            &ImportProgressEvent {
                 job_id: job_id.clone(),
                 kind: "csv".to_string(),
-                phase: "error".to_string(),
+                phase: "progress".to_string(),
                 items_processed: committed_rows,
                 items_total: total_rows,
                 rows_processed: committed_rows,
                 rows_total: total_rows,
                 percent: if total_rows == 0 {
-                    0.0
+                    100.0
                 } else {
                     (committed_rows as f64 / total_rows as f64) * 100.0
                 },
-                message: message.clone(),
-            });
-            message
-        })?;
-        committed_rows += chunk.len();
-
-        emit_import_progress(&app, &ImportProgressEvent {
-            job_id: job_id.clone(),
-            kind: "csv".to_string(),
-            phase: "progress".to_string(),
-            items_processed: committed_rows,
-            items_total: total_rows,
-            rows_processed: committed_rows,
-            rows_total: total_rows,
-            percent: if total_rows == 0 {
-                100.0
-            } else {
-                (committed_rows as f64 / total_rows as f64) * 100.0
+                message: format!("Imported {}/{} row(s).", committed_rows, total_rows),
             },
-            message: format!("Imported {}/{} row(s).", committed_rows, total_rows),
-        });
+        );
     }
 
     tx.commit()
@@ -1396,22 +1506,23 @@ pub async fn db_import_csv(
     let elapsed_ms = started_at.elapsed().as_millis();
     let summary = format!(
         "Imported {} row(s) into {} in {}ms.",
-        total_rows,
-        table,
-        elapsed_ms
+        total_rows, table, elapsed_ms
     );
 
-    emit_import_progress(&app, &ImportProgressEvent {
-        job_id: job_id.clone(),
-        kind: "csv".to_string(),
-        phase: "completed".to_string(),
-        items_processed: total_rows,
-        items_total: total_rows,
-        rows_processed: total_rows,
-        rows_total: total_rows,
-        percent: 100.0,
-        message: summary.clone(),
-    });
+    emit_import_progress(
+        &app,
+        &ImportProgressEvent {
+            job_id: job_id.clone(),
+            kind: "csv".to_string(),
+            phase: "completed".to_string(),
+            items_processed: total_rows,
+            items_total: total_rows,
+            rows_processed: total_rows,
+            rows_total: total_rows,
+            percent: 100.0,
+            message: summary.clone(),
+        },
+    );
 
     Ok(ImportResult {
         kind: "csv".to_string(),
@@ -1424,6 +1535,289 @@ pub async fn db_import_csv(
         errors: vec![],
         summary,
     })
+}
+
+// ─── Export helpers ──────────────────────────────────────────────────
+
+/// Escape a single value for CSV output (RFC 4180).
+fn csv_escape(value: &str) -> String {
+    if value.contains(',') || value.contains('"') || value.contains('\n') || value.contains('\r') {
+        format!("\"{}\"", value.replace('"', "\"\""))
+    } else {
+        value.to_string()
+    }
+}
+
+/// Escape an identifier for MySQL backtick quoting.
+fn escape_ident(s: &str) -> String {
+    format!("`{}`", s.replace('`', "``"))
+}
+
+/// Escape a string literal for SQL (single-quote, backslash).
+fn escape_sql_str(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('\'', "\\'")
+}
+
+/// Convert a mysql_async::Value to a plain display string (no SQL quoting).
+fn value_to_display(val: &mysql_async::Value) -> String {
+    match val {
+        mysql_async::Value::NULL => String::new(),
+        mysql_async::Value::Bytes(b) => String::from_utf8_lossy(b).into_owned(),
+        mysql_async::Value::Int(n) => n.to_string(),
+        mysql_async::Value::UInt(n) => n.to_string(),
+        mysql_async::Value::Float(f) => f.to_string(),
+        mysql_async::Value::Double(d) => d.to_string(),
+        mysql_async::Value::Date(y, m, d, h, mi, s, _) => {
+            format!("{:04}-{:02}-{:02} {:02}:{:02}:{:02}", y, m, d, h, mi, s)
+        }
+        mysql_async::Value::Time(neg, days, h, mi, s, _) => {
+            let sign = if *neg { "-" } else { "" };
+            let total_h = days * 24 + (*h as u32);
+            format!("{}{:02}:{:02}:{:02}", sign, total_h, mi, s)
+        }
+    }
+}
+
+/// Fetch column names from a table using an existing connection.
+async fn fetch_col_names(conn: &mut mysql_async::Conn, table: &str) -> AppResult<Vec<String>> {
+    let rows: Vec<mysql_async::Row> = conn
+        .query(format!("SHOW COLUMNS FROM {}", escape_ident(table)))
+        .await
+        .map_err(|e| format!("SHOW COLUMNS error: {}", e))?;
+    Ok(rows
+        .iter()
+        .map(|r| r.get::<String, _>(0).unwrap_or_default())
+        .collect())
+}
+
+// ─── Export commands ─────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn db_export_table_csv(
+    state: State<'_, DbState>,
+    profile_id: String,
+    database: String,
+    table: String,
+    file_path: String,
+) -> AppResult<u64> {
+    use std::io::Write;
+
+    let pool = get_pool(&state, &profile_id)?;
+    let mut conn = pool
+        .get_conn()
+        .await
+        .map_err(|e| format!("Connection error: {}", e))?;
+    conn.query_drop(format!("USE {}", escape_ident(&database)))
+        .await
+        .map_err(|e| format!("USE error: {}", e))?;
+
+    let col_names = fetch_col_names(&mut conn, &table).await?;
+
+    let rows: Vec<mysql_async::Row> = conn
+        .query(format!("SELECT * FROM {}", escape_ident(&table)))
+        .await
+        .map_err(|e| format!("SELECT error: {}", e))?;
+
+    let mut file =
+        std::fs::File::create(&file_path).map_err(|e| format!("Cannot create file: {}", e))?;
+
+    let header = col_names
+        .iter()
+        .map(|c| csv_escape(c))
+        .collect::<Vec<_>>()
+        .join(",");
+    writeln!(file, "{}", header).map_err(|e| format!("Write error: {}", e))?;
+
+    let row_count = rows.len() as u64;
+    for row in &rows {
+        let fields: Vec<String> = (0..col_names.len())
+            .map(|i| csv_escape(&value_to_display(&row[i])))
+            .collect();
+        writeln!(file, "{}", fields.join(",")).map_err(|e| format!("Write error: {}", e))?;
+    }
+
+    Ok(row_count)
+}
+
+#[tauri::command]
+pub async fn db_export_table_json(
+    state: State<'_, DbState>,
+    profile_id: String,
+    database: String,
+    table: String,
+    file_path: String,
+) -> AppResult<u64> {
+    use std::io::Write;
+
+    let pool = get_pool(&state, &profile_id)?;
+    let mut conn = pool
+        .get_conn()
+        .await
+        .map_err(|e| format!("Connection error: {}", e))?;
+    conn.query_drop(format!("USE {}", escape_ident(&database)))
+        .await
+        .map_err(|e| format!("USE error: {}", e))?;
+
+    let col_names = fetch_col_names(&mut conn, &table).await?;
+
+    let rows: Vec<mysql_async::Row> = conn
+        .query(format!("SELECT * FROM {}", escape_ident(&table)))
+        .await
+        .map_err(|e| format!("SELECT error: {}", e))?;
+
+    let row_count = rows.len() as u64;
+    let mut objects: Vec<String> = Vec::with_capacity(rows.len());
+
+    for row in &rows {
+        let pairs: Vec<String> = col_names
+            .iter()
+            .enumerate()
+            .map(|(i, col)| {
+                let json_val = match &row[i] {
+                    mysql_async::Value::NULL => "null".to_string(),
+                    mysql_async::Value::Int(n) => n.to_string(),
+                    mysql_async::Value::UInt(n) => n.to_string(),
+                    mysql_async::Value::Float(f) => f.to_string(),
+                    mysql_async::Value::Double(d) => d.to_string(),
+                    v => {
+                        let s = value_to_display(v)
+                            .replace('\\', "\\\\")
+                            .replace('"', "\\\"")
+                            .replace('\n', "\\n")
+                            .replace('\r', "\\r");
+                        format!("\"{}\"", s)
+                    }
+                };
+                format!("\"{}\":{}", col.replace('"', "\\\""), json_val)
+            })
+            .collect();
+        objects.push(format!("{{{}}}", pairs.join(",")));
+    }
+
+    let json = format!("[{}]", objects.join(",\n"));
+    let mut file =
+        std::fs::File::create(&file_path).map_err(|e| format!("Cannot create file: {}", e))?;
+    file.write_all(json.as_bytes())
+        .map_err(|e| format!("Write error: {}", e))?;
+
+    Ok(row_count)
+}
+
+#[tauri::command]
+pub async fn db_export_table_inserts(
+    state: State<'_, DbState>,
+    profile_id: String,
+    database: String,
+    table: String,
+    file_path: String,
+) -> AppResult<u64> {
+    use std::io::Write;
+
+    let pool = get_pool(&state, &profile_id)?;
+    let mut conn = pool
+        .get_conn()
+        .await
+        .map_err(|e| format!("Connection error: {}", e))?;
+    conn.query_drop(format!("USE {}", escape_ident(&database)))
+        .await
+        .map_err(|e| format!("USE error: {}", e))?;
+
+    let col_names = fetch_col_names(&mut conn, &table).await?;
+
+    let rows: Vec<mysql_async::Row> = conn
+        .query(format!("SELECT * FROM {}", escape_ident(&table)))
+        .await
+        .map_err(|e| format!("SELECT error: {}", e))?;
+
+    let row_count = rows.len() as u64;
+    let col_list = col_names
+        .iter()
+        .map(|c| escape_ident(c))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let prefix = format!("INSERT INTO {} ({}) VALUES", escape_ident(&table), col_list);
+
+    let mut file =
+        std::fs::File::create(&file_path).map_err(|e| format!("Cannot create file: {}", e))?;
+
+    writeln!(file, "-- SQL INSERT export for `{}`.`{}`", database, table)
+        .map_err(|e| format!("Write error: {}", e))?;
+    writeln!(file, "-- Generated by WorkGrid Studio\n")
+        .map_err(|e| format!("Write error: {}", e))?;
+
+    for row in &rows {
+        let values: Vec<String> = (0..col_names.len())
+            .map(|i| match &row[i] {
+                mysql_async::Value::NULL => "NULL".to_string(),
+                mysql_async::Value::Int(n) => n.to_string(),
+                mysql_async::Value::UInt(n) => n.to_string(),
+                mysql_async::Value::Float(f) => f.to_string(),
+                mysql_async::Value::Double(d) => d.to_string(),
+                v => format!("'{}'", escape_sql_str(&value_to_display(v))),
+            })
+            .collect();
+        writeln!(file, "{} ({});", prefix, values.join(", "))
+            .map_err(|e| format!("Write error: {}", e))?;
+    }
+
+    Ok(row_count)
+}
+
+#[tauri::command]
+pub async fn db_export_sql_dump(
+    state: State<'_, DbState>,
+    profile_id: String,
+    database: String,
+    file_path: String,
+) -> AppResult<u64> {
+    use std::io::Write;
+
+    // Reuse the existing DDL logic, then write to file
+    let ddl = {
+        let pool = get_pool(&state, &profile_id)?;
+        let mut conn = pool
+            .get_conn()
+            .await
+            .map_err(|e| format!("Connection error: {}", e))?;
+        conn.query_drop(format!("USE {}", escape_ident(&database)))
+            .await
+            .map_err(|e| format!("USE error: {}", e))?;
+
+        let mut parts: Vec<String> = vec![
+            format!("-- SQL dump for `{}`", database),
+            format!("-- Generated by WorkGrid Studio"),
+            format!("-- "),
+            format!("SET FOREIGN_KEY_CHECKS=0;"),
+            String::new(),
+        ];
+
+        let tables: Vec<String> = conn.query("SHOW TABLES").await.unwrap_or_default();
+        for table in &tables {
+            if let Ok(Some(row)) = conn
+                .query_first::<mysql_async::Row, _>(format!(
+                    "SHOW CREATE TABLE {}",
+                    escape_ident(table)
+                ))
+                .await
+            {
+                let create_sql: String = row.get(1).unwrap_or_default();
+                parts.push(format!("DROP TABLE IF EXISTS {};", escape_ident(table)));
+                parts.push(format!("{};", create_sql));
+                parts.push(String::new());
+            }
+        }
+
+        parts.push("SET FOREIGN_KEY_CHECKS=1;".to_string());
+        parts.join("\n")
+    };
+
+    let bytes = ddl.as_bytes();
+    let mut file =
+        std::fs::File::create(&file_path).map_err(|e| format!("Cannot create file: {}", e))?;
+    file.write_all(bytes)
+        .map_err(|e| format!("Write error: {}", e))?;
+
+    Ok(bytes.len() as u64)
 }
 
 #[cfg(test)]
@@ -1439,7 +1833,10 @@ mod tests {
     #[test]
     fn split_multiple_statements() {
         let sql = "SELECT 1; SELECT 2; SELECT 3;";
-        assert_eq!(split_sql_statements(sql), vec!["SELECT 1", "SELECT 2", "SELECT 3"]);
+        assert_eq!(
+            split_sql_statements(sql),
+            vec!["SELECT 1", "SELECT 2", "SELECT 3"]
+        );
     }
 
     #[test]

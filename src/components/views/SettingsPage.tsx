@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import {
     Monitor,
     Moon,
@@ -16,6 +17,8 @@ import {
     BrainCircuit,
     Trash2,
     HardDrive,
+    Heart,
+    ExternalLink,
 } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 import { useProfilesStore } from "@/state/profilesStore";
@@ -27,6 +30,10 @@ import { ConfirmModal } from "@/components/views/ConfirmModal";
 
 function clampLogSizeMb(value: number): number {
     return Math.max(1, Math.min(250, value));
+}
+
+function clampLogAgeDays(value: number): number {
+    return Math.max(1, Math.min(365, value));
 }
 
 function clampMaxResultRows(value: number): number {
@@ -64,6 +71,7 @@ export function SettingsPage() {
     const allowUpdateChecks = globalPrefs.allowUpdateChecks ?? true;
     const blockAiRequests = globalPrefs.blockAiRequests ?? false;
     const maxLogSizeMb = globalPrefs.maxLogSizeMb ?? 10;
+    const maxLogAgeDays = globalPrefs.maxLogAgeDays ?? 14;
     const maxResultRows = globalPrefs.maxResultRows ?? 1000;
     const queryTimeoutMs = globalPrefs.queryTimeoutMs ?? 30000;
 
@@ -81,7 +89,7 @@ export function SettingsPage() {
         setUpdateState("checking");
         try {
             const update = await check();
-            if (update?.available) {
+            if (update) {
                 setUpdateVersion(update.version ?? null);
                 setPendingUpdate(update);
                 setUpdateState("available");
@@ -396,29 +404,49 @@ export function SettingsPage() {
                                     <div>
                                         <p className="font-medium">Log retention</p>
                                         <p className="mt-0.5 text-[11px] text-muted-foreground">
-                                            Per-profile logs are automatically trimmed after they
-                                            exceed this size.
+                                            Per-profile logs are trimmed by size and old log files
+                                            are purged automatically after the configured age.
                                         </p>
                                     </div>
                                 </div>
 
-                                <div className="flex items-center gap-2">
-                                    <input
-                                        type="number"
-                                        min="1"
-                                        max="250"
-                                        className="w-20 rounded border bg-background px-2 py-1 text-right text-xs"
-                                        value={maxLogSizeMb}
-                                        onChange={(e) => {
-                                            const next = parseInt(e.target.value || "10", 10);
-                                            setGlobalPrefs({
-                                                maxLogSizeMb: clampLogSizeMb(
-                                                    Number.isFinite(next) ? next : 10,
-                                                ),
-                                            });
-                                        }}
-                                    />
-                                    <span className="text-xs text-muted-foreground">MB</span>
+                                <div className="grid gap-2">
+                                    <div className="flex items-center justify-end gap-2">
+                                        <input
+                                            type="number"
+                                            min="1"
+                                            max="250"
+                                            className="w-20 rounded border bg-background px-2 py-1 text-right text-xs"
+                                            value={maxLogSizeMb}
+                                            onChange={(e) => {
+                                                const next = parseInt(e.target.value || "10", 10);
+                                                setGlobalPrefs({
+                                                    maxLogSizeMb: clampLogSizeMb(
+                                                        Number.isFinite(next) ? next : 10,
+                                                    ),
+                                                });
+                                            }}
+                                        />
+                                        <span className="text-xs text-muted-foreground">MB</span>
+                                    </div>
+                                    <div className="flex items-center justify-end gap-2">
+                                        <input
+                                            type="number"
+                                            min="1"
+                                            max="365"
+                                            className="w-20 rounded border bg-background px-2 py-1 text-right text-xs"
+                                            value={maxLogAgeDays}
+                                            onChange={(e) => {
+                                                const next = parseInt(e.target.value || "14", 10);
+                                                setGlobalPrefs({
+                                                    maxLogAgeDays: clampLogAgeDays(
+                                                        Number.isFinite(next) ? next : 14,
+                                                    ),
+                                                });
+                                            }}
+                                        />
+                                        <span className="text-xs text-muted-foreground">days</span>
+                                    </div>
                                 </div>
                             </div>
 
@@ -486,15 +514,15 @@ export function SettingsPage() {
                             {(updateState === "idle" ||
                                 updateState === "up-to-date" ||
                                 updateState === "error") && (
-                                <button
-                                    onClick={handleCheckForUpdates}
-                                    disabled={!allowUpdateChecks}
-                                    className="flex items-center gap-1.5 rounded border bg-card px-3 py-1.5 text-xs transition-colors hover:bg-accent disabled:opacity-50"
-                                >
-                                    <RefreshCw className="h-3.5 w-3.5" />
-                                    Check for Updates
-                                </button>
-                            )}
+                                    <button
+                                        onClick={handleCheckForUpdates}
+                                        disabled={!allowUpdateChecks}
+                                        className="flex items-center gap-1.5 rounded border bg-card px-3 py-1.5 text-xs transition-colors hover:bg-accent disabled:opacity-50"
+                                    >
+                                        <RefreshCw className="h-3.5 w-3.5" />
+                                        Check for Updates
+                                    </button>
+                                )}
                             {updateState === "checking" && (
                                 <button
                                     disabled
@@ -530,6 +558,44 @@ export function SettingsPage() {
                             data is sent to the updater service.
                         </p>
                     )}
+
+                    <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                        <button
+                            type="button"
+                            onClick={() => openUrl("https://github.com/eru123/workgrid-studio")}
+                            className="inline-flex items-center gap-1 rounded border bg-card px-2.5 py-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                        >
+                            GitHub
+                            <ExternalLink className="h-3 w-3" />
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => openUrl("https://github.com/eru123/workgrid-studio/blob/main/CHANGELOG.md")}
+                            className="inline-flex items-center gap-1 rounded border bg-card px-2.5 py-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                        >
+                            Changelog
+                            <ExternalLink className="h-3 w-3" />
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => openUrl("https://paypal.me/ja1030")}
+                            className="inline-flex items-center gap-1 rounded border bg-card px-2.5 py-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                        >
+                            Support
+                            <ExternalLink className="h-3 w-3" />
+                        </button>
+                    </div>
+
+                    <p className="text-[11px] text-muted-foreground/60">
+                        WorkGrid Studio is free and open source.{" "}
+                        <button
+                            onClick={() => openUrl("https://paypal.me/ja1030")}
+                            className="inline-flex items-center gap-1 hover:text-muted-foreground transition-colors underline-offset-2 hover:underline"
+                        >
+                            <Heart className="h-3 w-3" />
+                            Support the project
+                        </button>
+                    </p>
                 </section>
             </div>
 

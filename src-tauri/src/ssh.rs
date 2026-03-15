@@ -1,15 +1,15 @@
+use crate::db::ConnectParams;
+use crate::files::app_data_dir;
+use crate::logging::{log_error, log_info};
+use crate::TunnelHandle;
+use crate::{AppError, AppResult};
+use ssh2::Session;
 use std::collections::HashMap;
 use std::fs;
 use std::net::{TcpListener, TcpStream};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
-use ssh2::Session;
-use crate::{AppError, AppResult};
-use crate::TunnelHandle;
-use crate::files::app_data_dir;
-use crate::logging::{log_info, log_error};
-use crate::db::ConnectParams;
+use std::sync::Arc;
 
 pub fn known_hosts_path() -> AppResult<std::path::PathBuf> {
     Ok(app_data_dir()?.join("known_hosts.json"))
@@ -49,7 +49,11 @@ pub fn verify_host_key_tofu(
         .ok_or_else(|| "SSH server did not provide a host key".to_string())?;
 
     // Use a hex fingerprint so it is human-readable in the JSON file
-    let fingerprint: String = key_bytes.iter().map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(":");
+    let fingerprint: String = key_bytes
+        .iter()
+        .map(|b| format!("{:02x}", b))
+        .collect::<Vec<_>>()
+        .join(":");
     let host_id = format!("[{}]:{}", ssh_host, ssh_port);
 
     let mut known = load_known_hosts();
@@ -75,7 +79,10 @@ pub fn verify_host_key_tofu(
             if strict {
                 Err(AppError::ssh(msg))
             } else {
-                log_info(pid, "Strict key checking is OFF — proceeding despite mismatch (not recommended).");
+                log_info(
+                    pid,
+                    "Strict key checking is OFF — proceeding despite mismatch (not recommended).",
+                );
                 Ok(())
             }
         }
@@ -120,10 +127,17 @@ pub fn establish_ssh_tunnel(pid: &str, params: &ConnectParams) -> AppResult<Tunn
 
     let mut sess = Session::new().map_err(|e| format!("Failed to create SSH session: {}", e))?;
     sess.set_tcp_stream(tcp);
-    sess.handshake().map_err(|e| format!("SSH handshake failed: {}", e))?;
+    sess.handshake()
+        .map_err(|e| format!("SSH handshake failed: {}", e))?;
 
     // Host key TOFU verification — always runs; strict mode aborts on mismatch
-    verify_host_key_tofu(pid, ssh_host, ssh_port, &sess, params.ssh_strict_key_checking)?;
+    verify_host_key_tofu(
+        pid,
+        ssh_host,
+        ssh_port,
+        &sess,
+        params.ssh_strict_key_checking,
+    )?;
 
     // Advanced settings
     if params.ssh_compression {
@@ -136,12 +150,8 @@ pub fn establish_ssh_tunnel(pid: &str, params: &ConnectParams) -> AppResult<Tunn
     // Authenticate
     if let Some(key_path) = &params.ssh_key_file {
         let key_file = std::path::Path::new(key_path);
-        sess.userauth_pubkey_file(
-            ssh_user,
-            None,
-            key_file,
-            params.ssh_passphrase.as_deref(),
-        ).map_err(|e| format!("SSH key authentication failed: {}", e))?;
+        sess.userauth_pubkey_file(ssh_user, None, key_file, params.ssh_passphrase.as_deref())
+            .map_err(|e| format!("SSH key authentication failed: {}", e))?;
     } else if let Some(password) = &params.ssh_password {
         sess.userauth_password(ssh_user, password)
             .map_err(|e| format!("SSH password authentication failed: {}", e))?;
@@ -193,12 +203,18 @@ pub fn establish_ssh_tunnel(pid: &str, params: &ConnectParams) -> AppResult<Tunn
                             let _ = std::io::copy(&mut channel_read, &mut local_write);
                         }
                         Err(e) => {
-                            log_error(&pid_clone, &format!("SSH tunnel failed to open channel: {}", e));
+                            log_error(
+                                &pid_clone,
+                                &format!("SSH tunnel failed to open channel: {}", e),
+                            );
                         }
                     }
                 }
                 Err(e) => {
-                    log_error(&pid_clone, &format!("SSH tunnel bridge accept error: {}", e));
+                    log_error(
+                        &pid_clone,
+                        &format!("SSH tunnel bridge accept error: {}", e),
+                    );
                 }
             }
         }
@@ -206,7 +222,12 @@ pub fn establish_ssh_tunnel(pid: &str, params: &ConnectParams) -> AppResult<Tunn
         let _ = done_tx.send(());
     });
 
-    Ok(TunnelHandle { local_port, shutdown, thread: Some(join_handle), done_rx })
+    Ok(TunnelHandle {
+        local_port,
+        shutdown,
+        thread: Some(join_handle),
+        done_rx,
+    })
 }
 
 /// Gracefully shut down a tunnel handle:
@@ -222,7 +243,10 @@ pub fn shutdown_tunnel(mut handle: TunnelHandle) {
     let _ = TcpStream::connect(format!("127.0.0.1:{}", handle.local_port));
     // Wait up to 5 s for the forwarding loop to signal completion.
     let mut should_join = false;
-    match handle.done_rx.recv_timeout(std::time::Duration::from_secs(5)) {
+    match handle
+        .done_rx
+        .recv_timeout(std::time::Duration::from_secs(5))
+    {
         Ok(_) | Err(mpsc::RecvTimeoutError::Disconnected) => {
             should_join = true;
         }

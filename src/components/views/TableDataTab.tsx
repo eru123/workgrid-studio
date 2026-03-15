@@ -26,6 +26,7 @@ import { useProfilesStore } from "@/state/profilesStore";
 import { FindToolbar } from "@/components/ui/FindToolbar";
 import { CellContextMenu } from "@/components/ui/CellContextMenu";
 import { AutocompleteInput } from "@/components/ui/AutocompleteInput";
+import { DataGridSkeleton } from "@/components/ui/Skeleton";
 import { highlightSQL } from "@/lib/sqlHighlight";
 import {
   Loader2,
@@ -471,6 +472,7 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
 
       // Update status bar with connection context
       useAppStore.getState().setStatusBarInfo({
+        profileId,
         connectionName: useSchemaStore.getState().connectedProfiles[profileId]?.name,
         database,
         rowCount: totalCount,
@@ -1318,11 +1320,15 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
       {/* ─── Data Grid ─────────────────────────────── */}
       <div className="flex-1 overflow-auto relative">
         {loading && (
-          <div className="absolute inset-0 z-20 flex items-center justify-center bg-background/60 backdrop-blur-[1px]">
-            <div className="flex items-center gap-2 rounded border bg-secondary/70 px-3 py-2 text-xs">
-              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              Loading data...
+          <div className="absolute inset-0 z-20 overflow-hidden bg-background/80 backdrop-blur-[1px]">
+            <div className="flex items-center justify-between border-b bg-muted/20 px-3 py-2 text-[11px] text-muted-foreground">
+              <span className="inline-flex items-center gap-2">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Loading data...
+              </span>
+              <span className="font-mono">{tableName}</span>
             </div>
+            <DataGridSkeleton columns={Math.max(visibleColumns.length, 4)} rows={12} />
           </div>
         )}
 
@@ -1876,8 +1882,27 @@ const DataRow = memo(function DataRow({
         {rowNumber}
       </td>
       {(() => {
-        // checkbox col ≈32px + row# col ≈40px
-        let leftOffset = 72;
+        const frozenLeftOffsets = visibleColumns.reduce(
+          (state, col) => {
+            if (!(frozenCols?.has(col) ?? false)) {
+              return state;
+            }
+
+            return {
+              offset: state.offset + (colWidths?.[col] ?? 120),
+              positions: {
+                ...state.positions,
+                [col]: state.offset,
+              },
+            };
+          },
+          {
+            // checkbox col ≈32px + row# col ≈40px
+            offset: 72,
+            positions: {} as Record<string, number>,
+          },
+        ).positions;
+
         return visibleColumns.map((col, colOrder) => {
           const colIdx = columns.indexOf(col);
           const originalValue = colIdx >= 0 ? row[colIdx] : null;
@@ -1886,8 +1911,7 @@ const DataRow = memo(function DataRow({
           const value = isEdited ? editedCells[editKey] : originalValue;
           const colInfo = columnInfos.find((ci) => ci.name === col);
           const isFrozen = frozenCols?.has(col) ?? false;
-          const colLeft = isFrozen ? leftOffset : undefined;
-          if (isFrozen) leftOffset += colWidths?.[col] ?? 120;
+          const colLeft = isFrozen ? frozenLeftOffsets[col] : undefined;
 
           return (
             <EditableCell

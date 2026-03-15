@@ -1,3 +1,4 @@
+import { startTransition } from "react";
 import { useAppStore, OutputLevel } from "@/state/appStore";
 import { DatabaseProfile } from "@/state/profilesStore";
 
@@ -35,14 +36,18 @@ export function appendConnectionOutput(
     level: OutputLevel,
     message: string,
 ) {
-    useAppStore.getState().addOutputEntry({
-        level,
-        message,
-        profileId: profile.id,
-        profileName: profile.name,
+    startTransition(() => {
+        useAppStore.getState().addOutputEntry({
+            level,
+            message,
+            profileId: profile.id,
+            profileName: profile.name,
+        });
     });
 }
 
 export function appendOutput(level: OutputLevel, message: string) {
-    useAppStore.getState().addOutputEntry({ level, message });
+    startTransition(() => {
+        useAppStore.getState().addOutputEntry({ level, message });
+    });
 }

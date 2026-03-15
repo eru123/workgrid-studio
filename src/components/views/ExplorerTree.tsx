@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useMemo, memo, useRef } from "react";
 import { useSchemaStore } from "@/state/schemaStore";
+import { ExplorerTreeSkeleton } from "@/components/ui/Skeleton";
 import { CreateDatabaseModal } from "./CreateDatabaseModal";
 import { ConfirmModal } from "./ConfirmModal";
 import { EditDatabaseModal } from "./EditDatabaseModal";
@@ -11,10 +12,15 @@ import {
   dbListDatabases,
   dbListTables,
   dbListColumns,
+  dbQuery,
   dbDisconnect,
   dbExecuteQuery,
   dbImportCsv,
   dbImportSql,
+  dbExportTableCsv,
+  dbExportTableJson,
+  dbExportTableInserts,
+  dbExportSqlDump,
   type ImportResult,
 } from "@/lib/db";
 import { cn } from "@/lib/utils/cn";
@@ -24,7 +30,7 @@ import {
   formatConnectionTarget,
   formatOutputError,
 } from "@/lib/output";
-import { open } from "@tauri-apps/plugin-dialog";
+import { open, save } from "@tauri-apps/plugin-dialog";
 import { homeDir } from "@tauri-apps/api/path";
 import { listen } from "@tauri-apps/api/event";
 import {
@@ -36,7 +42,6 @@ import {
   ChevronRight,
   ChevronDown,
   PlugZap,
-  Loader2,
   AlertCircle,
   FolderPlus,
   Maximize2,
@@ -56,17 +61,32 @@ import {
   Rows3,
   Import,
   Search,
+  Download,
+  Columns3,
+  Shield,
+  FolderKanban,
+  ScrollText,
+  Braces,
 } from "lucide-react";
-import { SiPostgresql, SiMysql, SiSqlite, SiMariadb } from "react-icons/si";
+import {
+  MariadbIcon,
+  MysqlIcon,
+  PostgresIcon,
+  SqliteIcon,
+} from "@/components/icons/DatabaseTypeIcons";
 import { appendOutput } from "@/lib/output";
 
 const DB_ICONS: Record<string, React.ElementType> = {
-  postgres: SiPostgresql,
-  mysql: SiMysql,
-  sqlite: SiSqlite,
-  mariadb: SiMariadb,
+  postgres: PostgresIcon,
+  mysql: MysqlIcon,
+  sqlite: SqliteIcon,
+  mariadb: MariadbIcon,
   mssql: Database,
 };
+
+function escSqlString(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
+}
 
 function getConnectionStatusMeta(status?: string) {
   switch (status) {
@@ -1020,6 +1040,33 @@ export function ExplorerTree() {
                       <Import className="w-3.5 h-3.5 text-muted-foreground" />{" "}
                       Import SQL File...
                     </button>
+                    <button
+                      className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2"
+                      onClick={async () => {
+                        setContextMenu(null);
+                        const filePath = await save({
+                          defaultPath: `${targetDbs[0]}_dump.sql`,
+                          filters: [{ name: "SQL File", extensions: ["sql"] }],
+                        });
+                        if (!filePath) return;
+                        try {
+                          const bytes = await dbExportSqlDump(profileId, targetDbs[0], filePath);
+                          useAppStore.getState().addToast({
+                            title: "Export complete",
+                            description: `Schema dump saved (${(bytes / 1024).toFixed(1)} KB)`,
+                          });
+                        } catch (e) {
+                          useAppStore.getState().addToast({
+                            title: "Export failed",
+                            description: String(e),
+                            variant: "destructive",
+                          });
+                        }
+                      }}
+                    >
+                      <Download className="w-3.5 h-3.5 text-muted-foreground" />{" "}
+                      Export as SQL Dump...
+                    </button>
                     <ContextSubmenu
                       label="Create"
                       icon={
@@ -1205,6 +1252,85 @@ export function ExplorerTree() {
                   }}
                 >
                   <Import className="w-3.5 h-3.5 text-muted-foreground" /> Import CSV...
+                </button>
+                <div className="h-px bg-border my-1 mx-1" />
+                <button
+                  className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2"
+                  onClick={async () => {
+                    setContextMenu(null);
+                    const filePath = await save({
+                      defaultPath: `${targetTable}.csv`,
+                      filters: [{ name: "CSV File", extensions: ["csv"] }],
+                    });
+                    if (!filePath) return;
+                    try {
+                      const rows = await dbExportTableCsv(profileId, targetDb, targetTable, filePath);
+                      useAppStore.getState().addToast({
+                        title: "Export complete",
+                        description: `${rows} rows saved to CSV`,
+                      });
+                    } catch (e) {
+                      useAppStore.getState().addToast({
+                        title: "Export failed",
+                        description: String(e),
+                        variant: "destructive",
+                      });
+                    }
+                  }}
+                >
+                  <Download className="w-3.5 h-3.5 text-muted-foreground" /> Export as CSV...
+                </button>
+                <button
+                  className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2"
+                  onClick={async () => {
+                    setContextMenu(null);
+                    const filePath = await save({
+                      defaultPath: `${targetTable}.json`,
+                      filters: [{ name: "JSON File", extensions: ["json"] }],
+                    });
+                    if (!filePath) return;
+                    try {
+                      const rows = await dbExportTableJson(profileId, targetDb, targetTable, filePath);
+                      useAppStore.getState().addToast({
+                        title: "Export complete",
+                        description: `${rows} rows saved to JSON`,
+                      });
+                    } catch (e) {
+                      useAppStore.getState().addToast({
+                        title: "Export failed",
+                        description: String(e),
+                        variant: "destructive",
+                      });
+                    }
+                  }}
+                >
+                  <Download className="w-3.5 h-3.5 text-muted-foreground" /> Export as JSON...
+                </button>
+                <button
+                  className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2"
+                  onClick={async () => {
+                    setContextMenu(null);
+                    const filePath = await save({
+                      defaultPath: `${targetTable}_inserts.sql`,
+                      filters: [{ name: "SQL File", extensions: ["sql"] }],
+                    });
+                    if (!filePath) return;
+                    try {
+                      const rows = await dbExportTableInserts(profileId, targetDb, targetTable, filePath);
+                      useAppStore.getState().addToast({
+                        title: "Export complete",
+                        description: `${rows} rows saved as SQL INSERTs`,
+                      });
+                    } catch (e) {
+                      useAppStore.getState().addToast({
+                        title: "Export failed",
+                        description: String(e),
+                        variant: "destructive",
+                      });
+                    }
+                  }}
+                >
+                  <Download className="w-3.5 h-3.5 text-muted-foreground" /> Export as SQL INSERTs...
                 </button>
               </div>
             );
@@ -1417,10 +1543,8 @@ const ProfileNode = memo(function ProfileNode({
   const loading = useSchemaStore((s) => s.loadingDatabases[profileId]);
   const error = useSchemaStore((s) => s.errors[`dbs-${profileId}`]);
   const latency = useSchemaStore((s) => s.latencies[profileId] ?? null);
-  const setDatabases = useSchemaStore((s) => s.setDatabases);
-  const setLoading = useSchemaStore((s) => s.setLoading);
-  const setError = useSchemaStore((s) => s.setError);
-  const clearError = useSchemaStore((s) => s.clearError);
+  const serverVersion = useSchemaStore((s) => s.serverVersions[profileId] ?? null);
+  const refreshDatabases = useSchemaStore((s) => s.refreshDatabases);
   const openTab = useLayoutStore((s) => s.openTab);
 
   const connectionStatus = useProfilesStore((s) => s.profiles.find((p) => p.id === profileId)?.connectionStatus);
@@ -1436,18 +1560,20 @@ const ProfileNode = memo(function ProfileNode({
     // Lazy load: fetch databases on first expand
     if (!wasOpen || (!databases && !loading)) {
       if (!databases) {
-        setLoading(profileId, "databases", true);
-        clearError(`dbs-${profileId}`);
-        try {
-          const dbs = await dbListDatabases(profileId);
-          setDatabases(profileId, dbs);
-        } catch (e) {
-          setError(`dbs-${profileId}`, String(e));
-        } finally {
-          setLoading(profileId, "databases", false);
-        }
+        await refreshDatabases(profileId);
       }
     }
+  };
+
+  const handleRefreshAll = async (event: React.MouseEvent) => {
+    event.stopPropagation();
+    await refreshDatabases(profileId);
+    const knownDatabases = useSchemaStore.getState().databases[profileId] ?? [];
+    await Promise.allSettled(
+      knownDatabases.map((database) =>
+        useSchemaStore.getState().refreshTables(profileId, database),
+      ),
+    );
   };
 
   const filteredDatabases = useMemo(() => {
@@ -1503,6 +1629,11 @@ const ProfileNode = memo(function ProfileNode({
         badge={filteredDatabases ? String(filteredDatabases.length) : undefined}
         suffix={
           <span className="ml-1 flex items-center gap-1 shrink-0">
+            {serverVersion && (
+              <span className="max-w-44 truncate rounded bg-muted/40 px-1.5 py-0.5 text-[9px] text-muted-foreground/80">
+                {serverVersion}
+              </span>
+            )}
             <span
               className={cn(
                 "inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[9px] font-medium",
@@ -1524,12 +1655,21 @@ const ProfileNode = memo(function ProfileNode({
                 {latency === -1 ? "err" : `${latency}ms`}
               </span>
             )}
+            <button
+              type="button"
+              onClick={handleRefreshAll}
+              className="rounded p-1 text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
+              title="Refresh all databases and tables for this server"
+              aria-label={`Refresh all nodes for ${name}`}
+            >
+              <RefreshCw className="h-3 w-3" />
+            </button>
           </span>
         }
         bold
       />
 
-      {isOpen && (
+      <TreeBranch open={isOpen}>
         <>
           <SavedQueriesNode
             profileId={profileId}
@@ -1537,14 +1677,7 @@ const ProfileNode = memo(function ProfileNode({
             toggle={toggle}
           />
           {loading && (
-            <TreeRow
-              depth={1}
-              icon={
-                <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />
-              }
-              label="Loading databases..."
-              muted
-            />
+            <ExplorerTreeSkeleton depth={1} rows={4} />
           )}
           {error && (
             <TreeRow
@@ -1571,7 +1704,7 @@ const ProfileNode = memo(function ProfileNode({
             />
           ))}
         </>
-      )}
+      </TreeBranch>
     </>
   );
 });
@@ -1614,15 +1747,10 @@ const SavedQueriesNode = memo(function SavedQueriesNode({
         badge={savedQueries.length > 0 ? String(savedQueries.length) : undefined}
       />
 
-      {isOpen && (
+      <TreeBranch open={isOpen}>
         <>
           {loading && (
-            <TreeRow
-              depth={2}
-              icon={<Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />}
-              label="Loading saved queries..."
-              muted
-            />
+            <ExplorerTreeSkeleton depth={2} rows={3} />
           )}
           {error && (
             <TreeRow
@@ -1676,7 +1804,7 @@ const SavedQueriesNode = memo(function SavedQueriesNode({
             />
           ))}
         </>
-      )}
+      </TreeBranch>
     </>
   );
 });
@@ -1712,16 +1840,23 @@ const DatabaseNode = memo(function DatabaseNode({
 }) {
   const cacheKey = `${profileId}::${database}`;
   const tables = useSchemaStore((s) => s.tables[cacheKey]);
+  const tableInfos = useSchemaStore((s) => s.tableInfos[cacheKey] ?? []);
   const loading = useSchemaStore((s) => s.loadingTables[cacheKey]);
   const error = useSchemaStore((s) => s.errors[`tbl-${cacheKey}`]);
-  const setTables = useSchemaStore((s) => s.setTables);
-  const setLoading = useSchemaStore((s) => s.setLoading);
-  const setError = useSchemaStore((s) => s.setError);
-  const clearError = useSchemaStore((s) => s.clearError);
+  const refreshTables = useSchemaStore((s) => s.refreshTables);
   const openTab = useLayoutStore((s) => s.openTab);
+  const [procedures, setProcedures] = useState<string[] | null>(null);
+  const [functions, setFunctions] = useState<string[] | null>(null);
+  const [loadingProcedures, setLoadingProcedures] = useState(false);
+  const [loadingFunctions, setLoadingFunctions] = useState(false);
+  const [proceduresError, setProceduresError] = useState<string | null>(null);
+  const [functionsError, setFunctionsError] = useState<string | null>(null);
 
   const nodeKey = `db-${cacheKey}`;
   const isOpen = expanded[nodeKey] ?? false;
+  const viewsNodeKey = `views-${cacheKey}`;
+  const proceduresNodeKey = `procedures-${cacheKey}`;
+  const functionsNodeKey = `functions-${cacheKey}`;
 
   // Expand/collapse + lazy load tables
   const handleExpand = async () => {
@@ -1729,15 +1864,70 @@ const DatabaseNode = memo(function DatabaseNode({
     toggle(nodeKey);
 
     if (!wasOpen && !tables && !loading) {
-      setLoading(cacheKey, "tables", true);
-      clearError(`tbl-${cacheKey}`);
+      await refreshTables(profileId, database);
+    }
+  };
+
+  const tableRowCounts = useMemo(
+    () =>
+      new Map(
+        tableInfos.map((tableInfo) => [tableInfo.name, tableInfo.rows] as const),
+      ),
+    [tableInfos],
+  );
+  const viewNames = useMemo(
+    () =>
+      tableInfos
+        .filter((tableInfo) => tableInfo.type_ === "VIEW")
+        .map((tableInfo) => tableInfo.name),
+    [tableInfos],
+  );
+
+  const loadRoutineNames = useCallback(
+    async (routineType: "PROCEDURE" | "FUNCTION") => {
+      const query = `
+        SELECT ROUTINE_NAME
+        FROM information_schema.ROUTINES
+        WHERE ROUTINE_SCHEMA = ${escSqlString(database)}
+          AND ROUTINE_TYPE = ${escSqlString(routineType)}
+        ORDER BY ROUTINE_NAME
+      `;
+      const result = await dbQuery(profileId, query);
+      return result[0]?.rows
+        .map((row) => row[0])
+        .filter((value): value is string => typeof value === "string") ?? [];
+    },
+    [database, profileId],
+  );
+
+  const toggleProcedures = async () => {
+    const nextOpen = !(expanded[proceduresNodeKey] ?? false);
+    toggle(proceduresNodeKey);
+    if (nextOpen && procedures === null && !loadingProcedures) {
+      setLoadingProcedures(true);
+      setProceduresError(null);
       try {
-        const tbls = await dbListTables(profileId, database);
-        setTables(profileId, database, tbls);
-      } catch (e) {
-        setError(`tbl-${cacheKey}`, String(e));
+        setProcedures(await loadRoutineNames("PROCEDURE"));
+      } catch (loadError) {
+        setProceduresError(String(loadError));
       } finally {
-        setLoading(cacheKey, "tables", false);
+        setLoadingProcedures(false);
+      }
+    }
+  };
+
+  const toggleFunctions = async () => {
+    const nextOpen = !(expanded[functionsNodeKey] ?? false);
+    toggle(functionsNodeKey);
+    if (nextOpen && functions === null && !loadingFunctions) {
+      setLoadingFunctions(true);
+      setFunctionsError(null);
+      try {
+        setFunctions(await loadRoutineNames("FUNCTION"));
+      } catch (loadError) {
+        setFunctionsError(String(loadError));
+      } finally {
+        setLoadingFunctions(false);
       }
     }
   };
@@ -1792,17 +1982,10 @@ const DatabaseNode = memo(function DatabaseNode({
         highlight={dbFilter}
       />
 
-      {isOpen && (
+      <TreeBranch open={isOpen}>
         <>
           {loading && (
-            <TreeRow
-              depth={2}
-              icon={
-                <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />
-              }
-              label="Loading tables..."
-              muted
-            />
+            <ExplorerTreeSkeleton depth={2} rows={5} />
           )}
           {error && (
             <TreeRow
@@ -1821,11 +2004,150 @@ const DatabaseNode = memo(function DatabaseNode({
               expanded={expanded}
               toggle={toggle}
               tableFilter={tableFilter}
+              rowCount={tableRowCounts.get(table) ?? null}
               onContextMenu={(e) => onContextMenuTable(e, database, table)}
             />
           ))}
+
+          <TreeRow
+            depth={2}
+            isOpen={expanded[viewsNodeKey] ?? false}
+            onChevronClick={() => toggle(viewsNodeKey)}
+            onLabelClick={() => toggle(viewsNodeKey)}
+            icon={<FolderKanban className="w-3.5 h-3.5 text-cyan-400/80" />}
+            label="Views"
+            badge={String(viewNames.length)}
+          />
+          <TreeBranch open={expanded[viewsNodeKey] ?? false}>
+            <>
+              {viewNames.length === 0 ? (
+                <TreeRow
+                  depth={3}
+                  icon={<Table2 className="w-3 h-3 text-muted-foreground/40" />}
+                  label="No views"
+                  muted
+                />
+              ) : (
+                viewNames.map((viewName) => (
+                  <TreeRow
+                    key={`view-${viewName}`}
+                    depth={3}
+                    icon={<Table2 className="w-3.5 h-3.5 text-cyan-400/80" />}
+                    label={viewName}
+                    onLabelClick={() =>
+                      openTab({
+                        title: `Data: ${viewName}`,
+                        type: "table-data",
+                        meta: { profileId, database, tableName: viewName },
+                      })
+                    }
+                  />
+                ))
+              )}
+            </>
+          </TreeBranch>
+
+          <TreeRow
+            depth={2}
+            isOpen={expanded[proceduresNodeKey] ?? false}
+            onChevronClick={toggleProcedures}
+            onLabelClick={toggleProcedures}
+            icon={<ScrollText className="w-3.5 h-3.5 text-violet-400/80" />}
+            label="Procedures"
+            badge={procedures ? String(procedures.length) : undefined}
+          />
+          <TreeBranch open={expanded[proceduresNodeKey] ?? false}>
+            <>
+              {loadingProcedures && <ExplorerTreeSkeleton depth={3} rows={3} />}
+              {proceduresError && (
+                <TreeRow
+                  depth={3}
+                  icon={<AlertCircle className="w-3 h-3 text-red-400" />}
+                  label={proceduresError}
+                  muted
+                />
+              )}
+              {!loadingProcedures && !proceduresError && (procedures?.length ?? 0) === 0 && (
+                <TreeRow
+                  depth={3}
+                  icon={<ScrollText className="w-3 h-3 text-muted-foreground/40" />}
+                  label="No procedures"
+                  muted
+                />
+              )}
+              {procedures?.map((routineName) => (
+                <TreeRow
+                  key={`proc-${routineName}`}
+                  depth={3}
+                  icon={<ScrollText className="w-3.5 h-3.5 text-violet-400/80" />}
+                  label={routineName}
+                  onLabelClick={() =>
+                    openTab({
+                      title: `SHOW CREATE ${routineName}`,
+                      type: "sql",
+                      meta: {
+                        profileId,
+                        database,
+                        initialSql: `SHOW CREATE PROCEDURE \`${routineName.replace(/`/g, "``")}\`;`,
+                      },
+                    })
+                  }
+                />
+              ))}
+            </>
+          </TreeBranch>
+
+          <TreeRow
+            depth={2}
+            isOpen={expanded[functionsNodeKey] ?? false}
+            onChevronClick={toggleFunctions}
+            onLabelClick={toggleFunctions}
+            icon={<Braces className="w-3.5 h-3.5 text-emerald-400/80" />}
+            label="Functions"
+            badge={functions ? String(functions.length) : undefined}
+          />
+          <TreeBranch open={expanded[functionsNodeKey] ?? false}>
+            <>
+              {loadingFunctions && <ExplorerTreeSkeleton depth={3} rows={3} />}
+              {functionsError && (
+                <TreeRow
+                  depth={3}
+                  icon={<AlertCircle className="w-3 h-3 text-red-400" />}
+                  label={functionsError}
+                  muted
+                />
+              )}
+              {!loadingFunctions && !functionsError && (functions?.length ?? 0) === 0 && (
+                <TreeRow
+                  depth={3}
+                  icon={<Braces className="w-3 h-3 text-muted-foreground/40" />}
+                  label="No functions"
+                  muted
+                />
+              )}
+              {functions?.map((routineName) => (
+                <TreeRow
+                  key={`fn-${routineName}`}
+                  depth={3}
+                  icon={<Braces className="w-3.5 h-3.5 text-emerald-400/80" />}
+                  label={routineName}
+                  onLabelClick={() =>
+                    openTab({
+                      title: `SHOW CREATE ${routineName}`,
+                      type: "sql",
+                      meta: {
+                        profileId,
+                        database,
+                        initialSql: `SHOW CREATE FUNCTION \`${routineName.replace(/`/g, "``")}\`;`,
+                      },
+                    })
+                  }
+                />
+              ))}
+            </>
+          </TreeBranch>
         </>
-      )}
+      </TreeBranch>
     </>
   );
 });
@@ -1839,6 +2161,7 @@ const TableNode = memo(function TableNode({
   expanded,
   toggle,
   tableFilter,
+  rowCount,
   onContextMenu,
 }: {
   profileId: string;
@@ -1847,6 +2170,7 @@ const TableNode = memo(function TableNode({
   expanded: ExpandedSet;
   toggle: (key: string) => void;
   tableFilter: string;
+  rowCount: number | null;
   onContextMenu: (e: React.MouseEvent) => void;
 }) {
   const cacheKey = `${profileId}::${database}::${table}`;
@@ -1861,7 +2185,20 @@ const TableNode = memo(function TableNode({
   const openTab = useLayoutStore((s) => s.openTab);
 
   const nodeKey = `tbl-${cacheKey}`;
+  const columnsNodeKey = `columns-${cacheKey}`;
+  const indexesNodeKey = `indexes-${cacheKey}`;
+  const constraintsNodeKey = `constraints-${cacheKey}`;
   const isOpen = expanded[nodeKey] ?? false;
+  const [indexes, setIndexes] = useState<
+    { name: string; unique: boolean; columns: string[] }[] | null
+  >(null);
+  const [constraints, setConstraints] = useState<
+    { name: string; type: string }[] | null
+  >(null);
+  const [loadingIndexes, setLoadingIndexes] = useState(false);
+  const [loadingConstraints, setLoadingConstraints] = useState(false);
+  const [indexesError, setIndexesError] = useState<string | null>(null);
+  const [constraintsError, setConstraintsError] = useState<string | null>(null);
 
   const handleToggle = async () => {
     const wasOpen = isOpen;
@@ -1889,6 +2226,73 @@ const TableNode = memo(function TableNode({
     });
   };
 
+  const toggleIndexes = async () => {
+    const nextOpen = !(expanded[indexesNodeKey] ?? false);
+    toggle(indexesNodeKey);
+    if (!nextOpen || indexes !== null || loadingIndexes) {
+      return;
+    }
+
+    setLoadingIndexes(true);
+    setIndexesError(null);
+    try {
+      const result = await dbQuery(
+        profileId,
+        `SHOW INDEX FROM \`${table.replace(/`/g, "``")}\` FROM \`${database.replace(/`/g, "``")}\``,
+      );
+      const grouped = new Map<string, { name: string; unique: boolean; columns: string[] }>();
+      for (const row of result[0]?.rows ?? []) {
+        const indexName = String(row[2] ?? "");
+        const unique = Number(row[1] ?? 1) === 0;
+        const columnName = String(row[4] ?? "");
+        if (!grouped.has(indexName)) {
+          grouped.set(indexName, { name: indexName, unique, columns: [] });
+        }
+        if (columnName) {
+          grouped.get(indexName)?.columns.push(columnName);
+        }
+      }
+      setIndexes(Array.from(grouped.values()));
+    } catch (loadError) {
+      setIndexesError(String(loadError));
+    } finally {
+      setLoadingIndexes(false);
+    }
+  };
+
+  const toggleConstraints = async () => {
+    const nextOpen = !(expanded[constraintsNodeKey] ?? false);
+    toggle(constraintsNodeKey);
+    if (!nextOpen || constraints !== null || loadingConstraints) {
+      return;
+    }
+
+    setLoadingConstraints(true);
+    setConstraintsError(null);
+    try {
+      const result = await dbQuery(
+        profileId,
+        `
+          SELECT CONSTRAINT_NAME, CONSTRAINT_TYPE
+          FROM information_schema.TABLE_CONSTRAINTS
+          WHERE TABLE_SCHEMA = ${escSqlString(database)}
+            AND TABLE_NAME = ${escSqlString(table)}
+          ORDER BY CONSTRAINT_TYPE, CONSTRAINT_NAME
+        `,
+      );
+      setConstraints(
+        (result[0]?.rows ?? []).map((row) => ({
+          name: String(row[0] ?? ""),
+          type: String(row[1] ?? ""),
+        })),
+      );
+    } catch (loadError) {
+      setConstraintsError(String(loadError));
+    } finally {
+      setLoadingConstraints(false);
+    }
+  };
+
   return (
     <>
       <TreeRow
@@ -1902,56 +2306,155 @@ const TableNode = memo(function TableNode({
         label={table}
         badge={columns ? String(columns.length) : undefined}
         highlight={tableFilter}
+        suffix={
+          rowCount !== null ? (
+            <span className="ml-1 shrink-0 rounded bg-muted/40 px-1 py-0.5 text-[9px] font-mono text-muted-foreground/70">
+              {rowCount.toLocaleString()} rows
+            </span>
+          ) : undefined
+        }
       />
 
-      {isOpen && (
+      <TreeBranch open={isOpen}>
         <>
-          {loading && (
-            <TreeRow
-              depth={3}
-              icon={
-                <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />
-              }
-              label="Loading columns..."
-              muted
-            />
-          )}
-          {error && (
-            <TreeRow
-              depth={3}
-              icon={<AlertCircle className="w-3 h-3 text-red-400" />}
-              label={error}
-              muted
-            />
-          )}
-          {columns?.map((col) => (
-            <TreeRow
-              key={col.name}
-              depth={3}
-              icon={
-                col.key === "PRI" ? (
-                  <Key className="w-3 h-3 text-yellow-400" />
-                ) : col.key === "MUL" ? (
-                  <Link2 className="w-3 h-3 text-cyan-400" />
-                ) : col.key === "UNI" ? (
-                  <Key className="w-3 h-3 text-orange-400" />
-                ) : (
-                  <Hash className="w-3 h-3 text-muted-foreground/40" />
-                )
-              }
-              label={col.name}
-              highlight={tableFilter}
-              suffix={
-                <span className="text-[10px] text-muted-foreground/50 ml-1 font-mono truncate">
-                  {col.col_type}
-                  {col.nullable ? "" : " NOT NULL"}
-                  {col.extra ? ` ${col.extra}` : ""}
-                </span>
-              }
-            />
-          ))}
+          <TreeRow
+            depth={3}
+            isOpen={expanded[columnsNodeKey] ?? true}
+            onChevronClick={() => toggle(columnsNodeKey)}
+            onLabelClick={() => toggle(columnsNodeKey)}
+            icon={<Columns3 className="w-3.5 h-3.5 text-sky-400/80" />}
+            label="Columns"
+            badge={columns ? String(columns.length) : undefined}
+          />
+          <TreeBranch open={expanded[columnsNodeKey] ?? true}>
+            <>
+              {loading && <ExplorerTreeSkeleton depth={4} rows={4} />}
+              {error && (
+                <TreeRow
+                  depth={4}
+                  icon={<AlertCircle className="w-3 h-3 text-red-400" />}
+                  label={error}
+                  muted
+                />
+              )}
+              {columns?.map((col) => (
+                <TreeRow
+                  key={col.name}
+                  depth={4}
+                  icon={
+                    col.key === "PRI" ? (
+                      <Key className="w-3 h-3 text-yellow-400" />
+                    ) : col.key === "MUL" ? (
+                      <Link2 className="w-3 h-3 text-cyan-400" />
+                    ) : col.key === "UNI" ? (
+                      <Key className="w-3 h-3 text-orange-400" />
+                    ) : (
+                      <Hash className="w-3 h-3 text-muted-foreground/40" />
+                    )
+                  }
+                  label={col.name}
+                  highlight={tableFilter}
+                  suffix={
+                    <span className="text-[10px] text-muted-foreground/50 ml-1 font-mono truncate">
+                      {col.col_type}
+                      {col.nullable ? "" : " NOT NULL"}
+                      {col.extra ? ` ${col.extra}` : ""}
+                    </span>
+                  }
+                />
+              ))}
+            </>
+          </TreeBranch>
+
+          <TreeRow
+            depth={3}
+            isOpen={expanded[indexesNodeKey] ?? false}
+            onChevronClick={toggleIndexes}
+            onLabelClick={toggleIndexes}
+            icon={<Key className="w-3.5 h-3.5 text-amber-400/80" />}
+            label="Indexes"
+            badge={indexes ? String(indexes.length) : undefined}
+          />
+          <TreeBranch open={expanded[indexesNodeKey] ?? false}>
+            <>
+              {loadingIndexes && <ExplorerTreeSkeleton depth={4} rows={3} />}
+              {indexesError && (
+                <TreeRow
+                  depth={4}
+                  icon={<AlertCircle className="w-3 h-3 text-red-400" />}
+                  label={indexesError}
+                  muted
+                />
+              )}
+              {!loadingIndexes && !indexesError && (indexes?.length ?? 0) === 0 && (
+                <TreeRow
+                  depth={4}
+                  icon={<Key className="w-3 h-3 text-muted-foreground/40" />}
+                  label="No indexes"
+                  muted
+                />
+              )}
+              {indexes?.map((indexEntry) => (
+                <TreeRow
+                  key={indexEntry.name}
+                  depth={4}
+                  icon={indexEntry.unique ? <Key className="w-3 h-3 text-yellow-400" /> : <Link2 className="w-3 h-3 text-cyan-400" />}
+                  label={indexEntry.name}
+                  suffix={
+                    <span className="ml-1 truncate text-[10px] font-mono text-muted-foreground/50">
+                      {indexEntry.columns.join(", ")}
+                    </span>
+                  }
+                />
+              ))}
+            </>
+          </TreeBranch>
+
+          <TreeRow
+            depth={3}
+            isOpen={expanded[constraintsNodeKey] ?? false}
+            onChevronClick={toggleConstraints}
+            onLabelClick={toggleConstraints}
+            icon={<Shield className="w-3.5 h-3.5 text-rose-400/80" />}
+            label="Constraints"
+            badge={constraints ? String(constraints.length) : undefined}
+          />
+          <TreeBranch open={expanded[constraintsNodeKey] ?? false}>
+            <>
+              {loadingConstraints && <ExplorerTreeSkeleton depth={4} rows={3} />}
+              {constraintsError && (
+                <TreeRow
+                  depth={4}
+                  icon={<AlertCircle className="w-3 h-3 text-red-400" />}
+                  label={constraintsError}
+                  muted
+                />
+              )}
+              {!loadingConstraints && !constraintsError && (constraints?.length ?? 0) === 0 && (
+                <TreeRow
+                  depth={4}
+                  icon={<Shield className="w-3 h-3 text-muted-foreground/40" />}
+                  label="No constraints"
+                  muted
+                />
+              )}
+              {constraints?.map((constraint) => (
+                <TreeRow
+                  key={`${constraint.type}-${constraint.name}`}
+                  depth={4}
+                  icon={<Shield className="w-3 h-3 text-rose-400/80" />}
+                  label={constraint.name}
+                  suffix={
+                    <span className="ml-1 rounded bg-muted/40 px-1 py-0.5 text-[9px] font-mono text-muted-foreground/70">
+                      {constraint.type}
+                    </span>
+                  }
+                />
+              ))}
+            </>
+          </TreeBranch>
         </>
-      )}
+      </TreeBranch>
     </>
   );
 });
@@ -1986,6 +2489,25 @@ function HighlightedLabel({ label, query }: { label: string; query: string }) {
 }
 
 // ─── Generic tree row (memoised) ───────────────────────────────────────
+
+function TreeBranch({
+  open,
+  children,
+}: {
+  open: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <div
+      className={cn(
+        "grid transition-[grid-template-rows,opacity] duration-200 ease-out",
+        open ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0",
+      )}
+    >
+      <div className="overflow-hidden">{children}</div>
+    </div>
+  );
+}
 
 const TreeRow = memo(function TreeRow({
   depth,

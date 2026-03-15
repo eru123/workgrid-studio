@@ -336,3 +336,33 @@ export async function clearAllLogs(): Promise<void> {
 export async function deleteAllAppData(): Promise<void> {
     return invoke<void>("app_delete_all_data");
 }
+
+// ─── Export ──────────────────────────────────────────────────────────
+
+/** Export table data as CSV to a local file. Returns the number of rows written. */
+export async function dbExportTableCsv(
+    profileId: string, database: string, table: string, filePath: string,
+): Promise<number> {
+    return invoke<number>("db_export_table_csv", { profileId, database, table, filePath });
+}
+
+/** Export table data as JSON to a local file. Returns the number of rows written. */
+export async function dbExportTableJson(
+    profileId: string, database: string, table: string, filePath: string,
+): Promise<number> {
+    return invoke<number>("db_export_table_json", { profileId, database, table, filePath });
+}
+
+/** Export table data as SQL INSERT statements to a local file. Returns the number of rows written. */
+export async function dbExportTableInserts(
+    profileId: string, database: string, table: string, filePath: string,
+): Promise<number> {
+    return invoke<number>("db_export_table_inserts", { profileId, database, table, filePath });
+}
+
+/** Export the schema DDL for a database to a local SQL file. Returns the number of bytes written. */
+export async function dbExportSqlDump(
+    profileId: string, database: string, filePath: string,
+): Promise<number> {
+    return invoke<number>("db_export_sql_dump", { profileId, database, filePath });
+}

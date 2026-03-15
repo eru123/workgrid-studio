@@ -51,6 +51,7 @@ export interface GlobalPreferences extends ProfilePreferences {
   blockAiRequests?: boolean;
   allowUpdateChecks?: boolean;
   maxLogSizeMb?: number;
+  maxLogAgeDays?: number;
   maxResultRows?: number;
   queryTimeoutMs?: number;
 }
@@ -142,6 +143,7 @@ export const DEFAULT_GLOBAL_PREFERENCES: GlobalPreferences = {
   blockAiRequests: false,
   allowUpdateChecks: true,
   maxLogSizeMb: 10,
+  maxLogAgeDays: 14,
   maxResultRows: 1000,
   queryTimeoutMs: 30_000,
 };

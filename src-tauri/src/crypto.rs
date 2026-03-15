@@ -1,13 +1,13 @@
-use std::collections::HashMap;
-use std::fs;
+use crate::files::ensure_app_dirs;
+use crate::{AppError, AppResult};
 use aes_gcm::{
     aead::{Aead, KeyInit},
     Aes256Gcm, Nonce,
 };
 use base64::{engine::general_purpose::STANDARD as b64, Engine};
 use rand::RngCore;
-use crate::{AppError, AppResult};
-use crate::files::ensure_app_dirs;
+use std::collections::HashMap;
+use std::fs;
 
 /// Retrieve or create the 32-byte AES-256-GCM master key used for vault and
 /// password encryption.
@@ -28,7 +28,8 @@ pub fn get_or_create_secret_key() -> AppResult<[u8; 32]> {
 
     if let Ok(entry) = keyring::Entry::new(SERVICE, ACCOUNT) {
         if let Ok(encoded) = entry.get_password() {
-            let bytes = b64.decode(&encoded)
+            let bytes = b64
+                .decode(&encoded)
                 .map_err(|e| format!("Keychain key decode error: {e}"))?;
             if bytes.len() == 32 {
                 let key: [u8; 32] = bytes
@@ -54,8 +55,8 @@ fn read_secret_key_from_file() -> AppResult<Option<[u8; 32]>> {
     let key_path = secret_key_path()?;
 
     if key_path.exists() {
-        let contents = fs::read(&key_path)
-            .map_err(|e| format!("Failed to read secret.key: {e}"))?;
+        let contents =
+            fs::read(&key_path).map_err(|e| format!("Failed to read secret.key: {e}"))?;
         if contents.len() == 32 {
             let key: [u8; 32] = contents
                 .try_into()
@@ -69,8 +70,7 @@ fn read_secret_key_from_file() -> AppResult<Option<[u8; 32]>> {
 
 fn write_secret_key_to_file(key: &[u8; 32]) -> AppResult<()> {
     let key_path = secret_key_path()?;
-    fs::write(&key_path, key)
-        .map_err(|e| format!("Failed to write secret.key: {e}"))?;
+    fs::write(&key_path, key).map_err(|e| format!("Failed to write secret.key: {e}"))?;
     Ok(())
 }
 
@@ -78,7 +78,8 @@ fn store_key_in_keyring(service: &str, account: &str, key: &[u8; 32]) -> AppResu
     let entry = keyring::Entry::new(service, account)
         .map_err(|e| format!("Keychain entry init failed: {e}"))?;
     let encoded = b64.encode(key);
-    entry.set_password(&encoded)
+    entry
+        .set_password(&encoded)
         .map_err(|e| format!("Failed to store vault key in OS keychain: {e}"))?;
     Ok(())
 }
@@ -121,7 +122,8 @@ pub fn vault_set(key: String, secret: String) -> AppResult<()> {
     rand::thread_rng().fill_bytes(&mut nonce_bytes);
     let nonce = Nonce::from_slice(&nonce_bytes);
 
-    let ciphertext = cipher.encrypt(nonce, secret.as_bytes())
+    let ciphertext = cipher
+        .encrypt(nonce, secret.as_bytes())
         .map_err(|_| "Encryption failed".to_string())?;
 
     let mut combined = nonce_bytes.to_vec();
@@ -146,10 +148,13 @@ pub fn vault_get(key: String) -> AppResult<String> {
     }
 
     let content = fs::read_to_string(&vault_path).map_err(|e| e.to_string())?;
-    let vault: HashMap<String, String> = serde_json::from_str(&content).map_err(|e| e.to_string())?;
+    let vault: HashMap<String, String> =
+        serde_json::from_str(&content).map_err(|e| e.to_string())?;
 
     let encrypted_b64 = vault.get(&key).ok_or("Key not found in vault")?;
-    let combined = b64.decode(encrypted_b64).map_err(|_| "Invalid base64 payload")?;
+    let combined = b64
+        .decode(encrypted_b64)
+        .map_err(|_| "Invalid base64 payload")?;
 
     if combined.len() < 12 {
         return Err(AppError::crypto("Payload too short"));
@@ -279,10 +284,13 @@ mod tests {
 
     #[test]
     fn vault_set_get_delete_round_trip() {
-        let key = format!("test-key-{}", std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos());
+        let key = format!(
+            "test-key-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        );
         let secret = "super-secret-value".to_string();
 
         vault_set(key.clone(), secret.clone()).expect("vault_set failed");
@@ -294,4 +302,3 @@ mod tests {
         assert!(result.is_err(), "expected error after delete");
     }
 }
-

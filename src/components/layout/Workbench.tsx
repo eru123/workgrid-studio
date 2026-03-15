@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { startTransition, useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useLayoutStore, ActivityView } from "@/state/layoutStore";
 import { useProfilesStore } from "@/state/profilesStore";
 import { useSchemaStore } from "@/state/schemaStore";
@@ -34,9 +34,16 @@ import {
   Sparkles,
   Columns2,
   ArrowDownToLine,
+  Heart,
+  Loader2,
 } from "lucide-react";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { ServersSidebar } from "@/components/views/ServersSidebar";
 import { AiChatSidebar } from "@/components/views/AiChatSidebar";
+import { KeyboardShortcutsOverlay } from "@/components/views/KeyboardShortcutsOverlay";
+import { OnboardingFlow } from "@/components/views/OnboardingFlow";
+import { check as checkForUpdate } from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
 
 const activityItems: { id: ActivityView; icon: any; label: string }[] = [
   { id: "explorer", icon: FolderTree, label: "Explorer" },
@@ -51,9 +58,16 @@ const RECONNECT_MAX_ATTEMPTS = 6;
 
 export function Workbench() {
   const appVersion = useAppVersion();
+  const [showShortcuts, setShowShortcuts] = useState(false);
+  const [showOnboarding, setShowOnboarding] = useState(false);
+  const profilesLoaded = useProfilesStore((s) => s._loaded);
+  const profileCount = useProfilesStore((s) => s.profiles.length);
   const profiles = useProfilesStore((s) => s.profiles);
   const connectedProfiles = useSchemaStore((s) => s.connectedProfiles);
   const connectedCount = Object.keys(connectedProfiles).length;
+  const connectingCount = profiles.filter(
+    (profile) => profile.connectionStatus === "connecting",
+  ).length;
   const tasks = useTasksStore((s) => s.tasks);
   const savedQueriesByProfile = useSavedQueriesStore((s) => s.byProfile);
   const loadAllSavedQueries = useSavedQueriesStore((s) => s.loadAllQueries);
@@ -72,7 +86,9 @@ export function Workbench() {
   const bottomPanelHeight = useLayoutStore((s) => s.bottomPanelHeight);
   const activeView = useLayoutStore((s) => s.activeView);
   const editorTree = useLayoutStore((s) => s.editorTree);
+  const activeLeafId = useLayoutStore((s) => s.activeLeafId);
   const setActiveView = useLayoutStore((s) => s.setActiveView);
+  const saveLayoutPrefs = useLayoutStore((s) => s.saveLayoutPrefs);
   const adjustSidebarWidth = useLayoutStore((s) => s.adjustSidebarWidth);
   const adjustPanelHeight = useLayoutStore((s) => s.adjustPanelHeight);
   const toggleSidebar = useLayoutStore((s) => s.toggleSidebar);
@@ -83,6 +99,7 @@ export function Workbench() {
   const toggleSecondarySidebar = useLayoutStore((s) => s.toggleSecondarySidebar);
   const adjustSecondarySidebarWidth = useLayoutStore((s) => s.adjustSecondarySidebarWidth);
   const bottomPanelRef = useRef<HTMLDivElement>(null);
+  const hasLoadedLayoutRef = useRef(false);
   const reconnectAttemptsRef = useRef<Record<string, number>>({});
   const reconnectTimeoutsRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const scheduledQueryIntervalsRef = useRef<Record<string, ReturnType<typeof setInterval>>>({});
@@ -200,10 +217,67 @@ export function Workbench() {
 
   // App Initialization
   useEffect(() => {
-    useProfilesStore.getState().loadProfiles();
-    useModelsStore.getState().loadProviders();
-    useTasksStore.getState().loadTasks();
-    useLayoutStore.getState().loadLayoutPrefs();
+    let cancelled = false;
+
+    void Promise.all([
+      useProfilesStore.getState().loadProfiles(),
+      useModelsStore.getState().loadProviders(),
+      useTasksStore.getState().loadTasks(),
+      useLayoutStore.getState().loadLayoutPrefs(),
+    ]).finally(() => {
+      if (!cancelled) {
+        hasLoadedLayoutRef.current = true;
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!hasLoadedLayoutRef.current) return;
+    saveLayoutPrefs();
+  }, [activeLeafId, activeView, editorTree, saveLayoutPrefs]);
+
+  // First-run onboarding: show wizard when no profiles exist after load
+  useEffect(() => {
+    if (profilesLoaded && profileCount === 0) {
+      setShowOnboarding(true);
+    }
+  }, [profilesLoaded, profileCount]);
+
+  // Startup background update check
+  useEffect(() => {
+    const addToast = useAppStore.getState().addToast;
+    const { allowUpdateChecks } = useProfilesStore.getState().globalPreferences;
+    if (!allowUpdateChecks) return;
+
+    (async () => {
+      try {
+        const update = await checkForUpdate();
+        if (!update) return;
+        addToast({
+          title: `Update available — v${update.version}`,
+          description: update.body?.split("\n")[0] ?? "A new version of WorkGrid Studio is ready.",
+          persistent: true,
+          action: {
+            label: "Download & restart",
+            onClick: async () => {
+              try {
+                await update.downloadAndInstall();
+                await relaunch();
+              } catch {
+                addToast({ title: "Update failed", description: "Open Settings to retry.", variant: "destructive" });
+              }
+            },
+          },
+        });
+      } catch {
+        // Silently ignore startup update check failures
+      }
+    })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -407,6 +481,9 @@ export function Workbench() {
         } else if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "t") {
           e.preventDefault();
           useLayoutStore.getState().restoreLastClosedTab();
+        } else if (e.ctrlKey && e.shiftKey && e.key === "?") {
+          e.preventDefault();
+          setShowShortcuts((v) => !v);
         }
       }
     };
@@ -420,6 +497,14 @@ export function Workbench() {
         Skip to main content
       </a>
 
+      {showShortcuts && (
+        <KeyboardShortcutsOverlay onClose={() => setShowShortcuts(false)} />
+      )}
+
+      {showOnboarding && (
+        <OnboardingFlow onClose={() => setShowOnboarding(false)} />
+      )}
+
       {/* Activity Bar */}
       <div
         className="shrink-0 bg-muted/20 border-r flex flex-col items-center py-2 justify-between"
@@ -432,6 +517,8 @@ export function Workbench() {
             const badge =
               item.id === "explorer" && connectedCount > 0
                 ? connectedCount
+                : item.id === "servers" && connectingCount > 0
+                ? "connecting"
                 : item.id === "tasks" && pendingTaskCount > 0
                 ? pendingTaskCount
                 : null;
@@ -453,8 +540,19 @@ export function Workbench() {
                 )}
                 <Icon className="w-5 h-5" />
                 {badge !== null && (
-                  <span className="absolute top-1 right-1 min-w-[14px] h-[14px] rounded-full bg-primary text-primary-foreground text-[9px] font-bold flex items-center justify-center px-0.5 leading-none">
-                    {badge}
+                  <span
+                    className={cn(
+                      "absolute top-1 right-1 min-w-[14px] h-[14px] rounded-full text-[9px] font-bold flex items-center justify-center px-0.5 leading-none",
+                      badge === "connecting"
+                        ? "bg-amber-500/20 text-amber-300 ring-1 ring-amber-500/40"
+                        : "bg-primary text-primary-foreground",
+                    )}
+                  >
+                    {badge === "connecting" ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : (
+                      badge
+                    )}
                   </span>
                 )}
               </button>
@@ -704,6 +802,8 @@ function parseProblems(
 }
 
 function BottomPanel({ isSecondary }: { isSecondary?: boolean }) {
+  const LOG_ROW_HEIGHT = 20;
+  const LOG_OVERSCAN = 24;
   const profiles = useProfilesStore((s) => s.profiles);
   const outputEntries = useAppStore((s) => s.outputEntries);
   const clearOutputEntries = useAppStore((s) => s.clearOutputEntries);
@@ -722,6 +822,7 @@ function BottomPanel({ isSecondary }: { isSecondary?: boolean }) {
   const [aiLogs, setAiLogs] = useState<AiLogEntry[]>([]);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [autoScroll, setAutoScroll] = useState(true);
+  const [logViewport, setLogViewport] = useState({ scrollTop: 0, clientHeight: 1 });
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // Auto-select first connected profile
@@ -742,9 +843,13 @@ function BottomPanel({ isSecondary }: { isSecondary?: boolean }) {
     if (!selectedProfileId || activeTab !== "logs") return;
     try {
       const content = await readProfileLog(selectedProfileId, logFilter);
-      setLogContent(content);
+      startTransition(() => {
+        setLogContent(content);
+      });
     } catch (e) {
-      setLogContent(`Error reading logs: ${e}`);
+      startTransition(() => {
+        setLogContent(`Error reading logs: ${e}`);
+      });
     }
   }, [selectedProfileId, logFilter, activeTab]);
 
@@ -791,7 +896,9 @@ function BottomPanel({ isSecondary }: { isSecondary?: boolean }) {
     }
     // Sort newest first
     allProblems.reverse();
-    setProblems(allProblems);
+    startTransition(() => {
+      setProblems(allProblems);
+    });
   }, []);
 
   useEffect(() => {
@@ -806,11 +913,67 @@ function BottomPanel({ isSecondary }: { isSecondary?: boolean }) {
     if (activeTab !== "ailogs") return;
     try {
       const logs = await getAiLogs();
-      setAiLogs(logs);
+      startTransition(() => {
+        setAiLogs(logs);
+      });
     } catch (e) {
       console.error("Failed to fetch AI logs", e);
     }
   }, [activeTab]);
+
+  useEffect(() => {
+    if (activeTab !== "logs") return;
+    const scroller = scrollRef.current;
+    if (!scroller) return;
+
+    const syncViewport = () => {
+      setLogViewport({
+        scrollTop: scroller.scrollTop,
+        clientHeight: Math.max(1, scroller.clientHeight),
+      });
+    };
+
+    syncViewport();
+    scroller.addEventListener("scroll", syncViewport, { passive: true });
+    window.addEventListener("resize", syncViewport);
+
+    return () => {
+      scroller.removeEventListener("scroll", syncViewport);
+      window.removeEventListener("resize", syncViewport);
+    };
+  }, [activeTab]);
+
+  const logLines = useMemo(() => {
+    if (!logContent) return [];
+    return logContent.split("\n").slice(-500);
+  }, [logContent]);
+
+  const visibleLogRange = useMemo(() => {
+    if (activeTab !== "logs") {
+      return {
+        start: 0,
+        end: logLines.length,
+        topSpacer: 0,
+        bottomSpacer: 0,
+      };
+    }
+
+    const start = Math.max(
+      0,
+      Math.floor(logViewport.scrollTop / LOG_ROW_HEIGHT) - LOG_OVERSCAN,
+    );
+    const end = Math.min(
+      logLines.length,
+      Math.ceil((logViewport.scrollTop + logViewport.clientHeight) / LOG_ROW_HEIGHT) + LOG_OVERSCAN,
+    );
+
+    return {
+      start,
+      end,
+      topSpacer: start * LOG_ROW_HEIGHT,
+      bottomSpacer: Math.max(0, (logLines.length - end) * LOG_ROW_HEIGHT),
+    };
+  }, [LOG_OVERSCAN, LOG_ROW_HEIGHT, activeTab, logLines.length, logViewport.clientHeight, logViewport.scrollTop]);
 
   useEffect(() => {
     fetchAiLogs();
@@ -1172,10 +1335,14 @@ function BottomPanel({ isSecondary }: { isSecondary?: boolean }) {
               </span>
             ) : logContent ? (
               <pre className="whitespace-pre-wrap break-all text-muted-foreground">
-                {logContent.split("\n").map((line, i) => (
+                {visibleLogRange.topSpacer > 0 && (
+                  <div aria-hidden="true" style={{ height: visibleLogRange.topSpacer }} />
+                )}
+                {logLines.slice(visibleLogRange.start, visibleLogRange.end).map((line, index) => (
                   <div
-                    key={i}
+                    key={`${visibleLogRange.start + index}-${line}`}
                     className={cn(
+                      "min-h-5",
                       line.includes("ERROR") && "text-red-400",
                       line.includes("INFO") && "text-blue-400/70",
                       line.includes("QUERY") &&
@@ -1186,6 +1353,9 @@ function BottomPanel({ isSecondary }: { isSecondary?: boolean }) {
                     {line}
                   </div>
                 ))}
+                {visibleLogRange.bottomSpacer > 0 && (
+                  <div aria-hidden="true" style={{ height: visibleLogRange.bottomSpacer }} />
+                )}
               </pre>
             ) : (
               <span className="text-muted-foreground">
@@ -1276,6 +1446,8 @@ function BottomPanel({ isSecondary }: { isSecondary?: boolean }) {
 
 function StatusBar({ appVersion }: { appVersion: string }) {
   const info = useAppStore((s) => s.statusBarInfo) as StatusBarInfo;
+  const setActiveView = useLayoutStore((s) => s.setActiveView);
+  const openTab = useLayoutStore((s) => s.openTab);
 
   return (
     <div className="h-6 bg-primary text-primary-foreground flex items-center px-4 text-xs gap-3 shrink-0 select-none">
@@ -1284,14 +1456,37 @@ function StatusBar({ appVersion }: { appVersion: string }) {
       {info.connectionName && (
         <>
           <span className="opacity-40">|</span>
-          <span className="opacity-80">{info.connectionName}</span>
+          <button
+            type="button"
+            onClick={() => setActiveView("explorer")}
+            className="opacity-80 transition-opacity hover:opacity-100 hover:underline"
+            title="Show the active connection in Explorer"
+          >
+            {info.connectionName}
+          </button>
         </>
       )}
 
-      {info.database && (
+      {info.database && info.profileId && (
         <>
           <span className="opacity-40">/</span>
-          <span className="opacity-80 font-mono">{info.database}</span>
+          <button
+            type="button"
+            onClick={() =>
+              openTab({
+                title: `Database: ${info.database}`,
+                type: "database-view",
+                meta: {
+                  profileId: info.profileId!,
+                  database: info.database!,
+                },
+              })
+            }
+            className="opacity-80 font-mono transition-opacity hover:opacity-100 hover:underline"
+            title="Open the active database"
+          >
+            {info.database}
+          </button>
         </>
       )}
 
@@ -1307,6 +1502,14 @@ function StatusBar({ appVersion }: { appVersion: string }) {
           </span>
         )}
         <span className="opacity-60">v{appVersion}</span>
+        <button
+          onClick={() => openUrl("https://paypal.me/ja1030")}
+          title="Support WorkGrid Studio"
+          aria-label="Support WorkGrid Studio"
+          className="opacity-50 hover:opacity-100 transition-opacity"
+        >
+          <Heart className="w-3 h-3" />
+        </button>
       </span>
     </div>
   );

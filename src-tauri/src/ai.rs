@@ -1,9 +1,9 @@
-use std::fs;
-use serde::{Deserialize, Serialize};
-use reqwest::Client;
-use crate::{AppError, AppResult};
-use crate::files::{app_preferences_path, ensure_app_dirs};
 use crate::crypto::vault_get;
+use crate::files::{app_preferences_path, ensure_app_dirs};
+use crate::{AppError, AppResult};
+use reqwest::Client;
+use serde::{Deserialize, Serialize};
+use std::fs;
 
 #[derive(Serialize)]
 pub struct AnthropicMessage {
@@ -80,7 +80,7 @@ pub fn get_ai_logs() -> AppResult<Vec<AiLogEntry>> {
     let base = ensure_app_dirs()?;
     let path = base.join("ai_logs.json");
     if !path.exists() {
-         return Ok(Vec::new());
+        return Ok(Vec::new());
     }
     let content = fs::read_to_string(&path).map_err(|e| e.to_string())?;
     let mut logs: Vec<AiLogEntry> = serde_json::from_str(&content).map_err(|e| e.to_string())?;
@@ -144,8 +144,16 @@ pub async fn ai_generate_query(
                 }
             });
 
-            let default_model = if provider_type == "deepseek" { "deepseek-chat" } else { "gpt-4o" };
-            let actual_model = if model_id.is_empty() { default_model.to_string() } else { model_id };
+            let default_model = if provider_type == "deepseek" {
+                "deepseek-chat"
+            } else {
+                "gpt-4o"
+            };
+            let actual_model = if model_id.is_empty() {
+                default_model.to_string()
+            } else {
+                model_id
+            };
 
             call_openai_compatible_api(
                 &client,
@@ -155,13 +163,21 @@ pub async fn ai_generate_query(
                 &actual_model,
                 &final_system_prompt,
                 &user_prompt,
-            ).await
-        },
+            )
+            .await
+        }
         "gemini" => {
             // Very simple Gemini impl via proxy or google generative AI SDK format
             // Here assuming proxy to openai-compatible gemini endpoint
-            let url = base_url.unwrap_or_else(|| "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions".to_string());
-            let actual_model = if model_id.is_empty() { "gemini-2.5-flash".to_string() } else { model_id };
+            let url = base_url.unwrap_or_else(|| {
+                "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+                    .to_string()
+            });
+            let actual_model = if model_id.is_empty() {
+                "gemini-2.5-flash".to_string()
+            } else {
+                model_id
+            };
 
             call_openai_compatible_api(
                 &client,
@@ -171,9 +187,10 @@ pub async fn ai_generate_query(
                 &actual_model,
                 &final_system_prompt,
                 &user_prompt,
-            ).await
-        },
-        _ => Err(AppError::validation("Unsupported provider type"))
+            )
+            .await
+        }
+        _ => Err(AppError::validation("Unsupported provider type")),
     }
 }
 
@@ -213,16 +230,26 @@ async fn call_openai_compatible_api(
     let payload = OpenAIPayload {
         model: actual_model.to_string(),
         messages: vec![
-            AnthropicMessage { role: "system".to_string(), content: system_prompt.to_string() },
-            AnthropicMessage { role: "user".to_string(), content: user_prompt.to_string() },
+            AnthropicMessage {
+                role: "system".to_string(),
+                content: system_prompt.to_string(),
+            },
+            AnthropicMessage {
+                role: "user".to_string(),
+                content: user_prompt.to_string(),
+            },
         ],
     };
 
-    println!("Sending {} completion request to {} (model: {})", provider_type, url, actual_model);
+    println!(
+        "Sending {} completion request to {} (model: {})",
+        provider_type, url, actual_model
+    );
 
     let payload_json = serde_json::to_string(&payload).unwrap_or_default();
 
-    let res = client.post(url)
+    let res = client
+        .post(url)
         .bearer_auth(api_key)
         .json(&payload)
         .send()
@@ -247,7 +274,10 @@ async fn call_openai_compatible_api(
                     response_preview: format!("HTTP {} - {}", status, text),
                 });
 
-                return Err(AppError::network(format!("API Error ({}): {}", status, text)));
+                return Err(AppError::network(format!(
+                    "API Error ({}): {}",
+                    status, text
+                )));
             }
 
             let raw_text = response.text().await.unwrap_or_default();
@@ -262,22 +292,26 @@ async fn call_openai_compatible_api(
                 response_preview: raw_text.clone(),
             });
 
-            let parsed = parsed.map_err(|e| format!("Failed to parse response: {}\nRaw: {}", e, raw_text))?;
+            let parsed = parsed
+                .map_err(|e| format!("Failed to parse response: {}\nRaw: {}", e, raw_text))?;
 
             if let Some(choice) = parsed.choices.first() {
                 let content = choice.message.content.trim().to_string();
                 // Strip markdown codeblocks if AI disobeyed
                 let cleaned = content
-                    .strip_prefix("```sql").unwrap_or(&content)
-                    .strip_prefix("```").unwrap_or(&content)
-                    .strip_suffix("```").unwrap_or(&content)
+                    .strip_prefix("```sql")
+                    .unwrap_or(&content)
+                    .strip_prefix("```")
+                    .unwrap_or(&content)
+                    .strip_suffix("```")
+                    .unwrap_or(&content)
                     .trim()
                     .to_string();
                 Ok(cleaned)
             } else {
                 Err(AppError::external("No choices returned from AI provider"))
             }
-        },
+        }
         Err(e) => {
             append_ai_log(AiLogEntry {
                 id: entry_id,

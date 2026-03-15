@@ -3,6 +3,7 @@ import { useProfilesStore } from "@/state/profilesStore";
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
     const theme = useProfilesStore((state) => state.globalPreferences.theme || "system");
+    const fontSize = useProfilesStore((state) => state.globalPreferences.fontSize || 13);
 
     useEffect(() => {
         const root = window.document.documentElement;
@@ -21,6 +22,10 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
 
         root.classList.add(theme);
     }, [theme]);
+
+    useEffect(() => {
+        window.document.documentElement.style.setProperty("--app-font-size", `${fontSize}px`);
+    }, [fontSize]);
 
     return <>{children}</>;
 }

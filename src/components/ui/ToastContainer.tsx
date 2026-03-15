@@ -16,6 +16,8 @@ export function ToastContainer() {
                     title={toast.title}
                     description={toast.description}
                     variant={toast.variant}
+                    action={toast.action}
+                    persistent={toast.persistent}
                     onDismiss={() => dismissToast(toast.id)}
                 />
             ))}
@@ -27,24 +29,29 @@ function ToastItem({
     title,
     description,
     variant = "default",
+    action,
+    persistent,
     onDismiss,
 }: {
     id: string;
     title: string;
     description?: string;
     variant?: "default" | "destructive";
+    action?: { label: string; onClick: () => void };
+    persistent?: boolean;
     onDismiss: () => void;
 }) {
     const isDestructive = variant === "destructive";
 
-    // Auto-dismiss
+    // Auto-dismiss (skipped for persistent toasts)
     useEffect(() => {
+        if (persistent) return;
         const timer = setTimeout(() => {
             onDismiss();
         }, isDestructive ? 8000 : 5000);
 
         return () => clearTimeout(timer);
-    }, [isDestructive, onDismiss]);
+    }, [isDestructive, onDismiss, persistent]);
 
     return (
         <div
@@ -76,6 +83,19 @@ function ToastItem({
                     >
                         {description}
                     </p>
+                )}
+                {action && (
+                    <button
+                        onClick={() => { action.onClick(); onDismiss(); }}
+                        className={cn(
+                            "mt-2 text-xs font-medium rounded px-2 py-1 transition-colors",
+                            isDestructive
+                                ? "bg-red-800/50 hover:bg-red-800 text-red-200"
+                                : "bg-primary/10 hover:bg-primary/20 text-primary",
+                        )}
+                    >
+                        {action.label}
+                    </button>
                 )}
             </div>
 
