@@ -93,13 +93,6 @@ Actions:
 - `toggleFavorite(id)`: toggle the `favorited` flag.
 - `clearHistory(profileId?)`: clear all history or a single profile's non-favorited history.
 
-## `resultsStore.ts`
-
-Purpose: frozen result snapshots opened in dedicated result tabs.
-
-Actions:
-- `setSnapshot(tabId, snapshot)`: store a frozen copy of result sets for a tab.
-- `removeSnapshot(tabId)`: discard a frozen result snapshot.
 
 ## `savedQueriesStore.ts`
 

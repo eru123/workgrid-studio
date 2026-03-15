@@ -25,7 +25,7 @@ import { useLayoutStore } from "@/state/layoutStore";
 import { useAppStore } from "@/state/appStore";
 import { useModelsStore } from "@/state/modelsStore";
 import { useProfilesStore } from "@/state/profilesStore";
-import { formatResultsTabTitle, useResultsStore } from "@/state/resultsStore";
+
 import { useSavedQueriesStore } from "@/state/savedQueriesStore";
 import { aiGenerateQuery, dbGetSchemaDdl } from "@/lib/db";
 import { ensureAiUseAllowed } from "@/lib/privacy";
@@ -730,7 +730,7 @@ export function QueryTab({
   const refreshDatabases = useSchemaStore((s) => s.refreshDatabases);
   const openTab = useLayoutStore((s) => s.openTab);
   const updateTab = useLayoutStore((s) => s.updateTab);
-  const setResultSnapshot = useResultsStore((s) => s.setSnapshot);
+
   const saveSavedQuery = useSavedQueriesStore((s) => s.saveQuery);
   const readSavedQueryText = useSavedQueriesStore((s) => s.readQueryText);
   const loadProfileSavedQueries = useSavedQueriesStore((s) => s.loadProfileQueries);
@@ -1390,9 +1390,6 @@ export function QueryTab({
 
         // Drop the USE result (index 0) so callers only see their query results
         const filteredResults = selectedDb ? res.slice(1) : res;
-        const resultTabId = `tab-${crypto.randomUUID()}`;
-        const resultTabTitle = formatResultsTabTitle(filteredResults);
-
         setResults(filteredResults);
         setVisibleRowCounts(
           Object.fromEntries(
@@ -1407,30 +1404,6 @@ export function QueryTab({
         setLastSavedSql(sql);
         resultScrollRef.current?.scrollTo({ top: 0, left: 0 });
         setResultViewport({ scrollTop: 0, clientHeight: 1 });
-
-        setResultSnapshot(resultTabId, {
-          sourceTabId: tabId,
-          sourceTitle: selectedDb || "SQL Query",
-          profileId: selectedProfileId,
-          database: selectedDb || undefined,
-          queryText,
-          results: filteredResults,
-          executionTimeMs: elapsed,
-          createdAt: new Date().toISOString(),
-        });
-        openTab(
-          {
-            id: resultTabId,
-            title: resultTabTitle,
-            type: "results",
-            meta: {
-              profileId: selectedProfileId,
-              database: selectedDb || "",
-              sourceTabId: tabId,
-            },
-          },
-          leafId,
-        );
 
         // Add to history
         addHistoryItem({
@@ -1487,7 +1460,7 @@ export function QueryTab({
       selectedDb,
       refreshDatabases,
       running,
-      setResultSnapshot,
+
       sql,
       tabId,
     ],
