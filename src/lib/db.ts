@@ -280,17 +280,47 @@ export async function clearAiLogs(): Promise<void> {
 
 // ─── Data Import ───────────────────────────────────────────────────
 
-export async function dbImportSql(profileId: string, database: string, filePath: string): Promise<string> {
-    return invoke<string>("db_import_sql", { profileId, database, filePath });
-}
-
 export interface ImportResult {
+    kind: "sql" | "csv";
+    itemsAttempted: number;
+    itemsCommitted: number;
     rowsAttempted: number;
     rowsCommitted: number;
+    rowsSkipped: number;
+    elapsedMs: number;
+    errors: string[];
+    summary: string;
 }
 
-export async function dbImportCsv(profileId: string, database: string, table: string, filePath: string): Promise<ImportResult> {
-    return invoke<ImportResult>("db_import_csv", { profileId, database, table, filePath });
+export interface ImportProgressEvent {
+    jobId: string;
+    kind: "sql" | "csv";
+    phase: "started" | "progress" | "completed" | "error";
+    itemsProcessed: number;
+    itemsTotal: number;
+    rowsProcessed: number;
+    rowsTotal: number;
+    percent: number;
+    message: string;
+}
+
+export async function dbImportSql(
+    profileId: string,
+    database: string,
+    filePath: string,
+    jobId: string,
+): Promise<ImportResult> {
+    return invoke<ImportResult>("db_import_sql", { profileId, database, filePath, jobId });
+}
+
+export async function dbImportCsv(
+    profileId: string,
+    database: string,
+    table: string,
+    filePath: string,
+    jobId: string,
+): Promise<ImportResult> {
+    return invoke<ImportResult>("db_import_csv", { profileId, database, table, filePath, jobId });
 }
 
 // ─── SSH Host Key ──────────────────────────────────────────────────

@@ -46,6 +46,12 @@ pub fn app_read_file(filename: String) -> AppResult<String> {
 pub fn app_write_file(filename: String, contents: String) -> AppResult<()> {
     let base = ensure_app_dirs()?;
     let path = base.join("data").join(&filename);
+    if let Some(parent) = path.parent() {
+        if !parent.exists() {
+            fs::create_dir_all(parent)
+                .map_err(|e| AppError::io(format!("Write error: {}", e)))?;
+        }
+    }
     fs::write(&path, contents)
         .map_err(|e| AppError::io(format!("Write error: {}", e)))
 }

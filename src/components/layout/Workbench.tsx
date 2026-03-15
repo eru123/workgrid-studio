@@ -4,11 +4,12 @@ import { useProfilesStore } from "@/state/profilesStore";
 import { useSchemaStore } from "@/state/schemaStore";
 import { useModelsStore } from "@/state/modelsStore";
 import { useTasksStore } from "@/state/tasksStore";
+import { useSavedQueriesStore } from "@/state/savedQueriesStore";
 import { useAppVersion } from "@/hooks/useAppVersion";
 import { Sash } from "./Sash";
 import { EditorNode } from "./EditorNode";
 import { ExplorerTree } from "@/components/views/ExplorerTree";
-import { readProfileLog, clearProfileLog, getAiLogs, clearAiLogs, AiLogEntry, dbPing } from "@/lib/db";
+import { readProfileLog, clearProfileLog, getAiLogs, clearAiLogs, AiLogEntry, dbPing, dbQuery } from "@/lib/db";
 import { cn } from "@/lib/utils/cn";
 import { useProfileManager } from "@/hooks/useProfileManager";
 import { useAppStore, StatusBarInfo } from "@/state/appStore";
@@ -54,6 +55,10 @@ export function Workbench() {
   const connectedProfiles = useSchemaStore((s) => s.connectedProfiles);
   const connectedCount = Object.keys(connectedProfiles).length;
   const tasks = useTasksStore((s) => s.tasks);
+  const savedQueriesByProfile = useSavedQueriesStore((s) => s.byProfile);
+  const loadAllSavedQueries = useSavedQueriesStore((s) => s.loadAllQueries);
+  const readSavedQueryText = useSavedQueriesStore((s) => s.readQueryText);
+  const recordSavedQueryRun = useSavedQueriesStore((s) => s.recordQueryRun);
   const pendingTaskCount = tasks.filter((t) => t.status !== "done").length;
   const activityBarWidth = useLayoutStore((s) => s.activityBarWidth);
   const primarySidebarWidth = useLayoutStore((s) => s.primarySidebarWidth);
@@ -80,6 +85,8 @@ export function Workbench() {
   const bottomPanelRef = useRef<HTMLDivElement>(null);
   const reconnectAttemptsRef = useRef<Record<string, number>>({});
   const reconnectTimeoutsRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const scheduledQueryIntervalsRef = useRef<Record<string, ReturnType<typeof setInterval>>>({});
+  const scheduledQueryRunningRef = useRef<Record<string, boolean>>({});
 
   const handleBottomPanelSplitDrag = useCallback(
     (delta: number) => {
@@ -198,6 +205,133 @@ export function Workbench() {
     useTasksStore.getState().loadTasks();
     useLayoutStore.getState().loadLayoutPrefs();
   }, []);
+
+  useEffect(() => {
+    const profileIds = profiles.map((profile) => profile.id);
+    if (profileIds.length === 0) return;
+    void loadAllSavedQueries(profileIds);
+  }, [loadAllSavedQueries, profiles]);
+
+  useEffect(() => {
+    const clearScheduledInterval = (queryId: string) => {
+      const timer = scheduledQueryIntervalsRef.current[queryId];
+      if (timer) {
+        clearInterval(timer);
+        delete scheduledQueryIntervalsRef.current[queryId];
+      }
+      delete scheduledQueryRunningRef.current[queryId];
+    };
+
+    const desiredQueryIds = new Set<string>();
+
+    Object.values(savedQueriesByProfile)
+      .flat()
+      .forEach((savedQuery) => {
+        if (
+          !savedQuery.scheduleEnabled ||
+          !savedQuery.scheduleMinutes ||
+          savedQuery.scheduleMinutes <= 0
+        ) {
+          clearScheduledInterval(savedQuery.id);
+          return;
+        }
+
+        const profile = profiles.find((entry) => entry.id === savedQuery.profileId);
+        if (!profile || profile.connectionStatus !== "connected") {
+          clearScheduledInterval(savedQuery.id);
+          return;
+        }
+
+        desiredQueryIds.add(savedQuery.id);
+
+        if (scheduledQueryIntervalsRef.current[savedQuery.id]) {
+          return;
+        }
+
+        const executeSavedQuery = async () => {
+          if (scheduledQueryRunningRef.current[savedQuery.id]) return;
+          scheduledQueryRunningRef.current[savedQuery.id] = true;
+
+          try {
+            const queryText = await readSavedQueryText(savedQuery.filePath);
+            if (!queryText.trim()) {
+              appendConnectionOutput(
+                profile,
+                "warning",
+                `Scheduled query "${savedQuery.name}" was skipped because its file is empty.`,
+              );
+              return;
+            }
+
+            const startTime = performance.now();
+            const fullQuery = savedQuery.database
+              ? `USE \`${savedQuery.database.replace(/`/g, "``")}\`;\n${queryText}`
+              : queryText;
+
+            appendConnectionOutput(
+              profile,
+              "info",
+              `Running scheduled query "${savedQuery.name}"${savedQuery.database ? ` on ${savedQuery.database}` : ""}.`,
+            );
+
+            const resultSets = await dbQuery(savedQuery.profileId, fullQuery);
+            const filteredResults = savedQuery.database ? resultSets.slice(1) : resultSets;
+            const totalRows = filteredResults.reduce(
+              (sum, result) => sum + result.rows.length,
+              0,
+            );
+            const elapsed = performance.now() - startTime;
+            const summary = `${filteredResults.length} result set(s), ${totalRows.toLocaleString()} row(s) in ${elapsed < 1000 ? `${Math.round(elapsed)}ms` : `${(elapsed / 1000).toFixed(2)}s`}.`;
+
+            appendConnectionOutput(
+              profile,
+              "success",
+              `Scheduled query "${savedQuery.name}" completed: ${summary}`,
+            );
+            await recordSavedQueryRun(savedQuery.profileId, savedQuery.id, {
+              lastRunAt: new Date().toISOString(),
+              lastRunStatus: "success",
+              lastRunSummary: summary,
+            });
+          } catch (error) {
+            const message = String(error);
+            appendConnectionOutput(
+              profile,
+              "error",
+              `Scheduled query "${savedQuery.name}" failed: ${message}`,
+            );
+            await recordSavedQueryRun(savedQuery.profileId, savedQuery.id, {
+              lastRunAt: new Date().toISOString(),
+              lastRunStatus: "error",
+              lastRunSummary: message,
+            });
+          } finally {
+            scheduledQueryRunningRef.current[savedQuery.id] = false;
+          }
+        };
+
+        scheduledQueryIntervalsRef.current[savedQuery.id] = setInterval(
+          executeSavedQuery,
+          savedQuery.scheduleMinutes * 60_000,
+        );
+      });
+
+    Object.keys(scheduledQueryIntervalsRef.current).forEach((queryId) => {
+      if (!desiredQueryIds.has(queryId)) {
+        clearScheduledInterval(queryId);
+      }
+    });
+
+    return () => {
+      Object.keys(scheduledQueryIntervalsRef.current).forEach(clearScheduledInterval);
+    };
+  }, [
+    loadAllSavedQueries,
+    profiles,
+    readSavedQueryText,
+    recordSavedQueryRun,
+    savedQueriesByProfile,
+  ]);
 
   // Connection Keep-Alive Loop
   useEffect(() => {

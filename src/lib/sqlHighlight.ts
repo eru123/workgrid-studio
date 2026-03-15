@@ -510,35 +510,7 @@ export function getActiveQueryRange(
   startPos: number,
   endPos: number,
 ): { start: number; end: number; text: string } | null {
-  const tokens = tokeniseSQL(sql);
-  let currentIndex = 0;
-
-  let currentStmtStart = 0;
-  let stmts: { start: number; end: number; text: string }[] = [];
-
-  for (const token of tokens) {
-    const tokenLen = token.value.length;
-
-    if (token.type === "punctuation" && token.value === ";") {
-      stmts.push({
-        start: currentStmtStart,
-        end: currentIndex + tokenLen,
-        text: sql.slice(currentStmtStart, currentIndex + tokenLen),
-      });
-      currentStmtStart = currentIndex + tokenLen;
-    }
-
-    currentIndex += tokenLen;
-  }
-
-  if (currentStmtStart < sql.length) {
-    const text = sql.slice(currentStmtStart);
-    stmts.push({
-      start: currentStmtStart,
-      end: sql.length,
-      text,
-    });
-  }
+  const stmts = getSqlStatementRanges(sql);
 
   // Find statements overlapping selection
   let activeStmts = stmts.filter((s) => {
@@ -573,6 +545,40 @@ export function getActiveQueryRange(
     end,
     text: sql.slice(start, end),
   };
+}
+
+export function getSqlStatementRanges(
+  sql: string,
+): { start: number; end: number; text: string }[] {
+  const tokens = tokeniseSQL(sql);
+  let currentIndex = 0;
+  let currentStmtStart = 0;
+  const stmts: { start: number; end: number; text: string }[] = [];
+
+  for (const token of tokens) {
+    const tokenLen = token.value.length;
+
+    if (token.type === "punctuation" && token.value === ";") {
+      stmts.push({
+        start: currentStmtStart,
+        end: currentIndex + tokenLen,
+        text: sql.slice(currentStmtStart, currentIndex + tokenLen),
+      });
+      currentStmtStart = currentIndex + tokenLen;
+    }
+
+    currentIndex += tokenLen;
+  }
+
+  if (currentStmtStart < sql.length) {
+    stmts.push({
+      start: currentStmtStart,
+      end: sql.length,
+      text: sql.slice(currentStmtStart),
+    });
+  }
+
+  return stmts;
 }
 
 export function findMatchingBrackets(

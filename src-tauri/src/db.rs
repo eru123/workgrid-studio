@@ -1,8 +1,8 @@
-use tauri::State;
+use tauri::{AppHandle, Emitter, State};
 use mysql_async::prelude::*;
 use mysql_async::{Opts, OptsBuilder, Pool, PoolOpts, PoolConstraints, TxOpts};
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use crate::{AppError, AppResult, DbState};
 use crate::ssh::{establish_ssh_tunnel, shutdown_tunnel};
 use crate::crypto::{encrypt_password, decrypt_password};
@@ -117,18 +117,42 @@ pub struct QueryResultSet {
     pub info: String,
 }
 
-/// Structured result returned by `db_import_csv`.
-#[derive(Serialize)]
+/// Structured result returned by import commands.
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct ImportResult {
-    /// Total rows parsed from the CSV file.
+    pub kind: String,
+    pub items_attempted: usize,
+    pub items_committed: usize,
     pub rows_attempted: usize,
-    /// Rows actually committed to the database (equals `rows_attempted` on success).
     pub rows_committed: usize,
+    pub rows_skipped: usize,
+    pub elapsed_ms: u128,
+    pub errors: Vec<String>,
+    pub summary: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportProgressEvent {
+    pub job_id: String,
+    pub kind: String,
+    pub phase: String,
+    pub items_processed: usize,
+    pub items_total: usize,
+    pub rows_processed: usize,
+    pub rows_total: usize,
+    pub percent: f64,
+    pub message: String,
 }
 
 const DEFAULT_QUERY_TIMEOUT_MS: u64 = 30_000;
 const MIN_QUERY_TIMEOUT_MS: u64 = 5_000;
 const MAX_QUERY_TIMEOUT_MS: u64 = 300_000;
+
+fn emit_import_progress(app: &AppHandle, event: &ImportProgressEvent) {
+    let _ = app.emit("import-progress", event);
+}
 
 // ─── Helpers ────────────────────────────────────────────────────────
 
@@ -1123,11 +1147,14 @@ pub async fn db_get_schema_ddl(
 
 #[tauri::command]
 pub async fn db_import_sql(
+    app: AppHandle,
     state: State<'_, DbState>,
     profile_id: String,
     database: String,
     file_path: String,
-) -> AppResult<String> {
+    job_id: String,
+) -> AppResult<ImportResult> {
+    let started_at = Instant::now();
     let pool = get_pool(&state, &profile_id)?;
     let mut conn = pool.get_conn().await.map_err(|e| format!("Connection error: {}", e))?;
 
@@ -1141,34 +1168,105 @@ pub async fn db_import_sql(
     let sql_content = std::fs::read_to_string(&file_path)
         .map_err(|e| format!("Failed to read SQL file: {}", e))?;
 
-    // Borrow parse code from split_sql_statements to execute iteratively
     let stmts = split_sql_statements(&sql_content);
     let total = stmts.len();
     let mut executed = 0;
 
+    emit_import_progress(&app, &ImportProgressEvent {
+        job_id: job_id.clone(),
+        kind: "sql".to_string(),
+        phase: "started".to_string(),
+        items_processed: 0,
+        items_total: total,
+        rows_processed: 0,
+        rows_total: 0,
+        percent: 0.0,
+        message: format!("Executing {} SQL statement(s)...", total),
+    });
+
     for stmt in stmts {
         if let Err(e) = conn.query_drop(&stmt).await {
-            log_error(&profile_id, &format!("SQL execution error at stmt {}: {}", executed + 1, e));
-            return Err(AppError::database(format!(
+            let message = format!(
                 "Execution failed at statement {}: {}",
                 executed + 1,
                 e
-            )));
+            );
+            log_error(&profile_id, &format!("SQL execution error at stmt {}: {}", executed + 1, e));
+            emit_import_progress(&app, &ImportProgressEvent {
+                job_id: job_id.clone(),
+                kind: "sql".to_string(),
+                phase: "error".to_string(),
+                items_processed: executed,
+                items_total: total,
+                rows_processed: 0,
+                rows_total: 0,
+                percent: if total == 0 {
+                    0.0
+                } else {
+                    (executed as f64 / total as f64) * 100.0
+                },
+                message: message.clone(),
+            });
+            return Err(AppError::database(message));
         }
         executed += 1;
+
+        emit_import_progress(&app, &ImportProgressEvent {
+            job_id: job_id.clone(),
+            kind: "sql".to_string(),
+            phase: "progress".to_string(),
+            items_processed: executed,
+            items_total: total,
+            rows_processed: 0,
+            rows_total: 0,
+            percent: if total == 0 {
+                100.0
+            } else {
+                (executed as f64 / total as f64) * 100.0
+            },
+            message: format!("Executed {}/{} SQL statement(s).", executed, total),
+        });
     }
 
-    Ok(format!("Successfully imported {} statements.", total))
+    let elapsed_ms = started_at.elapsed().as_millis();
+    let summary = format!("Imported {} SQL statement(s) in {}ms.", executed, elapsed_ms);
+
+    emit_import_progress(&app, &ImportProgressEvent {
+        job_id: job_id.clone(),
+        kind: "sql".to_string(),
+        phase: "completed".to_string(),
+        items_processed: executed,
+        items_total: total,
+        rows_processed: 0,
+        rows_total: 0,
+        percent: 100.0,
+        message: summary.clone(),
+    });
+
+    Ok(ImportResult {
+        kind: "sql".to_string(),
+        items_attempted: total,
+        items_committed: executed,
+        rows_attempted: 0,
+        rows_committed: 0,
+        rows_skipped: 0,
+        elapsed_ms,
+        errors: vec![],
+        summary,
+    })
 }
 
 #[tauri::command]
 pub async fn db_import_csv(
+    app: AppHandle,
     state: State<'_, DbState>,
     profile_id: String,
     database: String,
     table: String,
     file_path: String,
+    job_id: String,
 ) -> AppResult<ImportResult> {
+    let started_at = Instant::now();
     let pool = get_pool(&state, &profile_id)?;
     let mut conn = pool.get_conn().await.map_err(|e| format!("Connection error: {}", e))?;
 
@@ -1197,6 +1295,19 @@ pub async fn db_import_csv(
         .map_err(|e| format!("Failed to parse CSV: {}", e))?;
 
     let total_rows = records.len();
+    let mut committed_rows = 0usize;
+
+    emit_import_progress(&app, &ImportProgressEvent {
+        job_id: job_id.clone(),
+        kind: "csv".to_string(),
+        phase: "started".to_string(),
+        items_processed: 0,
+        items_total: total_rows,
+        rows_processed: 0,
+        rows_total: total_rows,
+        percent: 0.0,
+        message: format!("Importing {} CSV row(s) into {}...", total_rows, table),
+    });
 
     // Wrap every insert in a single transaction so a mid-import failure leaves
     // the table in its original state (no partial imports committed).
@@ -1236,23 +1347,82 @@ pub async fn db_import_csv(
             .collect();
 
         tx.exec_batch(&stmt, batch).await.map_err(|e| {
-            format!(
+            let message = format!(
                 "Batch insert failed at rows {}-{}: {}",
                 chunk_start * batch_size + 1,
                 chunk_start * batch_size + chunk.len(),
                 e
-            )
+            );
+            emit_import_progress(&app, &ImportProgressEvent {
+                job_id: job_id.clone(),
+                kind: "csv".to_string(),
+                phase: "error".to_string(),
+                items_processed: committed_rows,
+                items_total: total_rows,
+                rows_processed: committed_rows,
+                rows_total: total_rows,
+                percent: if total_rows == 0 {
+                    0.0
+                } else {
+                    (committed_rows as f64 / total_rows as f64) * 100.0
+                },
+                message: message.clone(),
+            });
+            message
         })?;
-        // tx is dropped automatically on error, which triggers ROLLBACK
+        committed_rows += chunk.len();
+
+        emit_import_progress(&app, &ImportProgressEvent {
+            job_id: job_id.clone(),
+            kind: "csv".to_string(),
+            phase: "progress".to_string(),
+            items_processed: committed_rows,
+            items_total: total_rows,
+            rows_processed: committed_rows,
+            rows_total: total_rows,
+            percent: if total_rows == 0 {
+                100.0
+            } else {
+                (committed_rows as f64 / total_rows as f64) * 100.0
+            },
+            message: format!("Imported {}/{} row(s).", committed_rows, total_rows),
+        });
     }
 
     tx.commit()
         .await
         .map_err(|e| format!("Failed to commit import transaction: {}", e))?;
 
+    let elapsed_ms = started_at.elapsed().as_millis();
+    let summary = format!(
+        "Imported {} row(s) into {} in {}ms.",
+        total_rows,
+        table,
+        elapsed_ms
+    );
+
+    emit_import_progress(&app, &ImportProgressEvent {
+        job_id: job_id.clone(),
+        kind: "csv".to_string(),
+        phase: "completed".to_string(),
+        items_processed: total_rows,
+        items_total: total_rows,
+        rows_processed: total_rows,
+        rows_total: total_rows,
+        percent: 100.0,
+        message: summary.clone(),
+    });
+
     Ok(ImportResult {
+        kind: "csv".to_string(),
+        items_attempted: total_rows,
+        items_committed: total_rows,
         rows_attempted: total_rows,
         rows_committed: total_rows,
+        rows_skipped: 0,
+        elapsed_ms,
+        errors: vec![],
+        summary,
     })
 }
 

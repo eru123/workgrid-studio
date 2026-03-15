@@ -123,6 +123,9 @@ const TabContent = memo(function TabContent({ tab, leafId }: { tab: EditorTab, l
             leafId={leafId}
             profileId={tab.meta?.profileId ?? ""}
             database={tab.meta?.database}
+            savedQueryId={tab.meta?.savedQueryId}
+            savedQueryPath={tab.meta?.savedQueryPath}
+            savedQueryName={tab.title}
           />
         );
       case "results":

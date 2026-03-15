@@ -6,6 +6,7 @@ import { EditDatabaseModal } from "./EditDatabaseModal";
 import { ContextSubmenu } from "./ContextSubmenu";
 import { useProfilesStore } from "@/state/profilesStore";
 import { useLayoutStore } from "@/state/layoutStore";
+import { useSavedQueriesStore } from "@/state/savedQueriesStore";
 import {
   dbListDatabases,
   dbListTables,
@@ -25,6 +26,7 @@ import {
 } from "@/lib/output";
 import { open } from "@tauri-apps/plugin-dialog";
 import { homeDir } from "@tauri-apps/api/path";
+import { listen } from "@tauri-apps/api/event";
 import {
   Database,
   Table2,
@@ -47,6 +49,7 @@ import {
   Square,
   PlusSquare,
   FileCode2,
+  FileText,
   Server,
   Plus,
   TableProperties,
@@ -55,6 +58,7 @@ import {
   Search,
 } from "lucide-react";
 import { SiPostgresql, SiMysql, SiSqlite, SiMariadb } from "react-icons/si";
+import { appendOutput } from "@/lib/output";
 
 const DB_ICONS: Record<string, React.ElementType> = {
   postgres: SiPostgresql,
@@ -99,6 +103,21 @@ type ContextMenuTarget =
   | { type: "server"; profileId: string }
   | { type: "database"; profileId: string; databases: string[] }
   | { type: "table"; profileId: string; database: string; table: string };
+
+interface ImportProgressState {
+  jobId: string;
+  kind: "sql" | "csv";
+  phase: "started" | "progress" | "completed" | "error";
+  itemsProcessed: number;
+  itemsTotal: number;
+  rowsProcessed: number;
+  rowsTotal: number;
+  percent: number;
+  message: string;
+  summary?: ImportResult | null;
+  targetLabel: string;
+  fileName: string;
+}
 
 // ─── Highlight helper ────────────────────────────────────────────────
 function HighlightMatch({ text, query }: { text: string; query: string }) {
@@ -158,6 +177,7 @@ export function ExplorerTree() {
   const [globalSearch, setGlobalSearch] = useState("");
   const [searchFocusIdx, setSearchFocusIdx] = useState(0);
   const globalSearchRef = useRef<HTMLInputElement>(null);
+  const [importJobs, setImportJobs] = useState<Record<string, ImportProgressState>>({});
 
   // ── Global search results ────────────────────────────────
   type SearchResult =
@@ -218,9 +238,137 @@ export function ExplorerTree() {
     };
   }, []);
 
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+
+    void listen<ImportProgressState>("import-progress", (event) => {
+      if (disposed) return;
+      const payload = event.payload;
+      setImportJobs((prev) => {
+        const existing = prev[payload.jobId];
+        if (!existing) return prev;
+
+        return {
+          ...prev,
+          [payload.jobId]: {
+            ...existing,
+            ...payload,
+            summary: existing.summary ?? null,
+          },
+        };
+      });
+    }).then((fn) => {
+      unlisten = fn;
+    });
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
+
   const toggle = useCallback((key: string) => {
     setExpanded((prev) => ({ ...prev, [key]: !prev[key] }));
   }, []);
+
+  const runImportJob = useCallback(
+    async ({
+      kind,
+      targetLabel,
+      filePath,
+      run,
+    }: {
+      kind: "sql" | "csv";
+      targetLabel: string;
+      filePath: string;
+      run: (jobId: string) => Promise<ImportResult>;
+    }) => {
+      const jobId = crypto.randomUUID();
+      const fileName = filePath.split(/[/\\]/).pop() || filePath;
+
+      setImportJobs((prev) => ({
+        ...prev,
+        [jobId]: {
+          jobId,
+          kind,
+          phase: "started",
+          itemsProcessed: 0,
+          itemsTotal: 0,
+          rowsProcessed: 0,
+          rowsTotal: 0,
+          percent: 0,
+          message: `Preparing ${kind.toUpperCase()} import...`,
+          summary: null,
+          targetLabel,
+          fileName,
+        },
+      }));
+
+      appendOutput("info", `Starting ${kind.toUpperCase()} import for ${targetLabel} from ${fileName}.`);
+
+      try {
+        const result = await run(jobId);
+
+        setImportJobs((prev) => ({
+          ...prev,
+          [jobId]: {
+            ...(prev[jobId] ?? {
+              jobId,
+              kind,
+              targetLabel,
+              fileName,
+            }),
+            kind,
+            phase: "completed",
+            itemsProcessed: result.itemsCommitted,
+            itemsTotal: result.itemsAttempted,
+            rowsProcessed: result.rowsCommitted,
+            rowsTotal: result.rowsAttempted,
+            percent: 100,
+            message: result.summary,
+            summary: result,
+            targetLabel,
+            fileName,
+          },
+        }));
+
+        appendOutput("success", `${kind.toUpperCase()} import completed for ${targetLabel}: ${result.summary}`);
+        useAppStore.getState().addToast({
+          title: `${kind.toUpperCase()} Import Complete`,
+          description: result.summary,
+        });
+      } catch (error) {
+        const message = String(error);
+
+        setImportJobs((prev) => ({
+          ...prev,
+          [jobId]: {
+            ...(prev[jobId] ?? {
+              jobId,
+              kind,
+              targetLabel,
+              fileName,
+            }),
+            kind,
+            phase: "error",
+            message,
+            summary: null,
+            targetLabel,
+            fileName,
+          },
+        }));
+
+        appendOutput("error", `${kind.toUpperCase()} import failed for ${targetLabel}: ${message}`);
+        useAppStore.getState().addToast({
+          title: `${kind.toUpperCase()} Import Failed`,
+          description: message,
+          variant: "destructive",
+        });
+      }
+    },
+    [],
+  );
 
   if (connectedList.length === 0) {
     return (
@@ -253,7 +401,7 @@ export function ExplorerTree() {
   }
 
   return (
-    <div className="flex flex-col h-full bg-background select-none text-[12px]">
+    <div className="relative flex h-full flex-col bg-background text-[12px] select-none">
       {/* Global Search */}
       <div className="shrink-0 flex items-center h-7 border-b bg-muted/10 px-2 gap-1.5 focus-within:bg-muted/20 transition-colors">
         <Search className="w-3 h-3 text-muted-foreground shrink-0" />
@@ -858,23 +1006,14 @@ export function ExplorerTree() {
                            filters: [{ name: 'SQL Script', extensions: ['sql'] }]
                         });
                         if (file) {
-                          useAppStore.getState().addToast({
-                            title: "Importing...",
-                            description: "Executing SQL file in background.",
+                          const selectedFile = Array.isArray(file) ? file[0] : file;
+                          await runImportJob({
+                            kind: "sql",
+                            targetLabel: `${profile.name} / ${targetDbs[0]}`,
+                            filePath: selectedFile,
+                            run: (jobId) =>
+                              dbImportSql(profileId, targetDbs[0], selectedFile, jobId),
                           });
-                          try {
-                            const res = await dbImportSql(profileId, targetDbs[0], Array.isArray(file) ? file[0] : file);
-                            useAppStore.getState().addToast({
-                              title: "Import Success",
-                              description: res
-                            });
-                          } catch (err: any) {
-                            useAppStore.getState().addToast({
-                              title: "Import Failed",
-                              description: String(err),
-                              variant: "destructive"
-                            });
-                          }
                         }
                       }}
                     >
@@ -1054,23 +1193,14 @@ export function ExplorerTree() {
                        filters: [{ name: 'CSV File', extensions: ['csv'] }]
                     });
                     if (file) {
-                      useAppStore.getState().addToast({
-                        title: "Importing...",
-                        description: "Importing CSV data in background.",
+                      const selectedFile = Array.isArray(file) ? file[0] : file;
+                      await runImportJob({
+                        kind: "csv",
+                        targetLabel: `${profile.name} / ${targetDb}.${targetTable}`,
+                        filePath: selectedFile,
+                        run: (jobId) =>
+                          dbImportCsv(profileId, targetDb, targetTable, selectedFile, jobId),
                       });
-                      try {
-                        const res: ImportResult = await dbImportCsv(profileId, targetDb, targetTable, Array.isArray(file) ? file[0] : file);
-                        useAppStore.getState().addToast({
-                          title: "Import Complete",
-                          description: `${res.rowsCommitted} of ${res.rowsAttempted} row${res.rowsAttempted !== 1 ? "s" : ""} imported into ${targetTable}.`,
-                        });
-                      } catch (err: any) {
-                        useAppStore.getState().addToast({
-                          title: "Import Failed",
-                          description: String(err),
-                          variant: "destructive"
-                        });
-                      }
                     }
                   }}
                 >
@@ -1154,6 +1284,95 @@ export function ExplorerTree() {
             }));
           }}
         />
+      )}
+
+      {Object.keys(importJobs).length > 0 && (
+        <div className="pointer-events-none absolute inset-x-2 bottom-2 z-30 flex max-h-64 flex-col gap-2 overflow-y-auto">
+          {Object.values(importJobs)
+            .sort((left, right) => left.fileName.localeCompare(right.fileName))
+            .map((job) => {
+              const percent = Math.max(0, Math.min(100, Math.round(job.percent || 0)));
+              const toneClass =
+                job.phase === "error"
+                  ? "border-red-500/40 bg-red-500/10"
+                  : job.phase === "completed"
+                    ? "border-green-500/40 bg-green-500/10"
+                    : "border-primary/30 bg-background/95";
+
+              return (
+                <div
+                  key={job.jobId}
+                  className={cn(
+                    "pointer-events-auto rounded-lg border p-3 shadow-lg backdrop-blur",
+                    toneClass,
+                  )}
+                >
+                  <div className="mb-2 flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="text-[11px] font-semibold uppercase tracking-wide text-foreground">
+                        {job.kind.toUpperCase()} import
+                      </div>
+                      <div className="truncate text-[11px] text-muted-foreground">
+                        {job.targetLabel}
+                      </div>
+                    </div>
+                    {(job.phase === "completed" || job.phase === "error") && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setImportJobs((prev) => {
+                            const next = { ...prev };
+                            delete next[job.jobId];
+                            return next;
+                          })
+                        }
+                        className="rounded p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                        aria-label="Dismiss import summary"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="mb-2 h-2 overflow-hidden rounded-full bg-muted/40">
+                    <div
+                      className={cn(
+                        "h-full transition-[width]",
+                        job.phase === "error"
+                          ? "bg-red-400"
+                          : job.phase === "completed"
+                            ? "bg-green-400"
+                            : "bg-primary",
+                      )}
+                      style={{ width: `${job.phase === "error" ? percent : Math.max(percent, 4)}%` }}
+                    />
+                  </div>
+
+                  <div className="text-[11px] text-foreground">{job.message}</div>
+                  <div className="mt-1 flex flex-wrap items-center gap-2 text-[10px] text-muted-foreground">
+                    <span>{job.fileName}</span>
+                    {(job.rowsTotal > 0 || job.summary?.rowsAttempted) && (
+                      <span>
+                        Rows {job.summary?.rowsCommitted ?? job.rowsProcessed}/
+                        {job.summary?.rowsAttempted ?? job.rowsTotal}
+                      </span>
+                    )}
+                    {(job.itemsTotal > 0 || job.summary?.itemsAttempted) && (
+                      <span>
+                        Items {job.summary?.itemsCommitted ?? job.itemsProcessed}/
+                        {job.summary?.itemsAttempted ?? job.itemsTotal}
+                      </span>
+                    )}
+                    {job.summary && (
+                      <span>
+                        Skipped {job.summary.rowsSkipped}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+        </div>
       )}
     </div>
   );
@@ -1312,6 +1531,11 @@ const ProfileNode = memo(function ProfileNode({
 
       {isOpen && (
         <>
+          <SavedQueriesNode
+            profileId={profileId}
+            expanded={expanded}
+            toggle={toggle}
+          />
           {loading && (
             <TreeRow
               depth={1}
@@ -1353,6 +1577,109 @@ const ProfileNode = memo(function ProfileNode({
 });
 
 // ─── Database Node → single-click opens tab, expand loads tables ────
+
+const SavedQueriesNode = memo(function SavedQueriesNode({
+  profileId,
+  expanded,
+  toggle,
+}: {
+  profileId: string;
+  expanded: ExpandedSet;
+  toggle: (key: string) => void;
+}) {
+  const savedQueries = useSavedQueriesStore((s) => s.byProfile[profileId] ?? []);
+  const loading = useSavedQueriesStore((s) => s.loadingByProfile[profileId] ?? false);
+  const error = useSavedQueriesStore((s) => s.errorByProfile[profileId] ?? null);
+  const loadProfileQueries = useSavedQueriesStore((s) => s.loadProfileQueries);
+  const openTab = useLayoutStore((s) => s.openTab);
+
+  const nodeKey = `saved-queries-${profileId}`;
+  const isOpen = expanded[nodeKey] ?? true;
+
+  useEffect(() => {
+    if (isOpen) {
+      void loadProfileQueries(profileId);
+    }
+  }, [isOpen, loadProfileQueries, profileId]);
+
+  return (
+    <>
+      <TreeRow
+        depth={1}
+        isOpen={isOpen}
+        onChevronClick={() => toggle(nodeKey)}
+        onLabelClick={() => toggle(nodeKey)}
+        icon={<FileCode2 className="w-3.5 h-3.5 text-emerald-400/80" />}
+        label="Saved Queries"
+        badge={savedQueries.length > 0 ? String(savedQueries.length) : undefined}
+      />
+
+      {isOpen && (
+        <>
+          {loading && (
+            <TreeRow
+              depth={2}
+              icon={<Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />}
+              label="Loading saved queries..."
+              muted
+            />
+          )}
+          {error && (
+            <TreeRow
+              depth={2}
+              icon={<AlertCircle className="w-3 h-3 text-red-400" />}
+              label={error}
+              muted
+            />
+          )}
+          {!loading && !error && savedQueries.length === 0 && (
+            <TreeRow
+              depth={2}
+              icon={<FileCode2 className="w-3 h-3 text-muted-foreground/40" />}
+              label="No saved queries yet"
+              muted
+            />
+          )}
+          {savedQueries.map((query) => (
+            <TreeRow
+              key={query.id}
+              depth={2}
+              onLabelClick={() =>
+                openTab({
+                  title: query.name,
+                  type: "sql",
+                  meta: {
+                    profileId,
+                    database: query.database ?? "",
+                    savedQueryId: query.id,
+                    savedQueryPath: query.filePath,
+                    filePath: query.absolutePath,
+                  },
+                })
+              }
+              icon={<FileText className="w-3.5 h-3.5 text-primary/80" />}
+              label={query.name}
+              suffix={
+                <span className="ml-1 flex items-center gap-1 text-[10px] text-muted-foreground">
+                  {query.database && (
+                    <span className="rounded bg-muted/40 px-1 py-0.5 font-mono">
+                      {query.database}
+                    </span>
+                  )}
+                  {query.scheduleEnabled && query.scheduleMinutes && (
+                    <span className="rounded bg-primary/10 px-1 py-0.5 text-primary">
+                      {query.scheduleMinutes}m
+                    </span>
+                  )}
+                </span>
+              }
+            />
+          ))}
+        </>
+      )}
+    </>
+  );
+});
 
 const DatabaseNode = memo(function DatabaseNode({
   profileId,

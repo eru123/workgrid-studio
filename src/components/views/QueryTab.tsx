@@ -10,6 +10,7 @@ import { dbQuery, QueryResultSet } from "@/lib/db";
 import {
   highlightSQL,
   getActiveQueryRange,
+  getSqlStatementRanges,
   findMatchingBrackets,
 } from "@/lib/sqlHighlight";
 import {
@@ -25,6 +26,7 @@ import { useAppStore } from "@/state/appStore";
 import { useModelsStore } from "@/state/modelsStore";
 import { useProfilesStore } from "@/state/profilesStore";
 import { formatResultsTabTitle, useResultsStore } from "@/state/resultsStore";
+import { useSavedQueriesStore } from "@/state/savedQueriesStore";
 import { aiGenerateQuery, dbGetSchemaDdl } from "@/lib/db";
 import { ensureAiUseAllowed } from "@/lib/privacy";
 import { save, open } from "@tauri-apps/plugin-dialog";
@@ -87,12 +89,20 @@ interface Props {
   leafId: string;
   profileId: string;
   database?: string;
+  savedQueryId?: string;
+  savedQueryPath?: string;
+  savedQueryName?: string;
 }
 
 interface EditorEdit {
   value: string;
   selectionStart: number;
   selectionEnd: number;
+}
+
+interface EditorSelectionRange {
+  start: number;
+  end: number;
 }
 
 interface QueryResultSort {
@@ -110,6 +120,7 @@ const MIN_QUERY_FONT_SIZE_PX = 10;
 const MAX_QUERY_FONT_SIZE_PX = 24;
 const QUERY_RESULT_ROW_HEIGHT_PX = 30;
 const QUERY_RESULT_OVERSCAN_ROWS = 10;
+const EDITOR_INDENT = "  ";
 
 let sqlFormatterModulePromise:
   | Promise<typeof import("sql-formatter")>
@@ -308,6 +319,183 @@ function deleteSelectedLines(
   };
 }
 
+function indentSelectedLines(
+  value: string,
+  selectionStart: number,
+  selectionEnd: number,
+  direction: "indent" | "dedent",
+): EditorEdit {
+  const { lineStart, lineEndWithBreak } = getSelectedLineRange(
+    value,
+    selectionStart,
+    selectionEnd,
+  );
+  const selectedBlock = value.slice(lineStart, lineEndWithBreak);
+  const endsWithBreak = selectedBlock.endsWith("\n");
+  const lines = selectedBlock.split("\n");
+  const lastLineIndex = lines.length - 1;
+
+  const nextLines = lines.map((line, index) => {
+    const isTrailingEmptyLine = endsWithBreak && index === lastLineIndex;
+    if (isTrailingEmptyLine) return line;
+
+    if (direction === "indent") {
+      return `${EDITOR_INDENT}${line}`;
+    }
+
+    if (line.startsWith("\t")) return line.slice(1);
+    if (line.startsWith(EDITOR_INDENT)) return line.slice(EDITOR_INDENT.length);
+    if (line.startsWith(" ")) return line.replace(/^ {1,2}/, "");
+    return line;
+  });
+
+  const nextBlock = nextLines.join("\n");
+  const nextValue = `${value.slice(0, lineStart)}${nextBlock}${value.slice(lineEndWithBreak)}`;
+
+  return {
+    value: nextValue,
+    selectionStart: lineStart,
+    selectionEnd: lineStart + nextBlock.length,
+  };
+}
+
+function normalizeSelectionRange(range: EditorSelectionRange): EditorSelectionRange {
+  return {
+    start: Math.min(range.start, range.end),
+    end: Math.max(range.start, range.end),
+  };
+}
+
+function normalizeSelectionRanges(
+  ranges: EditorSelectionRange[],
+): EditorSelectionRange[] {
+  return ranges
+    .map(normalizeSelectionRange)
+    .sort((left, right) => left.start - right.start || left.end - right.end);
+}
+
+function mergeSelectionRanges(
+  ranges: EditorSelectionRange[],
+): EditorSelectionRange[] {
+  const normalized = normalizeSelectionRanges(ranges);
+  const merged: EditorSelectionRange[] = [];
+
+  normalized.forEach((range) => {
+    const previous = merged[merged.length - 1];
+    if (!previous || range.start > previous.end) {
+      merged.push({ ...range });
+      return;
+    }
+
+    previous.end = Math.max(previous.end, range.end);
+  });
+
+  return merged;
+}
+
+function getWordRangeAtPosition(
+  value: string,
+  position: number,
+): EditorSelectionRange | null {
+  if (!value) return null;
+
+  let start = position;
+  let end = position;
+  const isWordChar = (char: string | undefined) =>
+    !!char && /[A-Za-z0-9_$]/.test(char);
+
+  while (start > 0 && isWordChar(value[start - 1])) {
+    start -= 1;
+  }
+
+  while (end < value.length && isWordChar(value[end])) {
+    end += 1;
+  }
+
+  return start === end ? null : { start, end };
+}
+
+function findNextSelectionOccurrence(
+  value: string,
+  selectedText: string,
+  ranges: EditorSelectionRange[],
+): EditorSelectionRange | null {
+  if (!selectedText) return null;
+
+  const normalized = normalizeSelectionRanges(ranges);
+  const selectedKeys = new Set(
+    normalized.map((range) => `${range.start}:${range.end}`),
+  );
+  const searchOffsets = [
+    normalized[normalized.length - 1]?.end ?? 0,
+    0,
+  ];
+
+  for (const startOffset of searchOffsets) {
+    let index = value.indexOf(selectedText, startOffset);
+    while (index !== -1) {
+      const candidate = {
+        start: index,
+        end: index + selectedText.length,
+      };
+      if (!selectedKeys.has(`${candidate.start}:${candidate.end}`)) {
+        return candidate;
+      }
+      index = value.indexOf(selectedText, index + selectedText.length);
+    }
+  }
+
+  return null;
+}
+
+function replaceSelectionRanges(
+  value: string,
+  ranges: EditorSelectionRange[],
+  replacement: string,
+): { value: string; ranges: EditorSelectionRange[] } {
+  const normalized = normalizeSelectionRanges(ranges);
+  let cursor = 0;
+  let nextValue = "";
+  const nextRanges: EditorSelectionRange[] = [];
+
+  normalized.forEach((range) => {
+    nextValue += value.slice(cursor, range.start);
+    nextValue += replacement;
+    const caretPos = nextValue.length;
+    nextRanges.push({ start: caretPos, end: caretPos });
+    cursor = range.end;
+  });
+
+  nextValue += value.slice(cursor);
+
+  return {
+    value: nextValue,
+    ranges: nextRanges,
+  };
+}
+
+function getDeletionRanges(
+  value: string,
+  ranges: EditorSelectionRange[],
+  direction: "backward" | "forward",
+): EditorSelectionRange[] {
+  const expanded = normalizeSelectionRanges(ranges).flatMap((range) => {
+    if (range.start !== range.end) {
+      return [range];
+    }
+
+    if (direction === "backward") {
+      if (range.start === 0) return [];
+      return [{ start: range.start - 1, end: range.end }];
+    }
+
+    if (range.end >= value.length) return [];
+    return [{ start: range.start, end: range.end + 1 }];
+  });
+
+  return mergeSelectionRanges(expanded);
+}
+
 function sortQueryGridRows(
   result: QueryResultSet | null,
   sort: QueryResultSort | undefined,
@@ -344,6 +532,9 @@ export function QueryTab({
   leafId,
   profileId,
   database: initialDatabase,
+  savedQueryId,
+  savedQueryPath,
+  savedQueryName,
 }: Props) {
   // ── State ──────────────────────────────────────────────────
   const [sql, setSql] = useState("");
@@ -363,6 +554,9 @@ export function QueryTab({
   );
   const [cursorPos, setCursorPos] = useState(0);
   const [selectedCharCount, setSelectedCharCount] = useState(0);
+  const [multiCursorSelections, setMultiCursorSelections] = useState<
+    EditorSelectionRange[]
+  >([]);
   const [visibleRowCounts, setVisibleRowCounts] = useState<Record<number, number>>(
     {},
   );
@@ -377,6 +571,12 @@ export function QueryTab({
   const [textareaContentWidth, setTextareaContentWidth] = useState(0);
   const [isFormatting, setIsFormatting] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
+  const [showSaveQueryModal, setShowSaveQueryModal] = useState(false);
+  const [savedQueryNameDraft, setSavedQueryNameDraft] = useState(
+    savedQueryName ?? "",
+  );
+  const [savedQueryScheduleDraft, setSavedQueryScheduleDraft] = useState("off");
+  const [isSavingSavedQuery, setIsSavingSavedQuery] = useState(false);
   const [resultViewport, setResultViewport] = useState({
     scrollTop: 0,
     clientHeight: 1,
@@ -451,6 +651,7 @@ export function QueryTab({
     start: number;
     end: number;
   } | null>(null);
+  const preserveMultiCursorRef = useRef(false);
 
   const getResultColWidth = useCallback(
     (resultIndex: number, colIdx: number) => colWidths[`${resultIndex}:${colIdx}`],
@@ -523,6 +724,12 @@ export function QueryTab({
   const openTab = useLayoutStore((s) => s.openTab);
   const updateTab = useLayoutStore((s) => s.updateTab);
   const setResultSnapshot = useResultsStore((s) => s.setSnapshot);
+  const saveSavedQuery = useSavedQueriesStore((s) => s.saveQuery);
+  const readSavedQueryText = useSavedQueriesStore((s) => s.readQueryText);
+  const loadProfileSavedQueries = useSavedQueriesStore((s) => s.loadProfileQueries);
+  const savedQueries = useSavedQueriesStore(
+    (s) => s.byProfile[selectedProfileId || profileId] ?? [],
+  );
   const aiBlocked = useProfilesStore(
     (s) => s.globalPreferences.blockAiRequests ?? false,
   );
@@ -540,10 +747,18 @@ export function QueryTab({
 
   const [selectedProfileId, setSelectedProfileId] = useState(profileId);
   const [selectedDb, setSelectedDb] = useState(initialDatabase ?? "");
+  const loadedSavedQueryPathRef = useRef<string | null>(null);
 
   const profileIds = useMemo(
     () => Object.keys(connectedProfiles),
     [connectedProfiles],
+  );
+  const currentSavedQuery = useMemo(
+    () =>
+      savedQueryId
+        ? savedQueries.find((entry) => entry.id === savedQueryId) ?? null
+        : null,
+    [savedQueries, savedQueryId],
   );
 
   // Auto-update server selection if disconnected or initially empty
@@ -648,6 +863,46 @@ export function QueryTab({
     }
   }, [databases, selectedDb, hasDbSelectionHistory]);
 
+  useEffect(() => {
+    if (!showSaveQueryModal) return;
+
+    setSavedQueryNameDraft(
+      currentSavedQuery?.name ?? savedQueryName ?? currentSavedQuery?.name ?? "",
+    );
+    setSavedQueryScheduleDraft(
+      currentSavedQuery?.scheduleEnabled && currentSavedQuery.scheduleMinutes
+        ? String(currentSavedQuery.scheduleMinutes)
+        : "off",
+    );
+  }, [currentSavedQuery, savedQueryName, showSaveQueryModal]);
+
+  useEffect(() => {
+    if (!savedQueryPath || loadedSavedQueryPathRef.current === savedQueryPath) {
+      return;
+    }
+
+    loadedSavedQueryPathRef.current = savedQueryPath;
+
+    readSavedQueryText(savedQueryPath)
+      .then((contents) => {
+        if (!contents.trim()) return;
+        setSql(contents);
+        setLastSavedSql(contents);
+      })
+      .catch((err) => {
+        useAppStore.getState().addToast({
+          title: "Saved Query Load Failed",
+          description: String(err),
+          variant: "destructive",
+        });
+      });
+  }, [readSavedQueryText, savedQueryPath]);
+
+  useEffect(() => {
+    if (!savedQueryId) return;
+    void loadProfileSavedQueries(selectedProfileId || profileId);
+  }, [loadProfileSavedQueries, profileId, savedQueryId, selectedProfileId]);
+
   // Sync state to layout tab metadata
   useEffect(() => {
     if (tabId && selectedProfileId) {
@@ -656,10 +911,24 @@ export function QueryTab({
           profileId: selectedProfileId,
           profileName: connectedProfiles[selectedProfileId]?.name || "Server",
           database: selectedDb,
+          savedQueryId: savedQueryId ?? currentSavedQuery?.id ?? "",
+          savedQueryPath: savedQueryPath ?? currentSavedQuery?.filePath ?? "",
+          filePath: currentSavedQuery?.absolutePath ?? "",
         },
       });
     }
-  }, [selectedProfileId, selectedDb, tabId, updateTab, connectedProfiles]);
+  }, [
+    connectedProfiles,
+    currentSavedQuery?.absolutePath,
+    currentSavedQuery?.filePath,
+    currentSavedQuery?.id,
+    savedQueryId,
+    savedQueryPath,
+    selectedDb,
+    selectedProfileId,
+    tabId,
+    updateTab,
+  ]);
 
   const handleSave = useCallback(async () => {
     if (!sql.trim()) return;
@@ -720,6 +989,73 @@ export function QueryTab({
   }, [tabId, updateTab]);
 
   // ── Find Logic ──────────────────────────────────────────
+  const handleSaveSavedQuery = useCallback(async () => {
+    const trimmedName = savedQueryNameDraft.trim();
+    if (!trimmedName) {
+      useAppStore.getState().addToast({
+        title: "Saved Query Name Required",
+        description: "Enter a name before saving this query.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const scheduleMinutes =
+      savedQueryScheduleDraft === "off"
+        ? null
+        : Number(savedQueryScheduleDraft);
+
+    setIsSavingSavedQuery(true);
+
+    try {
+      const entry = await saveSavedQuery({
+        profileId: selectedProfileId || profileId,
+        name: trimmedName,
+        sql,
+        database: selectedDb || undefined,
+        scheduleMinutes,
+        existingId: savedQueryId ?? currentSavedQuery?.id,
+      });
+
+      updateTab(tabId, {
+        title: entry.name,
+        meta: {
+          profileId: selectedProfileId || profileId,
+          database: entry.database ?? "",
+          savedQueryId: entry.id,
+          savedQueryPath: entry.filePath,
+          filePath: entry.absolutePath,
+        },
+      });
+      setShowSaveQueryModal(false);
+
+      useAppStore.getState().addToast({
+        title: currentSavedQuery ? "Saved Query Updated" : "Saved Query Created",
+        description: `${entry.name} is now available in Explorer > Saved Queries.`,
+      });
+    } catch (error) {
+      useAppStore.getState().addToast({
+        title: "Saved Query Failed",
+        description: String(error),
+        variant: "destructive",
+      });
+    } finally {
+      setIsSavingSavedQuery(false);
+    }
+  }, [
+    currentSavedQuery,
+    profileId,
+    saveSavedQuery,
+    savedQueryId,
+    savedQueryNameDraft,
+    savedQueryScheduleDraft,
+    selectedDb,
+    selectedProfileId,
+    sql,
+    tabId,
+    updateTab,
+  ]);
+
   useEffect(() => {
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f") {
@@ -1727,6 +2063,20 @@ export function QueryTab({
     // padding-top of textarea is 12px (p-3)
     return (activeLine - 1) * editorLineHeight + 12;
   }, [activeLine, editorLineHeight]);
+  const statementSeparatorOffsets = useMemo(() => {
+    if (wordWrap) return [];
+
+    return getSqlStatementRanges(sql)
+      .filter((range) => range.text.trim().length > 0)
+      .slice(1)
+      .map((range) => {
+        const lineNumber = sql.slice(0, range.start).split("\n").length;
+        return {
+          key: range.start,
+          top: (lineNumber - 1) * editorLineHeight + 12 - editorViewport.scrollTop - 4,
+        };
+      });
+  }, [editorLineHeight, editorViewport.scrollTop, sql, wordWrap]);
 
   const syncEditorMetrics = useCallback((textarea: HTMLTextAreaElement) => {
     setCursorPos(textarea.selectionStart);
@@ -1765,6 +2115,139 @@ export function QueryTab({
       setSql(edit.value);
     },
     [setEditorSelection],
+  );
+
+  const applyMultiCursorEdit = useCallback(
+    (
+      result: { value: string; ranges: EditorSelectionRange[] },
+      currentValue: string,
+    ) => {
+      const nextRanges = normalizeSelectionRanges(result.ranges);
+      const activeRange = nextRanges[nextRanges.length - 1] ?? {
+        start: 0,
+        end: 0,
+      };
+
+      preserveMultiCursorRef.current = true;
+      setMultiCursorSelections(nextRanges);
+      applyEditorEdit(
+        {
+          value: result.value,
+          selectionStart: activeRange.start,
+          selectionEnd: activeRange.end,
+        },
+        currentValue,
+      );
+    },
+    [applyEditorEdit],
+  );
+
+  const handleSelectNextOccurrence = useCallback(
+    (value: string, selectionStart: number, selectionEnd: number) => {
+      let ranges = multiCursorSelections;
+
+      if (ranges.length === 0) {
+        const initialRange =
+          selectionStart === selectionEnd
+            ? getWordRangeAtPosition(value, selectionStart)
+            : normalizeSelectionRange({
+                start: selectionStart,
+                end: selectionEnd,
+              });
+
+        if (!initialRange) return;
+
+        setMultiCursorSelections([initialRange]);
+        setEditorSelection(initialRange.start, initialRange.end);
+
+        if (selectionStart === selectionEnd) {
+          return;
+        }
+
+        ranges = [initialRange];
+      }
+
+      const selectedText = value.slice(ranges[0].start, ranges[0].end);
+      if (!selectedText || selectedText.includes("\n")) return;
+
+      const nextRange = findNextSelectionOccurrence(value, selectedText, ranges);
+      if (!nextRange) return;
+
+      const nextRanges = normalizeSelectionRanges([...ranges, nextRange]);
+      setMultiCursorSelections(nextRanges);
+      setEditorSelection(nextRange.start, nextRange.end);
+    },
+    [multiCursorSelections, setEditorSelection],
+  );
+
+  const handleEditorBeforeInput = useCallback(
+    (e: React.FormEvent<HTMLTextAreaElement>) => {
+      if (multiCursorSelections.length < 2) return;
+
+      const nativeEvent = e.nativeEvent as InputEvent;
+      const currentValue = e.currentTarget.value;
+
+      if (nativeEvent.inputType === "deleteContentBackward") {
+        e.preventDefault();
+        const deletionRanges = getDeletionRanges(
+          currentValue,
+          multiCursorSelections,
+          "backward",
+        );
+        if (deletionRanges.length === 0) return;
+        applyMultiCursorEdit(
+          replaceSelectionRanges(currentValue, deletionRanges, ""),
+          currentValue,
+        );
+        return;
+      }
+
+      if (nativeEvent.inputType === "deleteContentForward") {
+        e.preventDefault();
+        const deletionRanges = getDeletionRanges(
+          currentValue,
+          multiCursorSelections,
+          "forward",
+        );
+        if (deletionRanges.length === 0) return;
+        applyMultiCursorEdit(
+          replaceSelectionRanges(currentValue, deletionRanges, ""),
+          currentValue,
+        );
+        return;
+      }
+
+      let replacement: string | null = null;
+      if (nativeEvent.inputType === "insertLineBreak" || nativeEvent.inputType === "insertParagraph") {
+        replacement = "\n";
+      } else if (nativeEvent.inputType === "insertText") {
+        replacement = nativeEvent.data ?? "";
+      }
+
+      if (replacement === null) return;
+
+      e.preventDefault();
+      applyMultiCursorEdit(
+        replaceSelectionRanges(currentValue, multiCursorSelections, replacement),
+        currentValue,
+      );
+    },
+    [applyMultiCursorEdit, multiCursorSelections],
+  );
+
+  const handleEditorPaste = useCallback(
+    (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+      if (multiCursorSelections.length < 2) return;
+
+      e.preventDefault();
+      const currentValue = e.currentTarget.value;
+      const pastedText = e.clipboardData.getData("text");
+      applyMultiCursorEdit(
+        replaceSelectionRanges(currentValue, multiCursorSelections, pastedText),
+        currentValue,
+      );
+    },
+    [applyMultiCursorEdit, multiCursorSelections],
   );
 
   // ── Autocomplete helpers ──────────────────────────────────
@@ -1897,6 +2380,17 @@ export function QueryTab({
   }, [sql, setEditorSelection]);
 
   useEffect(() => {
+    if (preserveMultiCursorRef.current) {
+      preserveMultiCursorRef.current = false;
+      return;
+    }
+
+    if (multiCursorSelections.length > 0) {
+      setMultiCursorSelections([]);
+    }
+  }, [multiCursorSelections.length, sql]);
+
+  useEffect(() => {
     const textarea = editorRef.current;
     if (!textarea) return;
     syncEditorMetrics(textarea);
@@ -1942,6 +2436,18 @@ export function QueryTab({
   const handleEditorSelectionChange = useCallback(
     (e: React.SyntheticEvent<HTMLTextAreaElement>) => {
       syncEditorMetrics(e.currentTarget);
+      const selectionStart = e.currentTarget.selectionStart;
+      const selectionEnd = e.currentTarget.selectionEnd;
+
+      setMultiCursorSelections((prev) => {
+        if (prev.length === 0) return prev;
+        return prev.some(
+          (range) =>
+            range.start === selectionStart && range.end === selectionEnd,
+        )
+          ? prev
+          : [];
+      });
     },
     [syncEditorMetrics],
   );
@@ -2030,6 +2536,45 @@ export function QueryTab({
         updateAutocomplete(editorValue, selectionStart, true);
         return;
       }
+
+      if (!modKey && !e.altKey && e.key === "Tab") {
+        e.preventDefault();
+
+        if (multiCursorSelections.length > 1 && !e.shiftKey) {
+          applyMultiCursorEdit(
+            replaceSelectionRanges(
+              editorValue,
+              multiCursorSelections,
+              EDITOR_INDENT,
+            ),
+            editorValue,
+          );
+          return;
+        }
+
+        if (selectionStart !== selectionEnd || e.shiftKey) {
+          const edit = indentSelectedLines(
+            editorValue,
+            selectionStart,
+            selectionEnd,
+            e.shiftKey ? "dedent" : "indent",
+          );
+          applyEditorEdit(edit, editorValue);
+          return;
+        }
+
+        const nextValue = `${editorValue.slice(0, selectionStart)}${EDITOR_INDENT}${editorValue.slice(selectionEnd)}`;
+        applyEditorEdit(
+          {
+            value: nextValue,
+            selectionStart: selectionStart + EDITOR_INDENT.length,
+            selectionEnd: selectionStart + EDITOR_INDENT.length,
+          },
+          editorValue,
+        );
+        return;
+      }
+
       const isIncreaseFontShortcut =
         modKey &&
         e.shiftKey &&
@@ -2070,11 +2615,24 @@ export function QueryTab({
         return;
       }
 
+      if (modKey && lowered === "d") {
+        e.preventDefault();
+        handleSelectNextOccurrence(editorValue, selectionStart, selectionEnd);
+        return;
+      }
+
       if ((modKey && e.key === "Enter") || e.key === "F5") {
         e.preventDefault();
         handleRun();
         return;
       }
+
+      if (e.key === "Escape" && multiCursorSelections.length > 0 && !running) {
+        e.preventDefault();
+        setMultiCursorSelections([]);
+        return;
+      }
+
       if (e.key === "Escape" && running) {
         e.preventDefault();
         handleStop();
@@ -2177,12 +2735,15 @@ export function QueryTab({
       acVisible,
       activeColumn,
       activeLine,
+      applyMultiCursorEdit,
       applyEditorEdit,
       dismissAutocomplete,
       handleAcceptSuggestion,
       handleRun,
       handleRunSelected,
+      handleSelectNextOccurrence,
       handleStop,
+      multiCursorSelections,
       running,
       setEditorSelection,
       updateAutocomplete,
@@ -2322,6 +2883,14 @@ export function QueryTab({
           onClick={handleSave}
           disabled={running || !sql.trim()}
           active={false}
+        />
+        <ToolBtn
+          icon={<FileText className="w-4 h-4" />}
+          title="Save as a named query"
+          onClick={() => setShowSaveQueryModal(true)}
+          disabled={running || !sql.trim()}
+          active={!!(savedQueryId ?? currentSavedQuery)}
+          label="Save Query"
         />
 
         <div className="w-px h-5 bg-border mx-1" />
@@ -2643,10 +3212,18 @@ export function QueryTab({
                 style={{
                   top: `${activeLineTopPx - editorViewport.scrollTop}px`,
                   height: `${editorLineHeight}px`,
-                  backgroundColor: "rgba(255,255,255,0.04)",
+                  backgroundColor: "rgba(0, 120, 212, 0.08)",
                 }}
               />
             )}
+            {!wordWrap &&
+              statementSeparatorOffsets.map((separator) => (
+                <div
+                  key={separator.key}
+                  className="absolute left-3 right-3 h-px bg-border/80 pointer-events-none z-0"
+                  style={{ top: `${separator.top}px` }}
+                />
+              ))}
             {/* Syntax highlight overlay (behind the textarea) */}
             <div
               ref={highlightRef}
@@ -2679,7 +3256,9 @@ export function QueryTab({
               onSelect={handleEditorSelectionChange}
               onKeyUp={handleEditorSelectionChange}
               onClick={handleEditorSelectionChange}
+              onBeforeInput={handleEditorBeforeInput}
               onKeyDown={handleKeyDown}
+              onPaste={handleEditorPaste}
               className={cn(
                 "w-full h-full bg-transparent resize-none outline-none text-transparent font-mono p-3 relative z-1 caret-white placeholder:text-muted-foreground/30",
                 wordWrap
@@ -2708,6 +3287,18 @@ export function QueryTab({
             <div className="absolute top-2 right-4 text-[10px] text-muted-foreground/40 select-none uppercase tracking-wider pointer-events-none z-2">
               SQL
             </div>
+            {multiCursorSelections.length > 1 && (
+              <div className="absolute top-2 left-3 z-10 rounded border bg-background/90 px-2 py-1 text-[10px] text-muted-foreground shadow-sm">
+                {multiCursorSelections.length} cursors
+              </div>
+            )}
+            {executionTime !== null && !running && (
+              <div className="absolute bottom-2 right-3 z-10 rounded border bg-background/90 px-2 py-1 text-[10px] text-muted-foreground shadow-sm pointer-events-none">
+                {executionTime < 1000
+                  ? `${Math.round(executionTime)}ms`
+                  : `${(executionTime / 1000).toFixed(2)}s`}
+              </div>
+            )}
             {/* Autocomplete popup */}
             <SqlAutocomplete
               suggestions={acSuggestions}
@@ -3193,6 +3784,74 @@ export function QueryTab({
       </div>
 
       {/* ─── Ask AI Overlay Modal ────────────────────── */}
+      {showSaveQueryModal && (
+        <div className="absolute inset-0 z-50 flex min-h-0 items-center justify-center bg-background/80 p-4 backdrop-blur-sm">
+          <div className="flex w-full max-w-md flex-col overflow-hidden rounded-lg border bg-popover shadow-lg">
+            <div className="flex items-center gap-2 border-b bg-muted/30 px-4 py-3">
+              <FileText className="h-4 w-4 text-primary" />
+              <h3 className="text-[13px] font-medium text-foreground">
+                {currentSavedQuery ? "Update Saved Query" : "Save Query"}
+              </h3>
+            </div>
+            <div className="flex flex-col gap-3 p-4">
+              <label className="flex flex-col gap-1 text-[11px] font-medium text-foreground">
+                Query name
+                <input
+                  autoFocus
+                  value={savedQueryNameDraft}
+                  onChange={(e) => setSavedQueryNameDraft(e.target.value)}
+                  placeholder="Monthly sales audit"
+                  className="h-9 rounded border bg-background px-3 text-xs font-normal outline-none transition-colors focus:border-primary"
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-[11px] font-medium text-foreground">
+                Database
+                <input
+                  value={selectedDb}
+                  readOnly
+                  className="h-9 rounded border bg-muted/20 px-3 text-xs font-normal text-muted-foreground"
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-[11px] font-medium text-foreground">
+                Schedule
+                <select
+                  value={savedQueryScheduleDraft}
+                  onChange={(e) => setSavedQueryScheduleDraft(e.target.value)}
+                  className="h-9 rounded border bg-background px-3 text-xs font-normal outline-none transition-colors focus:border-primary"
+                >
+                  <option value="off">Off</option>
+                  <option value="5">Every 5 minutes</option>
+                  <option value="15">Every 15 minutes</option>
+                  <option value="30">Every 30 minutes</option>
+                  <option value="60">Every hour</option>
+                </select>
+              </label>
+              <p className="text-[10px] text-muted-foreground">
+                Saved queries appear in Explorer under this connection. Scheduled runs execute only while the app is open and the profile is connected.
+              </p>
+            </div>
+            <div className="flex justify-end gap-2 border-t bg-muted/20 px-4 py-3">
+              <button
+                type="button"
+                onClick={() => setShowSaveQueryModal(false)}
+                disabled={isSavingSavedQuery}
+                className="rounded bg-secondary px-3 py-1.5 font-medium text-foreground transition-colors hover:bg-secondary/80 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveSavedQuery}
+                disabled={isSavingSavedQuery || !sql.trim()}
+                className="flex items-center gap-1.5 rounded bg-primary px-3 py-1.5 font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
+              >
+                {isSavingSavedQuery && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                Save Query
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {isAiModalOpen && (
         <div className="absolute inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4 min-h-0">
           <div className="bg-popover border shadow-lg rounded-lg flex flex-col w-full max-w-lg overflow-hidden animate-in fade-in zoom-in-95 duration-200">
