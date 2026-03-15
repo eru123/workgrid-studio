@@ -14,6 +14,12 @@ function getSessionKey(profileId: string, database: string, tableName: string) {
 import { dbQuery, dbExecuteQuery, dbListColumns } from "@/lib/db";
 import type { ColumnInfo, QueryResultSet } from "@/lib/db";
 import { cn } from "@/lib/utils/cn";
+import {
+  getCanvasFontFromElement,
+  getDataGridCellText,
+  isEditableTarget,
+  measureDataGridColumnWidth,
+} from "@/lib/utils/dataGrid";
 import { useAppStore } from "@/state/appStore";
 import { useSchemaStore } from "@/state/schemaStore";
 import { useProfilesStore } from "@/state/profilesStore";
@@ -388,6 +394,10 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
   const [cellContextMenu, setCellContextMenu] = useState<{
     x: number; y: number; rowIdx: number; colName: string; value: string | number | null;
   } | null>(null);
+  const shouldHandleTableGridKeys = useCallback((target: EventTarget | null) => {
+    if (isEditableTarget(target)) return false;
+    return target instanceof HTMLElement && target.id.startsWith("cell-");
+  }, []);
 
   // ── Fetch column metadata ───────────────────────────────
   useEffect(() => {
@@ -549,6 +559,27 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
     [effectiveColumns, hiddenColumns],
   );
 
+  const autoFitColumn = useCallback((colName: string, headerCell: HTMLTableCellElement | null) => {
+    const colIdx = columns.indexOf(colName);
+    if (colIdx === -1) return;
+
+    const width = measureDataGridColumnWidth({
+      headerText: colName,
+      values: [
+        ...rows.map((row) => row[colIdx]),
+        ...addedRows.map((row) => row[colName] ?? null),
+      ],
+      headerFont: getCanvasFontFromElement(
+        headerCell,
+        '500 11px "Segoe UI", -apple-system, BlinkMacSystemFont, sans-serif',
+      ),
+      minWidth: 80,
+      maxWidth: 560,
+    });
+
+    setColWidths((prev) => ({ ...prev, [colName]: width }));
+  }, [addedRows, columns, rows]);
+
   // ── Filter handlers ─────────────────────────────────────
   const applyFilter = useCallback(() => {
     setAppliedWhere(whereClause);
@@ -612,7 +643,10 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      const gridFocused = shouldHandleTableGridKeys(e.target);
+
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "c" && selectedCellKey) {
+        if (!gridFocused) return;
         const colonIdx = selectedCellKey.indexOf(":");
         const rowIdx = Number(selectedCellKey.slice(0, colonIdx));
         const colName = selectedCellKey.slice(colonIdx + 1);
@@ -620,12 +654,14 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
         const row = rows[rowIdx];
         if (!row) return;
         const val = colIdx >= 0 ? row[colIdx] : null;
-        navigator.clipboard.writeText(val === null ? "NULL" : String(val)).catch(() => {});
+        navigator.clipboard
+          .writeText(getDataGridCellText(val))
+          .catch(() => {});
         return;
       }
 
       // Arrow key / Tab navigation
-      if (!selectedCellKey) return;
+      if (!gridFocused || !selectedCellKey) return;
       const isArrow = ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key);
       const isTab = e.key === "Tab";
       if (!isArrow && !isTab) return;
@@ -660,7 +696,7 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [selectedCellKey, columns, rows, visibleColumns]);
+  }, [selectedCellKey, columns, rows, shouldHandleTableGridKeys, visibleColumns]);
 
   useEffect(() => {
     if (!selectedCellKey) return;
@@ -728,8 +764,9 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
 
   const copyCellContextValue = useCallback(() => {
     if (!cellContextMenu) return;
-    const text = cellContextMenu.value === null ? "NULL" : String(cellContextMenu.value);
-    navigator.clipboard.writeText(text).catch(() => {});
+    navigator.clipboard
+      .writeText(getDataGridCellText(cellContextMenu.value))
+      .catch(() => {});
   }, [cellContextMenu]);
 
   const copyRowValues = useCallback(() => {
@@ -740,7 +777,7 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
       .map((col) => {
         const idx = columns.indexOf(col);
         const val = idx >= 0 ? row[idx] : null;
-        return val === null ? "NULL" : String(val);
+        return getDataGridCellText(val);
       })
       .join("\t");
     navigator.clipboard.writeText(text).catch(() => {});
@@ -752,7 +789,7 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
     const text = rows
       .map((row) => {
         const val = colIdx >= 0 ? row[colIdx] : null;
-        return val === null ? "NULL" : String(val);
+        return getDataGridCellText(val);
       })
       .join("\n");
     navigator.clipboard.writeText(text).catch(() => {});
@@ -1346,6 +1383,7 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
                       }}
                       width={colWidths[col]}
                       onResize={(w) => setColWidths(prev => ({ ...prev, [col]: w }))}
+                      onAutoFit={(headerCell) => autoFitColumn(col, headerCell)}
                       frozen={isFrozen}
                       frozenLeft={colLeft}
                       ariaColIndex={colOrder + 3}
@@ -1380,6 +1418,7 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
                 columns={effectiveColumns}
                 visibleColumns={visibleColumns}
                 columnInfos={columnInfos}
+                colWidths={colWidths}
                 onEditCell={(colName, val) => {
                   setAddedRows(prev => {
                     const next = [...prev];
@@ -1514,6 +1553,7 @@ const SortableHeader = memo(function SortableHeader({
   onFilter,
   width,
   onResize,
+  onAutoFit,
   frozen,
   frozenLeft,
   ariaColIndex,
@@ -1528,6 +1568,7 @@ const SortableHeader = memo(function SortableHeader({
   onFilter: (val: string) => void;
   width?: number;
   onResize?: (w: number) => void;
+  onAutoFit?: (headerCell: HTMLTableCellElement | null) => void;
   frozen?: boolean;
   frozenLeft?: number;
   ariaColIndex: number;
@@ -1571,6 +1612,13 @@ const SortableHeader = memo(function SortableHeader({
       ref={thRef}
       role="columnheader"
       aria-colindex={ariaColIndex}
+      aria-sort={
+        sortDirection === "ASC"
+          ? "ascending"
+          : sortDirection === "DESC"
+            ? "descending"
+            : "none"
+      }
       className={cn(
         "text-left px-1.5 py-1.5 text-[10px] font-medium tracking-wider border-b border-r bg-muted/70 whitespace-nowrap select-none group relative",
         sortDirection && "bg-primary/10",
@@ -1686,6 +1734,12 @@ const SortableHeader = memo(function SortableHeader({
       <div
         className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-primary/40 active:bg-primary/60 z-20 opacity-0 group-hover:opacity-100 transition-opacity"
         onMouseDown={handleResizeMouseDown}
+        onDoubleClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          onAutoFit?.(thRef.current);
+        }}
+        title="Drag to resize, double-click to auto-fit"
       />
     </th>
   );
@@ -1697,6 +1751,7 @@ const NewDataRow = memo(function NewDataRow({
   rowIndexAria,
   visibleColumns,
   columnInfos,
+  colWidths,
   onEditCell,
   isCurrentMatch,
   hasMatch,
@@ -1707,6 +1762,7 @@ const NewDataRow = memo(function NewDataRow({
   columns: string[];
   visibleColumns: string[];
   columnInfos: ColumnInfo[];
+  colWidths?: Record<string, number>;
   onEditCell: (colName: string, val: string | null) => void;
   isCurrentMatch?: (colName: string) => boolean;
   hasMatch?: (colName: string) => boolean;
@@ -1742,6 +1798,7 @@ const NewDataRow = memo(function NewDataRow({
             onSave={(val) => onEditCell(col, val)}
             isMatch={hasMatch?.(col)}
             isCurrent={isCurrentMatch?.(col)}
+            width={colWidths?.[col]}
           />
         );
       })}
@@ -1852,6 +1909,7 @@ const DataRow = memo(function DataRow({
               onCellContextMenu={(e) => onCellContextMenu?.(e, col, value ?? null)}
               frozen={isFrozen}
               frozenLeft={colLeft}
+              width={colWidths?.[col]}
             />
           );
         });
@@ -1875,6 +1933,7 @@ const EditableCell = memo(function EditableCell({
   onCellContextMenu,
   frozen,
   frozenLeft,
+  width,
 }: {
   cellId?: string;
   ariaColIndex: number;
@@ -1890,6 +1949,7 @@ const EditableCell = memo(function EditableCell({
   onCellContextMenu?: (e: React.MouseEvent) => void;
   frozen?: boolean;
   frozenLeft?: number;
+  width?: number;
 }) {
   const [isEditing, setIsEditing] = useState(false);
   const [localValue, setLocalValue] = useState<string>(value === null ? "" : String(value));
@@ -1919,7 +1979,10 @@ const EditableCell = memo(function EditableCell({
     }
   };
 
-  const stickyStyle = frozen && frozenLeft !== undefined ? { left: frozenLeft } : undefined;
+  const stickyStyle = {
+    ...(frozen && frozenLeft !== undefined ? { left: frozenLeft } : undefined),
+    ...(width ? { width, minWidth: width, maxWidth: width } : undefined),
+  };
   const stickyClass = frozen ? "sticky z-10 shadow-[2px_0_4px_rgba(0,0,0,0.08)]" : undefined;
 
   if (isEditing) {
@@ -1971,12 +2034,20 @@ const EditableCell = memo(function EditableCell({
       }}
       onDoubleClick={() => setIsEditing(true)}
       onContextMenu={onCellContextMenu}
-      title={value === null ? "NULL" : String(value)}
+      title={getDataGridCellText(value)}
     >
       {value === null ? (
         <span className="text-muted-foreground/30 italic">NULL</span>
       ) : (
-        String(value)
+        <div
+          className={cn(
+            "overflow-hidden text-ellipsis whitespace-nowrap",
+            isNumeric && "text-right",
+          )}
+          style={{ maxWidth: width ? Math.max(width - 16, 64) : 280 }}
+        >
+          {String(value)}
+        </div>
       )}
       {isEdited && (
         <div className="absolute top-0 right-0 w-0 h-0 border-t-[4px] border-t-orange-500 border-l-[4px] border-l-transparent" />

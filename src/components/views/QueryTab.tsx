@@ -24,6 +24,7 @@ import { useLayoutStore } from "@/state/layoutStore";
 import { useAppStore } from "@/state/appStore";
 import { useModelsStore } from "@/state/modelsStore";
 import { useProfilesStore } from "@/state/profilesStore";
+import { formatResultsTabTitle, useResultsStore } from "@/state/resultsStore";
 import { aiGenerateQuery, dbGetSchemaDdl } from "@/lib/db";
 import { ensureAiUseAllowed } from "@/lib/privacy";
 import { save, open } from "@tauri-apps/plugin-dialog";
@@ -55,11 +56,27 @@ import {
   Star,
   X,
   Search,
+  ChevronUp,
+  ChevronDown,
+  ChevronsUpDown,
 } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
+import {
+  compareDataGridValues,
+  getCanvasFontFromElement,
+  getDataGridCellText,
+  inferNumericDataGridColumn,
+  isEditableTarget,
+  measureDataGridColumnWidth,
+} from "@/lib/utils/dataGrid";
 import { FindToolbar } from "@/components/ui/FindToolbar";
 import { CellContextMenu } from "@/components/ui/CellContextMenu";
 import { Skeleton } from "@/components/ui/Skeleton";
+import {
+  ExplainPlanView,
+  type ExplainMode,
+  type ExplainResultPayload,
+} from "@/components/views/ExplainPlanView";
 
 // ═══════════════════════════════════════════════════════════════════════
 //  Types
@@ -67,6 +84,7 @@ import { Skeleton } from "@/components/ui/Skeleton";
 
 interface Props {
   tabId: string;
+  leafId: string;
   profileId: string;
   database?: string;
 }
@@ -75,6 +93,16 @@ interface EditorEdit {
   value: string;
   selectionStart: number;
   selectionEnd: number;
+}
+
+interface QueryResultSort {
+  colIdx: number;
+  direction: "asc" | "desc";
+}
+
+interface QueryGridRow {
+  originalRowIdx: number;
+  row: (string | number | null)[];
 }
 
 const DEFAULT_QUERY_FONT_SIZE_PX = 12;
@@ -98,6 +126,19 @@ async function formatSqlOffline(query: string): Promise<string> {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+function stringifyExplainValue(value: unknown): string {
+  if (value === null) return "NULL";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
 }
 
 function getSelectedLineRange(
@@ -267,12 +308,40 @@ function deleteSelectedLines(
   };
 }
 
+function sortQueryGridRows(
+  result: QueryResultSet | null,
+  sort: QueryResultSort | undefined,
+): QueryGridRow[] {
+  if (!result) return [];
+
+  const rows = result.rows.map((row, originalRowIdx) => ({
+    row,
+    originalRowIdx,
+  }));
+
+  if (!sort) return rows;
+
+  return [...rows].sort((left, right) => {
+    const compared = compareDataGridValues(
+      left.row[sort.colIdx],
+      right.row[sort.colIdx],
+    );
+
+    if (compared !== 0) {
+      return sort.direction === "asc" ? compared : -compared;
+    }
+
+    return left.originalRowIdx - right.originalRowIdx;
+  });
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 //  Component
 // ═══════════════════════════════════════════════════════════════════════
 
 export function QueryTab({
   tabId,
+  leafId,
   profileId,
   database: initialDatabase,
 }: Props) {
@@ -312,6 +381,14 @@ export function QueryTab({
     scrollTop: 0,
     clientHeight: 1,
   });
+  const [isExplaining, setIsExplaining] = useState(false);
+  const [explainMode, setExplainMode] = useState<ExplainMode>("explain");
+  const [explainPayload, setExplainPayload] =
+    useState<ExplainResultPayload | null>(null);
+  const [explainError, setExplainError] = useState<string | null>(null);
+  const [activeBottomPane, setActiveBottomPane] = useState<"results" | "explain">(
+    "results",
+  );
 
   // ── Find-in-Results ─────────────────────────────────────
   const [isFindOpen, setIsFindOpen] = useState(false);
@@ -320,7 +397,8 @@ export function QueryTab({
   const [currentMatchIdx, setCurrentMatchIdx] = useState(0);
 
   // ── Column widths (resizing) ─────────────────────────────
-  const [colWidths, setColWidths] = useState<Record<number, number>>({});
+  const [colWidths, setColWidths] = useState<Record<string, number>>({});
+  const [resultSorts, setResultSorts] = useState<Record<number, QueryResultSort>>({});
 
   // ── Cell selection & context menu ──────────────────────
   const [selectedCell, setSelectedCell] = useState<{ rowIdx: number; colIdx: number } | null>(null);
@@ -348,6 +426,16 @@ export function QueryTab({
   const activeQueryRange = useMemo(() => {
     return getActiveQueryRange(sql, cursorPos, cursorPos + selectedCharCount);
   }, [sql, cursorPos, selectedCharCount]);
+  const explainableQueryText = useMemo(() => {
+    if (
+      activeQueryRange &&
+      activeQueryRange.text.trim().length > 0 &&
+      activeQueryRange.text.trim() !== sql.trim()
+    ) {
+      return activeQueryRange.text;
+    }
+    return sql;
+  }, [activeQueryRange, sql]);
 
   useEffect(() => {
     setEditorFontSize((prev) =>
@@ -363,6 +451,27 @@ export function QueryTab({
     start: number;
     end: number;
   } | null>(null);
+
+  const getResultColWidth = useCallback(
+    (resultIndex: number, colIdx: number) => colWidths[`${resultIndex}:${colIdx}`],
+    [colWidths],
+  );
+
+  const setResultColWidth = useCallback(
+    (resultIndex: number, colIdx: number, width: number) => {
+      const key = `${resultIndex}:${colIdx}`;
+      setColWidths((prev) => {
+        if (prev[key] === width) return prev;
+        return { ...prev, [key]: width };
+      });
+    },
+    [],
+  );
+
+  const shouldHandleResultGridKeys = useCallback((target: EventTarget | null) => {
+    if (isEditableTarget(target)) return false;
+    return target instanceof HTMLElement && target.id.startsWith("qcell-");
+  }, []);
 
   // ── Matching brackets ─────────────────────────────────────
   const deferredSql = useDeferredValue(sql);
@@ -401,6 +510,7 @@ export function QueryTab({
   // Incrementing counter: if the token when a query starts differs from the
   // current one by the time it resolves, the result is discarded (soft-cancel).
   const runTokenRef = useRef(0);
+  const explainTokenRef = useRef(0);
 
   // ── Resizable split ───────────────────────────────────────
   const [splitPercent, setSplitPercent] = useState(40);
@@ -410,9 +520,16 @@ export function QueryTab({
   // ── Database from schema store ────────────────────────────
   const connectedProfiles = useSchemaStore((s) => s.connectedProfiles);
   const refreshDatabases = useSchemaStore((s) => s.refreshDatabases);
+  const openTab = useLayoutStore((s) => s.openTab);
   const updateTab = useLayoutStore((s) => s.updateTab);
+  const setResultSnapshot = useResultsStore((s) => s.setSnapshot);
   const aiBlocked = useProfilesStore(
     (s) => s.globalPreferences.blockAiRequests ?? false,
+  );
+  const selectedProfileType = useProfilesStore(
+    (s) =>
+      s.profiles.find((profile) => profile.id === selectedProfileId)?.type ??
+      "mysql",
   );
   const maxResultRows = useProfilesStore(
     (s) => s.globalPreferences.maxResultRows ?? 1000,
@@ -617,6 +734,10 @@ export function QueryTab({
   }, [results.length]);
 
   const searchActiveResult = results[activeResultIdx];
+  const searchActiveRows = useMemo(
+    () => sortQueryGridRows(searchActiveResult ?? null, resultSorts[activeResultIdx]),
+    [searchActiveResult, resultSorts, activeResultIdx],
+  );
 
   const handleSearch = useCallback((q: string) => {
     setFindQuery(q);
@@ -628,7 +749,7 @@ export function QueryTab({
     const matches: { rowIdx: number; colIdx: number }[] = [];
     const lowerQ = q.toLowerCase();
 
-    searchActiveResult.rows.forEach((row, rowIdx) => {
+    searchActiveRows.forEach(({ row }, rowIdx) => {
       row.forEach((val, colIdx) => {
         if (val !== null && String(val).toLowerCase().includes(lowerQ)) {
           matches.push({ rowIdx, colIdx });
@@ -642,7 +763,7 @@ export function QueryTab({
     if (matches.length > 0) {
       scrollToMatch(0, matches);
     }
-  }, [searchActiveResult]);
+  }, [searchActiveResult, searchActiveRows]);
 
   const scrollToMatch = (idx: number, matches = findMatches) => {
     const match = matches[idx];
@@ -708,26 +829,29 @@ export function QueryTab({
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      const active = results[activeResultIdx];
+      const gridFocused = shouldHandleResultGridKeys(e.target);
+      const active = searchActiveRows;
 
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "c" && selectedCell) {
-        if (!active) return;
-        const row = active.rows[selectedCell.rowIdx];
+        if (!gridFocused) return;
+        const row = active[selectedCell.rowIdx]?.row;
         if (!row) return;
         const val = row[selectedCell.colIdx];
-        navigator.clipboard.writeText(val === null ? "NULL" : String(val)).catch(() => {});
+        navigator.clipboard
+          .writeText(getDataGridCellText(val))
+          .catch(() => {});
         return;
       }
 
       // Arrow key / Tab navigation for result grid
-      if (!selectedCell || !active) return;
+      if (!gridFocused || !selectedCell || !searchActiveResult) return;
       const isArrow = ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key);
       const isTab = e.key === "Tab";
       if (!isArrow && !isTab) return;
 
       let { rowIdx, colIdx } = selectedCell;
-      const numRows = active.rows.length;
-      const numCols = active.columns.length;
+      const numRows = active.length;
+      const numCols = searchActiveResult.columns.length;
 
       if (e.key === "ArrowRight" || (isTab && !e.shiftKey)) {
         e.preventDefault();
@@ -750,7 +874,12 @@ export function QueryTab({
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [selectedCell, results, activeResultIdx]);
+  }, [
+    selectedCell,
+    searchActiveResult,
+    searchActiveRows,
+    shouldHandleResultGridKeys,
+  ]);
 
   useEffect(() => {
     if (!selectedCell) return;
@@ -763,49 +892,44 @@ export function QueryTab({
 
   const copyCellContextValue = useCallback(() => {
     if (!cellContextMenu) return;
-    const text = cellContextMenu.value === null ? "NULL" : String(cellContextMenu.value);
-    navigator.clipboard.writeText(text).catch(() => {});
+    navigator.clipboard
+      .writeText(getDataGridCellText(cellContextMenu.value))
+      .catch(() => {});
   }, [cellContextMenu]);
 
   const copyRowValues = useCallback(() => {
     if (!cellContextMenu) return;
-    const active = results[activeResultIdx];
-    if (!active) return;
-    const row = active.rows[cellContextMenu.rowIdx];
+    const row = searchActiveRows[cellContextMenu.rowIdx]?.row;
     if (!row) return;
-    const text = row.map((v) => (v === null ? "NULL" : String(v))).join("\t");
+    const text = row.map((v) => getDataGridCellText(v)).join("\t");
     navigator.clipboard.writeText(text).catch(() => {});
-  }, [cellContextMenu, results, activeResultIdx]);
+  }, [cellContextMenu, searchActiveRows]);
 
   const copyColumnValues = useCallback(() => {
     if (!cellContextMenu) return;
-    const active = results[activeResultIdx];
-    if (!active) return;
-    const text = active.rows
-      .map((row) => {
+    const text = searchActiveRows
+      .map(({ row }) => {
         const val = row[cellContextMenu.colIdx];
-        return val === null ? "NULL" : String(val);
+        return getDataGridCellText(val);
       })
       .join("\n");
     navigator.clipboard.writeText(text).catch(() => {});
-  }, [cellContextMenu, results, activeResultIdx]);
+  }, [cellContextMenu, searchActiveRows]);
 
   const copyRowAsJson = useCallback(() => {
     if (!cellContextMenu) return;
-    const active = results[activeResultIdx];
-    if (!active) return;
-    const row = active.rows[cellContextMenu.rowIdx];
+    if (!searchActiveResult) return;
+    const row = searchActiveRows[cellContextMenu.rowIdx]?.row;
     if (!row) return;
     const obj: Record<string, string | number | null> = {};
-    active.columns.forEach((col, i) => { obj[col] = row[i] ?? null; });
+    searchActiveResult.columns.forEach((col, i) => { obj[col] = row[i] ?? null; });
     navigator.clipboard.writeText(JSON.stringify(obj, null, 2)).catch(() => {});
-  }, [cellContextMenu, results, activeResultIdx]);
+  }, [cellContextMenu, searchActiveResult, searchActiveRows]);
 
   const copyRowAsCsv = useCallback(() => {
     if (!cellContextMenu) return;
-    const active = results[activeResultIdx];
-    if (!active) return;
-    const row = active.rows[cellContextMenu.rowIdx];
+    if (!searchActiveResult) return;
+    const row = searchActiveRows[cellContextMenu.rowIdx]?.row;
     if (!row) return;
     const escapeCSV = (val: string | number | null): string => {
       if (val === null) return "";
@@ -813,22 +937,21 @@ export function QueryTab({
       if (s.includes(",") || s.includes('"') || s.includes("\n")) return `"${s.replace(/"/g, '""')}"`;
       return s;
     };
-    const header = active.columns.map(escapeCSV).join(",");
+    const header = searchActiveResult.columns.map(escapeCSV).join(",");
     const values = row.map(escapeCSV).join(",");
     navigator.clipboard.writeText(`${header}\n${values}`).catch(() => {});
-  }, [cellContextMenu, results, activeResultIdx]);
+  }, [cellContextMenu, searchActiveResult, searchActiveRows]);
 
   const copyRowAsSqlInsert = useCallback(() => {
     if (!cellContextMenu) return;
-    const active = results[activeResultIdx];
-    if (!active) return;
-    const row = active.rows[cellContextMenu.rowIdx];
+    if (!searchActiveResult) return;
+    const row = searchActiveRows[cellContextMenu.rowIdx]?.row;
     if (!row) return;
     const escId = (v: string) => `\`${v.replace(/`/g, "``")}\``;
-    const cols = active.columns.map(escId).join(", ");
+    const cols = searchActiveResult.columns.map(escId).join(", ");
     const vals = row.map((v) => v === null ? "NULL" : `'${String(v).replace(/'/g, "''")}'`).join(", ");
     navigator.clipboard.writeText(`INSERT INTO \`table\` (${cols}) VALUES (${vals});`).catch(() => {});
-  }, [cellContextMenu, results, activeResultIdx]);
+  }, [cellContextMenu, searchActiveResult, searchActiveRows]);
 
   // Ctrl+S listener
   useEffect(() => {
@@ -846,21 +969,18 @@ export function QueryTab({
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (!(e.ctrlKey || e.metaKey) || e.key !== "a") return;
-      const active = results[activeResultIdx];
-      if (!active || active.rows.length === 0) return;
-      // Only intercept when focus is inside the result grid (not the SQL editor)
-      const target = e.target as HTMLElement | null;
-      if (target && (target.tagName === "TEXTAREA" || target.tagName === "INPUT")) return;
+      if (!searchActiveResult || searchActiveRows.length === 0) return;
+      if (!shouldHandleResultGridKeys(e.target)) return;
       e.preventDefault();
-      const header = active.columns.join("\t");
-      const rows = active.rows
-        .map((r) => r.map((v) => (v === null ? "NULL" : String(v))).join("\t"))
+      const header = searchActiveResult.columns.join("\t");
+      const rows = searchActiveRows
+        .map(({ row }) => row.map((v) => getDataGridCellText(v)).join("\t"))
         .join("\n");
       navigator.clipboard.writeText(`${header}\n${rows}`).catch(() => {});
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [results, activeResultIdx]);
+  }, [searchActiveResult, searchActiveRows, shouldHandleResultGridKeys]);
 
   // Sync dirty state
   useEffect(() => {
@@ -879,7 +999,12 @@ export function QueryTab({
       setRunning(true);
       setError(null);
       setResults([]);
+      setColWidths({});
+      setResultSorts({});
       setVisibleRowCounts({});
+      setExplainPayload(null);
+      setExplainError(null);
+      setActiveBottomPane("results");
       setHasRun(false);
       setExecutionTime(null);
       setSelectedCell(null);
@@ -910,6 +1035,8 @@ export function QueryTab({
 
         // Drop the USE result (index 0) so callers only see their query results
         const filteredResults = selectedDb ? res.slice(1) : res;
+        const resultTabId = `tab-${crypto.randomUUID()}`;
+        const resultTabTitle = formatResultsTabTitle(filteredResults);
 
         setResults(filteredResults);
         setVisibleRowCounts(
@@ -925,6 +1052,30 @@ export function QueryTab({
         setLastSavedSql(sql);
         resultScrollRef.current?.scrollTo({ top: 0, left: 0 });
         setResultViewport({ scrollTop: 0, clientHeight: 1 });
+
+        setResultSnapshot(resultTabId, {
+          sourceTabId: tabId,
+          sourceTitle: selectedDb || "SQL Query",
+          profileId: selectedProfileId,
+          database: selectedDb || undefined,
+          queryText,
+          results: filteredResults,
+          executionTimeMs: elapsed,
+          createdAt: new Date().toISOString(),
+        });
+        openTab(
+          {
+            id: resultTabId,
+            title: resultTabTitle,
+            type: "results",
+            meta: {
+              profileId: selectedProfileId,
+              database: selectedDb || "",
+              sourceTabId: tabId,
+            },
+          },
+          leafId,
+        );
 
         // Add to history
         addHistoryItem({
@@ -969,7 +1120,21 @@ export function QueryTab({
         }
       }
     },
-    [maxResultRows, queryTimeoutMs, selectedProfileId, selectedDb, running, sql],
+    [
+      addHistoryItem,
+      connectedProfiles,
+      leafId,
+      maxResultRows,
+      openTab,
+      queryTimeoutMs,
+      selectedProfileId,
+      selectedDb,
+      refreshDatabases,
+      running,
+      setResultSnapshot,
+      sql,
+      tabId,
+    ],
   );
 
   const handleFormat = useCallback(
@@ -1018,6 +1183,89 @@ export function QueryTab({
     [sql],
   );
 
+  const handleExplain = useCallback(async () => {
+    const queryText = explainableQueryText.trim();
+    if (!queryText || running || isExplaining || !selectedProfileId) return;
+
+    const token = ++explainTokenRef.current;
+    setIsExplaining(true);
+    setExplainError(null);
+    setActiveBottomPane("explain");
+
+    const trimmedQuery = queryText.replace(/;+\s*$/, "");
+    const explainStatement =
+      explainMode === "analyze"
+        ? selectedProfileType === "mariadb"
+          ? `ANALYZE FORMAT=JSON ${trimmedQuery}`
+          : `EXPLAIN ANALYZE ${trimmedQuery}`
+        : `EXPLAIN FORMAT=JSON ${trimmedQuery}`;
+
+    let fullExplainQuery = explainStatement;
+    if (selectedDb) {
+      const escapedDb = selectedDb.replace(/`/g, "``");
+      fullExplainQuery = `USE \`${escapedDb}\`;\n${explainStatement}`;
+    }
+
+    try {
+      const res = await dbQuery(selectedProfileId, fullExplainQuery, {
+        timeoutMs: queryTimeoutMs,
+      });
+
+      if (token !== explainTokenRef.current) return;
+
+      const explainResults = selectedDb ? res.slice(1) : res;
+      const first = explainResults[0];
+      if (!first) {
+        throw new Error("The server returned no explain output.");
+      }
+
+      const rawText = first.rows.length > 0
+        ? first.rows
+            .map((row) => row.map((value) => stringifyExplainValue(value)).join(" "))
+            .join("\n")
+        : first.info;
+
+      let parsedJson: unknown | null = null;
+      const trimmedText = rawText.trim();
+      if (trimmedText.startsWith("{") || trimmedText.startsWith("[")) {
+        try {
+          parsedJson = JSON.parse(trimmedText);
+        } catch {
+          parsedJson = null;
+        }
+      }
+
+      setExplainPayload({
+        mode: explainMode,
+        format: parsedJson ? "json" : "text",
+        rawText,
+        parsedJson,
+      });
+    } catch (e) {
+      if (token !== explainTokenRef.current) return;
+      setExplainPayload(null);
+      setExplainError(String(e));
+      useAppStore.getState().addToast({
+        title: "Explain Error",
+        description: String(e),
+        variant: "destructive",
+      });
+    } finally {
+      if (token === explainTokenRef.current) {
+        setIsExplaining(false);
+      }
+    }
+  }, [
+    explainMode,
+    explainableQueryText,
+    isExplaining,
+    queryTimeoutMs,
+    running,
+    selectedDb,
+    selectedProfileId,
+    selectedProfileType,
+  ]);
+
   const handleRun = useCallback(() => executeQuery(sql), [executeQuery, sql]);
   const handleRunSelected = useCallback(() => {
     if (activeQueryRange) {
@@ -1029,18 +1277,29 @@ export function QueryTab({
   // Advances the token so the in-flight result is discarded when it arrives.
   // The underlying DB query still runs to completion on the server side.
   const handleStop = useCallback(() => {
-    if (!running) return;
+    if (!running && !isExplaining) return;
     runTokenRef.current++;
-    setRunning(false);
-    setError("Query cancelled by user.");
-    setHasRun(true);
-  }, [running]);
+    explainTokenRef.current++;
+    if (running) {
+      setRunning(false);
+      setError("Query cancelled by user.");
+      setHasRun(true);
+    }
+    if (isExplaining) {
+      setIsExplaining(false);
+      setExplainError("Explain cancelled by user.");
+      setActiveBottomPane("explain");
+    }
+  }, [isExplaining, running]);
 
   // ── Clear ─────────────────────────────────────────────────
   const handleClear = useCallback(() => {
     setSql("");
     setResults([]);
     setVisibleRowCounts({});
+    setExplainPayload(null);
+    setExplainError(null);
+    setActiveBottomPane("results");
     setError(null);
     setExecutionTime(null);
     setHasRun(false);
@@ -1261,6 +1520,70 @@ export function QueryTab({
 
   // ── Current result set ────────────────────────────────────
   const activeResult = results[activeResultIdx] ?? null;
+  const activeResultSort = resultSorts[activeResultIdx];
+  const hasExplainPane = isExplaining || !!explainPayload || !!explainError;
+  const showExplainPane = activeBottomPane === "explain" && hasExplainPane;
+  const activeSortedRows = useMemo(
+    () => sortQueryGridRows(activeResult, activeResultSort),
+    [activeResult, activeResultSort],
+  );
+  const activeNumericColumns = useMemo(() => {
+    const numericCols = new Set<number>();
+    if (!activeResult) return numericCols;
+
+    activeResult.columns.forEach((_, colIdx) => {
+      const sampleValues = activeResult.rows
+        .slice(0, 200)
+        .map((row) => row[colIdx]);
+      if (inferNumericDataGridColumn(sampleValues)) {
+        numericCols.add(colIdx);
+      }
+    });
+
+    return numericCols;
+  }, [activeResult]);
+  const handleResultSort = useCallback((colIdx: number) => {
+    setResultSorts((prev) => {
+      const current = prev[activeResultIdx];
+
+      if (!current || current.colIdx !== colIdx) {
+        return {
+          ...prev,
+          [activeResultIdx]: { colIdx, direction: "asc" },
+        };
+      }
+
+      if (current.direction === "asc") {
+        return {
+          ...prev,
+          [activeResultIdx]: { colIdx, direction: "desc" },
+        };
+      }
+
+      const next = { ...prev };
+      delete next[activeResultIdx];
+      return next;
+    });
+  }, [activeResultIdx]);
+  const autoFitResultColumn = useCallback(
+    (colIdx: number, headerCell: HTMLTableCellElement | null) => {
+      if (!activeResult) return;
+
+      const width = measureDataGridColumnWidth({
+        headerText: activeResult.columns[colIdx] ?? "",
+        values: activeResult.rows.map((row) => row[colIdx]),
+        headerFont: getCanvasFontFromElement(
+          headerCell,
+          '500 11px "Segoe UI", -apple-system, BlinkMacSystemFont, sans-serif',
+        ),
+        minWidth: 80,
+        maxWidth: wordWrap ? 720 : 560,
+      });
+
+      setResultColWidth(activeResultIdx, colIdx, width);
+    },
+    [activeResult, activeResultIdx, setResultColWidth, wordWrap],
+  );
   const activeVisibleRowCount = useMemo(() => {
     if (!activeResult) return 0;
     const defaultCount = Math.min(activeResult.rows.length, maxResultRows);
@@ -1270,9 +1593,8 @@ export function QueryTab({
     );
   }, [activeResult, activeResultIdx, maxResultRows, visibleRowCounts]);
   const activeDisplayedRows = useMemo(() => {
-    if (!activeResult) return [];
-    return activeResult.rows.slice(0, activeVisibleRowCount);
-  }, [activeResult, activeVisibleRowCount]);
+    return activeSortedRows.slice(0, activeVisibleRowCount);
+  }, [activeSortedRows, activeVisibleRowCount]);
   const hasMoreActiveRows =
     !!activeResult && activeVisibleRowCount < activeResult.rows.length;
   const shouldVirtualizeResults =
@@ -1912,12 +2234,37 @@ export function QueryTab({
               label="Run Selected"
             />
           )}
+        <ToolBtn
+          icon={
+            isExplaining ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Search className="w-4 h-4" />
+            )
+          }
+          title="Explain the current query plan"
+          onClick={handleExplain}
+          disabled={running || isExplaining || !explainableQueryText.trim()}
+          active={activeBottomPane === "explain" && !!(explainPayload || explainError)}
+          accent="text-amber-400"
+          label="Explain"
+        />
+        <select
+          value={explainMode}
+          onChange={(e) => setExplainMode(e.target.value as ExplainMode)}
+          disabled={running || isExplaining}
+          className="h-7 shrink-0 rounded border bg-transparent px-2 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus:outline-none"
+          aria-label="Explain mode"
+        >
+          <option value="explain">JSON</option>
+          <option value="analyze">Analyze</option>
+        </select>
         {/* Stop */}
         <ToolBtn
           icon={<Square className="w-4 h-4" />}
           title="Stop (Escape)"
           onClick={handleStop}
-          disabled={!running}
+          disabled={!running && !isExplaining}
           active={false}
         />
 
@@ -2427,8 +2774,47 @@ export function QueryTab({
           </div>
         )}
 
+        {hasExplainPane && (
+          <div className="shrink-0 border-b bg-muted/10 px-1">
+            <div className="flex items-center gap-1 text-[11px]">
+              <button
+                type="button"
+                onClick={() => setActiveBottomPane("results")}
+                className={cn(
+                  "rounded-t px-3 py-1.5 transition-colors",
+                  activeBottomPane === "results"
+                    ? "bg-background text-foreground"
+                    : "text-muted-foreground hover:bg-accent/40 hover:text-foreground",
+                )}
+              >
+                Results
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveBottomPane("explain")}
+                className={cn(
+                  "rounded-t px-3 py-1.5 transition-colors",
+                  activeBottomPane === "explain"
+                    ? "bg-background text-foreground"
+                    : "text-muted-foreground hover:bg-accent/40 hover:text-foreground",
+                )}
+              >
+                Explain
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Loading state */}
-        {running && (
+        {showExplainPane ? (
+          <div className="flex-1 min-h-0">
+            <ExplainPlanView
+              payload={explainPayload}
+              loading={isExplaining}
+              error={explainError}
+            />
+          </div>
+        ) : running && (
           <div className="flex-1 flex items-center justify-center text-muted-foreground/50">
             <div className="text-center">
               <Loader2 className="w-6 h-6 mx-auto mb-2 animate-spin opacity-50" />
@@ -2438,7 +2824,7 @@ export function QueryTab({
         )}
 
         {/* Error display */}
-        {!running && error && (
+        {!showExplainPane && !running && error && (
           <div className="flex items-start gap-2 px-3 py-2 bg-red-500/10 text-red-400 border-b shrink-0">
             <XCircle className="w-4 h-4 mt-0.5 shrink-0" />
             <pre className="text-xs font-mono whitespace-pre-wrap flex-1 select-text">
@@ -2448,7 +2834,7 @@ export function QueryTab({
         )}
 
         {/* Results grid */}
-        {!running && activeResult && activeResult.columns.length > 0 ? (
+        {!showExplainPane && !running && activeResult && activeResult.columns.length > 0 ? (
           <div className="flex-1 min-h-0 relative flex flex-col">
             <FindToolbar
               isOpen={isFindOpen}
@@ -2490,41 +2876,90 @@ export function QueryTab({
                 <thead>
                   <tr className="bg-muted sticky top-0 z-10" role="row" aria-rowindex={1}>
                     <th
-                      className="text-center px-2 py-1.5 text-[10px] font-medium text-muted-foreground/70 border-b border-r bg-muted w-12.5"
+                      className="sticky left-0 z-30 text-center px-2 py-1.5 text-[10px] font-medium text-muted-foreground/70 border-b border-r bg-muted w-12.5"
                       role="columnheader"
                       aria-colindex={1}
                     >
                       #
                     </th>
-                    {activeResult.columns.map((col, ci) => (
-                      <th
-                        key={ci}
-                        className="text-left px-2 py-1.5 text-[10px] font-medium text-muted-foreground/70 border-b border-r bg-muted whitespace-nowrap relative group/qth select-none"
-                        style={colWidths[ci] ? { width: colWidths[ci], minWidth: colWidths[ci] } : undefined}
-                        role="columnheader"
-                        aria-colindex={ci + 2}
-                      >
-                        {col}
-                        <div
-                          className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-primary/40 active:bg-primary/60 z-20 opacity-0 group-hover/qth:opacity-100 transition-opacity"
-                          onMouseDown={(e) => {
-                            e.preventDefault();
-                            const startX = e.clientX;
-                            const th = e.currentTarget.parentElement as HTMLTableCellElement;
-                            const startWidth = th?.offsetWidth ?? 80;
-                            const onMove = (ev: MouseEvent) => {
-                              setColWidths(prev => ({ ...prev, [ci]: Math.max(60, startWidth + ev.clientX - startX) }));
-                            };
-                            const onUp = () => {
-                              window.removeEventListener("mousemove", onMove);
-                              window.removeEventListener("mouseup", onUp);
-                            };
-                            window.addEventListener("mousemove", onMove);
-                            window.addEventListener("mouseup", onUp);
-                          }}
-                        />
-                      </th>
-                    ))}
+                    {activeResult.columns.map((col, ci) => {
+                      const colWidth = getResultColWidth(activeResultIdx, ci);
+                      const sortDirection =
+                        activeResultSort?.colIdx === ci ? activeResultSort.direction : null;
+
+                      return (
+                        <th
+                          key={ci}
+                          className={cn(
+                            "px-2 py-1.5 text-[10px] font-medium text-muted-foreground/70 border-b border-r bg-muted whitespace-nowrap relative group/qth select-none",
+                            sortDirection && "bg-primary/10 text-foreground",
+                          )}
+                          style={
+                            colWidth
+                              ? { width: colWidth, minWidth: colWidth, maxWidth: colWidth }
+                              : undefined
+                          }
+                          role="columnheader"
+                          aria-colindex={ci + 2}
+                          aria-sort={
+                            sortDirection === "asc"
+                              ? "ascending"
+                              : sortDirection === "desc"
+                                ? "descending"
+                                : "none"
+                          }
+                        >
+                          <button
+                            type="button"
+                            className="flex w-full items-center gap-1 overflow-hidden text-left transition-colors hover:text-foreground"
+                            onClick={() => handleResultSort(ci)}
+                            title="Click to sort asc, then desc, then clear"
+                          >
+                            <span className="truncate">{col}</span>
+                            <span className="ml-auto flex shrink-0 items-center">
+                              {sortDirection === "asc" && (
+                                <ChevronUp className="h-3 w-3 text-primary" />
+                              )}
+                              {sortDirection === "desc" && (
+                                <ChevronDown className="h-3 w-3 text-primary" />
+                              )}
+                              {!sortDirection && (
+                                <ChevronsUpDown className="h-3 w-3 text-muted-foreground/35 group-hover/qth:text-muted-foreground/70" />
+                              )}
+                            </span>
+                          </button>
+                          <div
+                            className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-primary/40 active:bg-primary/60 z-20 opacity-0 group-hover/qth:opacity-100 transition-opacity"
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              const startX = e.clientX;
+                              const th = e.currentTarget.parentElement as HTMLTableCellElement;
+                              const startWidth = th?.offsetWidth ?? 80;
+                              const onMove = (ev: MouseEvent) => {
+                                setResultColWidth(
+                                  activeResultIdx,
+                                  ci,
+                                  Math.max(80, startWidth + ev.clientX - startX),
+                                );
+                              };
+                              const onUp = () => {
+                                window.removeEventListener("mousemove", onMove);
+                                window.removeEventListener("mouseup", onUp);
+                              };
+                              window.addEventListener("mousemove", onMove);
+                              window.addEventListener("mouseup", onUp);
+                            }}
+                            onDoubleClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              const th = e.currentTarget.parentElement as HTMLTableCellElement;
+                              autoFitResultColumn(ci, th);
+                            }}
+                            title="Drag to resize, double-click to auto-fit"
+                          />
+                        </th>
+                      );
+                    })}
                   </tr>
                 </thead>
                 <tbody>
@@ -2537,20 +2972,20 @@ export function QueryTab({
                       />
                     </tr>
                   )}
-                  {visibleResultRows.map((row, rowOffset) => {
+                  {visibleResultRows.map(({ row, originalRowIdx }, rowOffset) => {
                     const ri = shouldVirtualizeResults
                       ? rowOffset + virtualStartIdx
                       : rowOffset;
 
                     return (
                     <tr
-                      key={ri}
-                      className="border-b hover:bg-accent/20 transition-colors"
+                      key={originalRowIdx}
+                      className="group border-b hover:bg-accent/20 transition-colors"
                       role="row"
                       aria-rowindex={ri + 2}
                     >
                       <td
-                        className="text-center px-2 py-1 border-r text-muted-foreground/40 select-none"
+                        className="sticky left-0 z-10 bg-background px-2 py-1 border-r text-muted-foreground/40 select-none group-hover:bg-accent/20"
                         role="rowheader"
                         aria-colindex={1}
                       >
@@ -2561,6 +2996,9 @@ export function QueryTab({
                         const match = findMatches[currentMatchIdx];
                         const isCurrent = match?.rowIdx === ri && match?.colIdx === ci;
                         const isSelected = selectedCell?.rowIdx === ri && selectedCell?.colIdx === ci;
+                        const isNumeric = activeNumericColumns.has(ci);
+                        const colWidth = getResultColWidth(activeResultIdx, ci);
+                        const cellText = getDataGridCellText(val);
 
                         return (
                           <td
@@ -2575,18 +3013,21 @@ export function QueryTab({
                                 : -1
                             }
                             className={cn(
-                              "px-2 py-1 border-r font-mono max-w-75 transition-all cursor-default",
+                              "px-2 py-1 border-r font-mono transition-all cursor-default align-top bg-background",
+                              isNumeric && "text-right tabular-nums",
                               val === null
                                 ? "text-muted-foreground/40 italic"
                                 : "",
-                              wordWrap
-                                ? "whitespace-pre-wrap break-all"
-                                : "whitespace-nowrap truncate",
                               isCurrent && "ring-2 ring-primary ring-inset z-10 bg-primary/20",
                               !isCurrent && isMatch && "bg-yellow-500/30",
                               isSelected && !isCurrent && "ring-1 ring-primary/60 bg-primary/8",
                             )}
-                            title={val === null ? "NULL" : String(val)}
+                            style={
+                              colWidth
+                                ? { width: colWidth, minWidth: colWidth, maxWidth: colWidth }
+                                : undefined
+                            }
+                            title={cellText}
                             onClick={() => setSelectedCell({ rowIdx: ri, colIdx: ci })}
                             onFocus={() => setSelectedCell({ rowIdx: ri, colIdx: ci })}
                             onContextMenu={(e) => {
@@ -2595,7 +3036,30 @@ export function QueryTab({
                               setCellContextMenu({ x: e.clientX, y: e.clientY, rowIdx: ri, colIdx: ci, value: val });
                             }}
                           >
-                            {val === null ? "NULL" : String(val)}
+                            {val === null ? (
+                              <span className="text-muted-foreground/40 italic">NULL</span>
+                            ) : (
+                              <div
+                                className={cn(
+                                  "min-w-0",
+                                  wordWrap
+                                    ? "whitespace-pre-wrap break-all"
+                                    : "overflow-hidden text-ellipsis whitespace-nowrap",
+                                  isNumeric && "text-right",
+                                )}
+                                style={
+                                  !wordWrap
+                                    ? {
+                                        maxWidth: colWidth
+                                          ? Math.max(colWidth - 16, 64)
+                                          : 280,
+                                      }
+                                    : undefined
+                                }
+                              >
+                                {String(val)}
+                              </div>
+                            )}
                           </td>
                         );
                       })}
@@ -2630,7 +3094,7 @@ export function QueryTab({
               </div>
             )}
           </div>
-        ) : !running && !error && hasRun && results.length > 0 ? (
+        ) : !showExplainPane && !running && !error && hasRun && results.length > 0 ? (
           /* DML/DDL success: no column data but query ran */
           <div className="flex-1 flex items-center justify-center text-muted-foreground/50">
             <div className="text-center">
@@ -2643,7 +3107,7 @@ export function QueryTab({
               )}
             </div>
           </div>
-        ) : !running && !error && hasRun ? (
+        ) : !showExplainPane && !running && !error && hasRun ? (
           /* Ran successfully, no result sets returned (e.g. SET, pure DDL) */
           <div className="flex-1 flex items-center justify-center text-muted-foreground/50">
             <div className="text-center">
@@ -2651,7 +3115,7 @@ export function QueryTab({
               <div>Query executed successfully</div>
             </div>
           </div>
-        ) : !running && !error ? (
+        ) : !showExplainPane && !running && !error ? (
           /* Never run yet */
           <div className="flex-1 flex items-center justify-center select-none">
             <div className="text-center flex flex-col items-center gap-3">
