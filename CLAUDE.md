@@ -1,6 +1,6 @@
 # CLAUDE.md — WorkGrid Studio
 
-WorkGrid Studio is a cross-platform desktop database management app built with **Tauri 2**, **React 19**, **TypeScript**, **Vite**, **TailwindCSS v4**, and **Zustand**. The frontend lives in `src/`, and the Rust-backed native shell lives in `src-tauri/`.
+WorkGrid Studio is a cross-platform desktop database management app built with **Tauri 2**, **React 19**, **TypeScript**, **Vite**, **TailwindCSS v4**, and **Zustand**. This is a **pnpm monorepo** — the desktop app frontend lives in `src/`, the Rust-backed native shell in `src-tauri/`, the auto-update Cloudflare Worker in `wgs-updater/`, and the marketing website in `wgs-website/`.
 
 ---
 
@@ -26,77 +26,152 @@ WorkGrid Studio is a cross-platform desktop database management app built with *
 
 ```
 workgrid-studio/
-├── src/                        # React/TypeScript frontend
+├── src/                           # React/TypeScript frontend (desktop app UI)
 │   ├── app/
-│   │   ├── App.tsx             # Root component: loads profiles, renders Workbench
+│   │   ├── App.tsx                # Root component: loads profiles, renders Workbench
 │   │   └── providers/
 │   │       └── ThemeProvider.tsx
 │   ├── components/
-│   │   ├── layout/
-│   │   │   ├── Workbench.tsx   # Top-level shell: activity bar, sidebar, editor, status bar
-│   │   │   ├── EditorNode.tsx  # Recursive split-pane editor renderer
-│   │   │   └── Sash.tsx        # Draggable resize handle
-│   │   ├── ui/                 # Generic reusable UI primitives
+│   │   ├── layout/                # Structural shell components
+│   │   │   ├── Workbench.tsx      # Top-level shell: activity bar, sidebar, editor, status bar
+│   │   │   ├── EditorNode.tsx     # Recursive split-pane editor renderer
+│   │   │   └── Sash.tsx           # Draggable resize handle
+│   │   ├── ui/                    # Generic reusable UI primitives
+│   │   │   ├── AutocompleteInput.tsx
 │   │   │   ├── Button.tsx
 │   │   │   ├── Card.tsx
+│   │   │   ├── CellContextMenu.tsx
 │   │   │   ├── CodeEditorShell.tsx
+│   │   │   ├── FindToolbar.tsx
 │   │   │   ├── Input.tsx
+│   │   │   ├── Skeleton.tsx
+│   │   │   ├── SqlAutocomplete.tsx
+│   │   │   ├── ToastContainer.tsx
 │   │   │   └── Tree.tsx
-│   │   └── views/              # Feature-specific panels and modals
+│   │   └── views/                 # Feature-specific panels and modals
+│   │       ├── AiChatSidebar.tsx
+│   │       ├── CommandPalette.tsx
 │   │       ├── ConfirmModal.tsx
 │   │       ├── ContextSubmenu.tsx
 │   │       ├── CreateDatabaseModal.tsx
 │   │       ├── DatabaseView.tsx
-│   │       ├── DbManagerView.tsx
 │   │       ├── EditDatabaseModal.tsx
+│   │       ├── ExplainPlanView.tsx
 │   │       ├── ExplorerTree.tsx
 │   │       ├── ModelsPage.tsx
+│   │       ├── PrivacyDisclosureModal.tsx
+│   │       ├── PrivacyPolicyPanel.tsx
 │   │       ├── QueryTab.tsx
+│   │       ├── ResultsTab.tsx
+│   │       ├── SchemaDiagramTab.tsx
 │   │       ├── ServersSidebar.tsx
+│   │       ├── SettingsPage.tsx
+│   │       ├── TableDataTab.tsx
 │   │       ├── TableDesigner.tsx
 │   │       ├── TasksView.tsx
 │   │       └── WelcomeTab.tsx
+│   ├── content/
+│   │   └── privacyPolicy.ts       # Privacy policy text content
 │   ├── hooks/
-│   │   └── useAppVersion.ts    # Reads __APP_VERSION__ injected by Vite
+│   │   ├── useAppVersion.ts       # Reads __APP_VERSION__ injected by Vite
+│   │   └── useProfileManager.ts
 │   ├── lib/
 │   │   ├── appVersion.ts
-│   │   ├── db.ts               # Typed wrappers around all Tauri IPC commands
-│   │   ├── storage.ts          # readData/writeData JSON persistence via Tauri IPC
+│   │   ├── db.ts                  # Typed wrappers around all Tauri IPC commands
+│   │   ├── output.ts              # Bottom panel output helpers
+│   │   ├── privacy.ts             # Privacy preference helpers
+│   │   ├── sqlHighlight.ts        # SQL syntax highlighting utilities
+│   │   ├── sqlSuggestions.ts      # SQL autocomplete suggestion logic
+│   │   ├── storage.ts             # readData/writeData JSON persistence via Tauri IPC
 │   │   └── utils/
-│   │       └── cn.ts           # clsx + tailwind-merge helper
-│   ├── state/                  # Zustand stores (one file per domain)
-│   │   ├── appStore.ts         # Global theme, toasts, hotkeys, focus
-│   │   ├── layoutStore.ts      # Activity view, sidebar widths, editor split tree, tabs
-│   │   ├── modelsStore.ts      # AI model configuration
-│   │   ├── profilesStore.ts    # DB connection profiles (persisted to disk)
-│   │   ├── schemaStore.ts      # Cached schema/table metadata
-│   │   ├── sessionStore.ts     # Active DB sessions (in-memory only)
-│   │   └── tasksStore.ts       # Task tracker
+│   │       ├── cn.ts              # clsx + tailwind-merge helper
+│   │       └── dataGrid.ts        # Data grid utility helpers
+│   ├── state/                     # Zustand stores (one file per domain)
+│   │   ├── appStore.ts            # Global theme, toasts, hotkeys, focus
+│   │   ├── layoutStore.ts         # Activity view, sidebar widths, editor split tree, tabs
+│   │   ├── modelsStore.ts         # AI model configuration
+│   │   ├── profilesStore.ts       # DB connection profiles (persisted to disk)
+│   │   ├── queryHistoryStore.ts   # Per-profile query history
+│   │   ├── resultsStore.ts        # Query result sets (in-memory)
+│   │   ├── schemaStore.ts         # Cached schema/table/column metadata
+│   │   └── tasksStore.ts          # Task tracker
 │   ├── styles/
-│   │   └── globals.css         # Tailwind base + CSS custom properties
-│   ├── main.tsx                # React entry point
+│   │   └── globals.css            # Tailwind base + CSS custom properties
+│   ├── main.tsx                   # React entry point
 │   └── vite-env.d.ts
-├── src-tauri/                  # Rust Tauri backend
+│
+├── src-tauri/                     # Rust Tauri backend
 │   ├── src/
-│   │   ├── lib.rs              # All Tauri commands + DbState + logging
-│   │   └── main.rs             # Binary entry point (calls lib::run())
+│   │   ├── lib.rs                 # Tauri command registration, DbState, run()
+│   │   ├── main.rs                # Binary entry point (calls lib::run())
+│   │   ├── ai.rs                  # AI integration (model API calls)
+│   │   ├── crypto.rs              # AES-GCM password encryption/decryption
+│   │   ├── db.rs                  # MySQL query execution logic
+│   │   ├── error.rs               # Shared error types and formatting
+│   │   ├── files.rs               # JSON file persistence (read/write/delete)
+│   │   ├── logging.rs             # Per-profile query and error logging
+│   │   └── ssh.rs                 # SSH tunnel support
 │   ├── capabilities/
-│   │   └── default.json        # Tauri v2 capability/permission config
+│   │   └── default.json           # Tauri v2 capability/permission config
 │   ├── Cargo.toml
-│   ├── tauri.conf.json         # App name, identifier, window config, bundle config
+│   ├── tauri.conf.json            # App name, identifier, window config, updater, bundle
 │   └── build.rs
-├── scripts/
-│   └── versioning.mjs          # Version sync/bump tool (Node ESM)
+│
+├── wgs-updater/                   # Cloudflare Worker — Tauri auto-update endpoint
+│   ├── src/
+│   │   ├── index.ts               # Hono app: GET /api/update/:target/:current_version
+│   │   └── types.ts               # UpdateResponse and shared types
+│   ├── wrangler.jsonc             # Cloudflare Workers config (domain: wgs-updater.skiddph.com)
+│   ├── worker-configuration.d.ts  # Auto-generated Cloudflare env bindings
+│   ├── package.json
+│   ├── tsconfig.json
+│   ├── AGENTS.md                  # Agent instructions for this sub-project
+│   └── README.md
+│
+├── wgs-website/                   # Cloudflare Pages — marketing & SEO website
+│   ├── src/
+│   │   ├── App.tsx
+│   │   └── main.tsx
+│   ├── public/
+│   ├── vite.config.ts
+│   ├── package.json
+│   ├── tsconfig.json
+│   └── README.md
+│
+├── scripts/                       # Node ESM build/release utilities
+│   ├── changelog.mjs              # CHANGELOG generation and promotion tool
+│   └── versioning.mjs             # Version sync/bump across package.json, Cargo.toml, tauri.conf.json
+│
 ├── .github/
+│   ├── ISSUE_TEMPLATE/
+│   │   ├── bug_report.yml
+│   │   ├── feature_request.yml
+│   │   └── config.yml
+│   ├── workflows/
+│   │   ├── manual-multi-platform-build.yml  # Triggered build: bump, build all platforms, draft release
+│   │   └── changelog-on-push.yml            # Auto-appends commit subjects to [Unreleased] CHANGELOG
+│   └── dependabot.yml
+│
+├── .agent/                        # AI agent rules and task workflows
+│   ├── rules/
+│   │   └── coding-standards.md   # Always-on: Senior Desktop Architect persona + architecture rules
 │   └── workflows/
-│       └── manual-multi-platform-build.yml
-├── public/
-├── index.html
-├── package.json                # Version source of truth
-├── vite.config.ts
-├── tsconfig.json
+│       ├── add-editor-tab.md     # How to add a new tab type end-to-end
+│       ├── add-tauri-command.md  # How to add a Rust command + TypeScript wrapper
+│       └── add-zustand-store.md  # Store creation pattern with persistence and loading guards
+│
+├── .claude/                       # Claude Code settings
+│   ├── settings.json              # Tool permissions (worktree-scoped)
+│   └── settings.local.json        # Local overrides (not committed)
+│
+├── public/                        # Static assets served by Vite
+├── index.html                     # Vite HTML entry point
+├── package.json                   # Version source of truth + monorepo root scripts
+├── pnpm-workspace.yaml            # pnpm monorepo workspace definition
+├── vite.config.ts                 # Vite + Tauri dev server + bundle analyzer
+├── tsconfig.json                  # TypeScript strict config (target: ES2020)
 ├── tsconfig.node.json
-└── postcss.config.mjs
+└── postcss.config.mjs             # TailwindCSS v4 PostCSS plugin
 ```
 
 ---
@@ -147,9 +222,14 @@ pnpm version:bump:major    # Bump major, sync all files
 
 Workflow steps:
 1. Prompts for bump level (patch / minor / major).
-2. Bumps and syncs version files, commits and tags `app-vX.Y.Z`.
-3. Builds in parallel on `ubuntu-22.04`, `macos-14` (arm64), and `windows-2022`.
-4. Publishes a **draft pre-release** to GitHub Releases.
+2. Bumps and syncs version files (`package.json` → `tauri.conf.json`, `Cargo.toml`).
+3. Promotes `[Unreleased]` in `CHANGELOG.md` to the new version heading.
+4. Commits and tags `app-vX.Y.Z`, then builds in parallel on `ubuntu-22.04`, `macos-14` (arm64), and `windows-2022`.
+5. Publishes a **draft pre-release** to GitHub Releases with changelog entries as the release body.
+
+**`.github/workflows/changelog-on-push.yml`** — runs on every push to any branch (excluding changelog/version-only commits).
+
+Appends pushed commit subjects as bullet points under the `[Unreleased]` section of `CHANGELOG.md` and commits the result back with a `[skip ci]` marker to prevent loops.
 
 ---
 
@@ -204,10 +284,11 @@ All state is managed through Zustand stores. Each store is colocated in `src/sta
 | Store | Responsibility |
 |---|---|
 | `appStore` | Theme (`light`/`dark`/`system`), toast notifications, hotkeys enabled flag, focused container |
-| `layoutStore` | Activity bar view, sidebar/panel dimensions visibility, **editor split tree**, tab management |
+| `layoutStore` | Activity bar view, sidebar/panel dimensions, **editor split tree**, tab management |
 | `profilesStore` | Connection profiles — loaded from disk on startup, debounce-saved on mutation |
-| `sessionStore` | In-memory active DB sessions (not persisted) |
 | `schemaStore` | Cached DB/table/column metadata |
+| `queryHistoryStore` | Per-profile query history (persisted) |
+| `resultsStore` | Query result sets (in-memory, not persisted) |
 | `modelsStore` | AI model provider configuration |
 | `tasksStore` | Task tracker items |
 
@@ -313,6 +394,42 @@ Currently **only MySQL/MariaDB** is implemented in the Rust backend (`mysql_asyn
 ## App Version Injection
 
 Vite injects `__APP_VERSION__` as a global string constant at build time (read from `package.json`). It is typed in `src/vite-env.d.ts` and accessed via `src/lib/appVersion.ts` / `src/hooks/useAppVersion.ts`. Do not hard-code version strings anywhere else.
+
+---
+
+## Sub-projects
+
+### `wgs-updater/` — Cloudflare Worker
+
+Auto-update endpoint consumed by the Tauri updater plugin. Built with **Hono** on Cloudflare Workers. Deployed independently at `wgs-updater.skiddph.com`.
+
+- Entry: `wgs-updater/src/index.ts`
+- Config: `wgs-updater/wrangler.jsonc`
+- Agent instructions: `wgs-updater/AGENTS.md`
+- Full docs: `wgs-updater/README.md`
+
+**Do not** modify this project when working on the desktop app unless the change specifically affects the update protocol.
+
+### `wgs-website/` — Cloudflare Pages
+
+Marketing and SEO website for WorkGrid Studio. Built with **Vite + React**. Deployed at `workgrid-studio.skiddph.com`.
+
+- Entry: `wgs-website/src/`
+- Config: `wgs-website/vite.config.ts`
+- Full docs: `wgs-website/README.md`
+
+**Do not** modify this project when working on the desktop app.
+
+### `.agent/` — Agent Rules and Workflows
+
+Contains always-on rules and step-by-step task workflows for AI-assisted development:
+
+| File | Purpose |
+|---|---|
+| `.agent/rules/coding-standards.md` | Senior Desktop Architect persona, priorities, anti-patterns |
+| `.agent/workflows/add-editor-tab.md` | End-to-end guide for adding a new tab type |
+| `.agent/workflows/add-tauri-command.md` | Adding a Rust command + TypeScript wrapper |
+| `.agent/workflows/add-zustand-store.md` | Store creation with persistence and loading guards |
 
 ---
 

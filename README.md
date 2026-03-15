@@ -1,6 +1,31 @@
 # WorkGrid Studio
 
-WorkGrid Studio is a cross-platform desktop database management app built with **Tauri 2**, **React 19**, **TypeScript**, **Vite**, **TailwindCSS v4**, and **Zustand**. The frontend lives in `src/`, the Rust-backed native shell in `src-tauri/`, and the auto-update service in `wgs-updater/`.
+WorkGrid Studio is a cross-platform desktop database management app built with **Tauri 2**, **React 19**, **TypeScript**, **Vite**, **TailwindCSS v4**, and **Zustand**. This is a **pnpm monorepo** containing the desktop app, auto-updater service, and marketing website as separate packages.
+
+## Monorepo Structure
+
+```
+workgrid-studio/
+├── src/                    # React/TypeScript frontend (desktop app UI)
+├── src-tauri/              # Rust Tauri backend (native shell, DB driver, IPC commands)
+├── wgs-updater/            # Cloudflare Worker — auto-update endpoint for Tauri updater
+├── wgs-website/            # Cloudflare Pages — marketing & SEO website
+├── scripts/                # Node ESM build utilities (versioning, changelog)
+├── .github/                # CI/CD workflows, issue templates, Dependabot config
+├── .agent/                 # Agent rules and task workflows for AI-assisted development
+│   ├── rules/              # Always-on coding standards and architecture rules
+│   └── workflows/          # Step-by-step guides for common development tasks
+├── .claude/                # Claude Code settings and permissions
+├── public/                 # Static assets served by Vite
+├── index.html              # Vite HTML entry point
+├── package.json            # Root package — version source of truth, workspace config
+├── pnpm-workspace.yaml     # pnpm monorepo workspace definition
+└── vite.config.ts          # Vite + Tauri dev server configuration
+```
+
+Each sub-project (`wgs-updater/`, `wgs-website/`) has its own `package.json`, `tsconfig.json`, and `README.md`. They are deployed independently — see their respective READMEs for details.
+
+---
 
 ## Install Requirements
 

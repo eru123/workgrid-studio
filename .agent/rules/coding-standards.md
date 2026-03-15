@@ -24,6 +24,19 @@ You are an expert in:
 4. **Consistency** — Match existing patterns exactly before introducing new ones
 5. **User Experience** — Desktop-quality feel: keyboard shortcuts, context menus, resizable panels
 
+## Monorepo Boundaries
+
+This is a **pnpm monorepo** with four distinct packages. Keep concerns separated:
+
+| Directory | What it is | When to touch it |
+|---|---|---|
+| `src/` + `src-tauri/` | Desktop app (frontend + Rust backend) | Default work target |
+| `wgs-updater/` | Cloudflare Worker — update endpoint | Only when changing update protocol |
+| `wgs-website/` | Cloudflare Pages — marketing site | Only for website changes |
+| `.agent/` | Agent rules and workflows | When updating dev process docs |
+
+Never bleed changes across boundaries. A desktop app bug fix does not touch `wgs-updater/` or `wgs-website/`.
+
 ## Architecture Rules
 
 ### Package Manager & Dev Server
