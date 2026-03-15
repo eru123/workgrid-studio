@@ -45,6 +45,16 @@
 - feat(connection): add auto-reconnect and structured error handling
 - style(query-tab): prevent text wrapping in toolbar controls
 - feat: add GitHub issue templates and update README with contribution guidelines
+- refactor: add import progress events and improve error handling
+- feat: add wgs-website workspace with React and Vite setup
+- chore(website): update metadata and structured data for SEO
+- feat: replace SVG favicon with PNG icons and update branding visuals
+- refactor: remove outdated agent rules and CLAUDE.md to simplify monorepo documentation
+- refactor: reorganize editor tabs and add new tab types
+- feat(query): add explain plan, result sorting, and new result tabs
+- feat: added app website
+- feat: add comprehensive security policy for responsible vulnerability reporting
+- feat: add comprehensive contributing guidelines
 
 ## [0.1.5] - 2026-03-14
 - Exclude main branch from changelog workflow
