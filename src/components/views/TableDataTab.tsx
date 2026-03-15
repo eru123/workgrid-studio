@@ -1333,7 +1333,7 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
         )}
 
         <table
-          className="w-full text-xs border-collapse"
+          className="min-w-full text-xs border-collapse"
           role="grid"
           aria-label={`Data grid for ${tableName}`}
           aria-rowcount={rows.length - deletedRows.size + addedRows.length + 1}
@@ -1342,7 +1342,8 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
           <thead className="sticky top-0 z-30">
             <tr className="bg-muted/70 backdrop-blur-sm" role="row" aria-rowindex={1}>
               <th
-                className="sticky left-0 z-30 text-center px-1.5 py-1.5 border-b border-r bg-muted/70 whitespace-nowrap w-8"
+                className="sticky left-0 z-30 text-center px-1.5 py-1.5 border-b border-r bg-muted/70 whitespace-nowrap"
+                style={{ width: 32, maxWidth: 32, minWidth: 32 }}
                 role="columnheader"
                 aria-colindex={1}
               >
@@ -1357,7 +1358,8 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
               </th>
               {/* Row number column */}
               <th
-                className="sticky left-[32px] z-30 text-center px-1.5 py-1.5 text-[10px] font-medium text-muted-foreground/70 tracking-wider border-b border-r bg-muted/70 whitespace-nowrap w-10"
+                className="sticky left-[32px] z-30 text-center px-1.5 py-1.5 text-[10px] font-medium text-muted-foreground/70 tracking-wider border-b border-r bg-muted/70 whitespace-nowrap"
+                style={{ width: 40, maxWidth: 40, minWidth: 40 }}
                 role="columnheader"
                 aria-colindex={2}
               >
@@ -1862,6 +1864,7 @@ const DataRow = memo(function DataRow({
     >
       <td
         className="sticky left-0 z-10 text-center px-1 py-0 border-r h-7 whitespace-nowrap bg-background"
+        style={{ width: 32, maxWidth: 32, minWidth: 32 }}
         role="gridcell"
         aria-colindex={1}
       >
@@ -1876,6 +1879,7 @@ const DataRow = memo(function DataRow({
       </td>
       <td
         className="sticky left-[32px] z-10 text-center px-1 py-0 border-r h-7 text-muted-foreground/40 tabular-nums text-[10px] bg-muted/20"
+        style={{ width: 40, maxWidth: 40, minWidth: 40 }}
         role="rowheader"
         aria-colindex={2}
       >
