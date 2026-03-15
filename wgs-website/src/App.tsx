@@ -88,7 +88,13 @@ export function App() {
 
       <header className="site-header container fade-up">
         <a className="brand" href="#top" aria-label="WorkGrid Studio home">
-          <span className="brand-mark">WG</span>
+          <img
+            className="brand-mark"
+            src="/icon-512x512.png"
+            alt=""
+            width="48"
+            height="48"
+          />
           <span className="brand-copy">
             <strong>WorkGrid Studio</strong>
             <span>Database work, orchestrated</span>
@@ -316,8 +322,18 @@ ORDER BY total DESC;`}</pre>
 
       <footer className="site-footer container">
         <p>Static Cloudflare Pages frontend for WorkGrid Studio.</p>
-        <a href="https://workgrid-studio.skiddph.com">
-          workgrid-studio.skiddph.com
+        <a
+          className="footer-brand"
+          href="https://workgrid-studio.skiddph.com"
+        >
+          <img
+            className="footer-mark"
+            src="/icon-512x512.png"
+            alt=""
+            width="24"
+            height="24"
+          />
+          <span>workgrid-studio.skiddph.com</span>
         </a>
       </footer>
     </div>

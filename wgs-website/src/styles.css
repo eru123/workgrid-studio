@@ -118,17 +118,12 @@ select {
 }
 
 .brand-mark {
-  display: inline-grid;
-  place-items: center;
   width: 3rem;
   height: 3rem;
   border-radius: 1rem;
-  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-warm) 100%);
-  color: #fff9f1;
-  font-family: "IBM Plex Mono", monospace;
-  font-size: 0.95rem;
-  letter-spacing: 0.12em;
-  box-shadow: 0 12px 28px rgba(244, 107, 63, 0.25);
+  object-fit: cover;
+  background: #102333;
+  box-shadow: 0 12px 28px rgba(16, 35, 51, 0.2);
 }
 
 .brand-copy {
@@ -601,6 +596,20 @@ select {
 
 .site-footer a {
   color: var(--text);
+}
+
+.footer-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.7rem;
+}
+
+.footer-mark {
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 0.45rem;
+  object-fit: cover;
+  background: #102333;
 }
 
 .fade-up {
