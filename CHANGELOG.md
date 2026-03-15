@@ -38,6 +38,12 @@
 - feat: add loading state and skeleton UI for query history
 - refactor: simplify timestamp generation using chrono crate
 - fix: correct sash direction and cursor styling for layout panels
+- chore: add license section to README
+- feat: add bundle analyzer and virtualization for query results
+- feat: enhance editor tabs with keyboard navigation and ARIA accessibility
+- feat(privacy): add comprehensive privacy controls and disclosure
+- feat(connection): add auto-reconnect and structured error handling
+- style(query-tab): prevent text wrapping in toolbar controls
 
 ## [0.1.5] - 2026-03-14
 - Exclude main branch from changelog workflow
