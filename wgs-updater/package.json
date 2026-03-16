@@ -9,13 +9,13 @@
     "cf-typegen": "wrangler types"
   },
   "dependencies": {
-    "chanfana": "^2.8.3",
+    "chanfana": "^3.2.1",
     "hono": "^4.12.8",
     "semver": "^7.7.4",
     "zod": "^3.25.76"
   },
   "devDependencies": {
-    "@types/node": "22.13.0",
+    "@types/node": "25.5.0",
     "@types/semver": "^7.7.1",
     "@types/service-worker-mock": "^2.0.4",
     "wrangler": "^4.73.0"
