@@ -1,15 +1,10 @@
 # Changelog
 
 ## [Unreleased]
-- feat: add comprehensive project setup and layout management
-- Update contribution guidelines to include linting and pre-commit hooks
-- chore: bump workgrid-studio version to 0.1.6
-- chore: bump version to v0.1.6
-- fix: remove nullish coalescing from store selectors that cause UI Crash
-- fix: UI/UX improvements and bug fixes that address internal testing issues
-- fix: adjust selected cell styling to improve visual distinction
-- fix: set fixed width for sticky columns in table data grid
-- refactor: remove results tab functionality and cleanup related code
+- **Workspace & Layout:** Added comprehensive project setup and layout management, and removed the legacy results tab flow to simplify the editor workspace.
+- **Grid & Query UX:** Improved table data grid stability with fixed-width sticky columns and clearer selected-cell styling for better scanability.
+- **Stability & Polish:** Resolved store-selector crashes caused by nullish coalescing and bundled broader UI/UX fixes surfaced during internal testing.
+- **Contributor Experience:** Updated contribution guidelines to cover linting and pre-commit hook expectations.
 
 ## [0.1.6] - 2026-03-15
 - **[Breaking] Vault & Security:** Migrated to secure, per-installation vault encryption via the OS credential store. Added Content Security Policy (CSP) and restricted file-system permissions.
