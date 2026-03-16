@@ -6,6 +6,10 @@
 - chore: bump workgrid-studio version to 0.1.6
 - chore: bump version to v0.1.6
 - fix: remove nullish coalescing from store selectors that cause UI Crash
+- fix: UI/UX improvements and bug fixes that address internal testing issues
+- fix: adjust selected cell styling to improve visual distinction
+- fix: set fixed width for sticky columns in table data grid
+- refactor: remove results tab functionality and cleanup related code
 
 ## [0.1.6] - 2026-03-15
 - **[Breaking] Vault & Security:** Migrated to secure, per-installation vault encryption via the OS credential store. Added Content Security Policy (CSP) and restricted file-system permissions.
