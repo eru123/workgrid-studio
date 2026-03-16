@@ -1,4 +1,4 @@
-import { useState, useEffect, Suspense, lazy, memo } from "react";
+import { useState, useEffect, useRef, Suspense, lazy, memo } from "react";
 import { useLayoutStore, SplitTree, EditorTab } from "@/state/layoutStore";
 import { Sash } from "./Sash";
 import { cn } from "@/lib/utils/cn";
@@ -47,11 +47,7 @@ const QueryTab = lazy(() =>
     default: m.QueryTab,
   })),
 );
-const ResultsTab = lazy(() =>
-  import("@/components/views/ResultsTab").then((m) => ({
-    default: m.ResultsTab,
-  })),
-);
+
 const SchemaDiagramTab = lazy(() =>
   import("@/components/views/SchemaDiagramTab").then((m) => ({
     default: m.SchemaDiagramTab,
@@ -126,10 +122,10 @@ const TabContent = memo(function TabContent({ tab, leafId }: { tab: EditorTab, l
             savedQueryId={tab.meta?.savedQueryId}
             savedQueryPath={tab.meta?.savedQueryPath}
             savedQueryName={tab.title}
+            initialTabMeta={tab.meta}
           />
         );
-      case "results":
-        return <ResultsTab tabId={tab.id} />;
+
       case "schema":
         return (
           <SchemaDiagramTab
@@ -151,7 +147,7 @@ const TabContent = memo(function TabContent({ tab, leafId }: { tab: EditorTab, l
 
 const TAB_TYPE_LABELS: Record<EditorTab["type"], string> = {
   sql: "SQL Query (Ctrl+N)",
-  results: "Frozen Results",
+
   schema: "Schema Diagram",
   "database-view": "Database View",
   "table-designer": "Table Designer",
@@ -170,7 +166,7 @@ function tabIcon(type: EditorTab["type"], isActive: boolean) {
   let icon;
   switch (type) {
     case "sql":          icon = <Terminal className={cls} />; break;
-    case "results":      icon = <Rows3 className={cls} />; break;
+
     case "schema":       icon = <Database className={cls} />; break;
     case "database-view": icon = <Database className={cls} />; break;
     case "table-designer": icon = <Table2 className={cls} />; break;
@@ -184,8 +180,9 @@ function tabIcon(type: EditorTab["type"], isActive: boolean) {
 
 // Module-level state for drag payload to bypass WebView dataTransfer filtering robustly
 let activeDragPayload: { tabId: string; sourceLeafId: string } | null = null;
+const EMPTY_TABS: EditorTab[] = [];
 
-export function EditorNode({ tree }: { tree: SplitTree }) {
+export const EditorNode = memo(function EditorNode({ tree }: { tree: SplitTree }) {
   const resizeNode = useLayoutStore((s) => s.resizeNode);
   const openTab = useLayoutStore((s) => s.openTab);
   const closeTab = useLayoutStore((s) => s.closeTab);
@@ -203,6 +200,8 @@ export function EditorNode({ tree }: { tree: SplitTree }) {
   const connectedProfiles = useSchemaStore((s) => s.connectedProfiles);
   const activeLeafId = useLayoutStore((s) => s.activeLeafId);
   const isSplit = useLayoutStore((s) => s.editorTree.type !== "leaf");
+  const treeTabs = tree.type === "leaf" ? tree.tabs : EMPTY_TABS;
+  const treeActiveTabId = tree.type === "leaf" ? tree.activeTabId : null;
 
   const [contextMenu, setContextMenu] = useState<{
     x: number;
@@ -216,6 +215,11 @@ export function EditorNode({ tree }: { tree: SplitTree }) {
   const [dragOverSplit, setDragOverSplit] = useState<"horizontal" | "vertical" | null>(null);
   const [renamingTabId, setRenamingTabId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
+  const tabScrollRef = useRef<HTMLDivElement | null>(null);
+  const [tabOverflow, setTabOverflow] = useState({
+    start: false,
+    end: false,
+  });
 
   // Track any drag-in-progress globally so all panes show their edge drop zones
   useEffect(() => {
@@ -288,6 +292,60 @@ export function EditorNode({ tree }: { tree: SplitTree }) {
     };
   }, []);
 
+  useEffect(() => {
+    if (tree.type !== "leaf") {
+      setTabOverflow({ start: false, end: false });
+      return;
+    }
+
+    const scroller = tabScrollRef.current;
+    if (!scroller) {
+      setTabOverflow({ start: false, end: false });
+      return;
+    }
+
+    const updateOverflow = () => {
+      const hasOverflow = scroller.scrollWidth > scroller.clientWidth + 1;
+      setTabOverflow({
+        start: hasOverflow && scroller.scrollLeft > 1,
+        end:
+          hasOverflow &&
+          scroller.scrollLeft + scroller.clientWidth < scroller.scrollWidth - 1,
+      });
+    };
+
+    updateOverflow();
+    scroller.addEventListener("scroll", updateOverflow, { passive: true });
+
+    const resizeObserver =
+      typeof ResizeObserver !== "undefined"
+        ? new ResizeObserver(() => updateOverflow())
+        : null;
+
+    resizeObserver?.observe(scroller);
+
+    return () => {
+      scroller.removeEventListener("scroll", updateOverflow);
+      resizeObserver?.disconnect();
+    };
+  }, [tree.type, treeTabs]);
+
+  useEffect(() => {
+    if (tree.type !== "leaf" || !treeActiveTabId) return;
+
+    const scroller = tabScrollRef.current;
+    if (!scroller) return;
+
+    const activeTabEl = scroller.querySelector<HTMLElement>(
+      `[data-tab-id="${treeActiveTabId}"]`,
+    );
+    activeTabEl?.scrollIntoView({
+      behavior: "auto",
+      block: "nearest",
+      inline: "nearest",
+    });
+  }, [tree.type, treeActiveTabId, treeTabs]);
+
   // Shortcut for closing active tab (Ctrl+W)
   useEffect(() => {
     if (tree.type !== "leaf") return;
@@ -319,6 +377,181 @@ export function EditorNode({ tree }: { tree: SplitTree }) {
 
   if (tree.type === "leaf") {
     const isLeafActive = activeLeafId === tree.id;
+    const pinnedTabs = tree.tabs.filter((tab) => tab.pinned);
+    const scrollableTabs = tree.tabs.filter((tab) => !tab.pinned);
+    const renderTab = (tab: EditorTab, idx: number) => {
+      const isActive = tab.id === tree.activeTabId;
+      const isDragTarget = dragOverTabId === tab.id;
+
+      return (
+        <div
+          key={tab.id}
+          role="tab"
+          aria-selected={isActive}
+          aria-label={`${tab.title} (${TAB_TYPE_LABELS[tab.type] ?? tab.type})`}
+          tabIndex={isActive ? 0 : -1}
+          data-tab-id={tab.id}
+          className={cn(
+            "group flex items-center gap-1 h-full px-2 text-xs cursor-pointer select-none shrink-0 transition-all border-t-2",
+            isActive
+              ? "border-primary bg-background text-foreground"
+              : "border-transparent text-muted-foreground hover:text-foreground hover:bg-accent/40",
+            isDragTarget && "border-l-2 border-l-primary",
+          )}
+          draggable
+          onDragStart={(e) => handleDragStart(e, tab.id, tree.id)}
+          onDragEnter={(e) => handleDragEnter(e, tab.id)}
+          onDragOver={handleDragOver}
+          onDragLeave={() => setDragOverTabId(null)}
+          onDragEnd={handleDragEnd}
+          onDrop={(e) => {
+            e.stopPropagation();
+            handleDrop(e, tree.id, idx);
+          }}
+          onClick={() => setActiveTab(tab.id, tree.id)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              setActiveTab(tab.id, tree.id);
+              return;
+            }
+
+            if (
+              e.key !== "ArrowRight" &&
+              e.key !== "ArrowLeft" &&
+              e.key !== "Home" &&
+              e.key !== "End"
+            ) {
+              return;
+            }
+
+            const tabEls = Array.from(
+              document.querySelectorAll<HTMLElement>(
+                `[data-leaf-id="${tree.id}"] [role="tab"]`,
+              ),
+            );
+            if (tabEls.length === 0) return;
+
+            let nextIndex = idx;
+            if (e.key === "ArrowRight") {
+              nextIndex = (idx + 1) % tabEls.length;
+            } else if (e.key === "ArrowLeft") {
+              nextIndex = (idx - 1 + tabEls.length) % tabEls.length;
+            } else if (e.key === "Home") {
+              nextIndex = 0;
+            } else if (e.key === "End") {
+              nextIndex = tabEls.length - 1;
+            }
+
+            e.preventDefault();
+            tabEls[nextIndex]?.focus();
+            const nextTabId = tabEls[nextIndex]?.dataset.tabId;
+            if (nextTabId) {
+              setActiveTab(nextTabId, tree.id);
+            }
+          }}
+          onAuxClick={(e) => {
+            if (e.button === 1) {
+              e.preventDefault();
+              if (
+                tab.dirty &&
+                !window.confirm(
+                  "You have unsaved changes. Are you sure you want to close this tab?",
+                )
+              ) {
+                return;
+              }
+              closeTab(tab.id, tree.id);
+            }
+          }}
+          onMouseDown={(e) => {
+            if (e.button === 1) e.preventDefault();
+          }}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            setContextMenu({
+              x: e.clientX,
+              y: e.clientY,
+              tabId: tab.id,
+            });
+          }}
+        >
+          {tabIcon(tab.type, isActive)}
+          {renamingTabId === tab.id ? (
+            <input
+              autoFocus
+              value={renameValue}
+              className="max-w-30 bg-background border border-primary rounded px-1 text-xs outline-none"
+              onChange={e => setRenameValue(e.target.value)}
+              onBlur={() => {
+                if (renameValue.trim()) updateTab(tab.id, { title: renameValue.trim() });
+                setRenamingTabId(null);
+              }}
+              onKeyDown={e => {
+                if (e.key === "Enter") {
+                  if (renameValue.trim()) updateTab(tab.id, { title: renameValue.trim() });
+                  setRenamingTabId(null);
+                } else if (e.key === "Escape") {
+                  setRenamingTabId(null);
+                }
+                e.stopPropagation();
+              }}
+              onClick={e => e.stopPropagation()}
+            />
+          ) : (
+            <span
+              className="truncate max-w-30"
+              onDoubleClick={e => {
+                e.stopPropagation();
+                setRenamingTabId(tab.id);
+                setRenameValue(tab.title);
+              }}
+            >
+              {tab.title}
+            </span>
+          )}
+          <button
+            onClick={(e) => { e.stopPropagation(); togglePinTab(tab.id, tree.id); }}
+            className={cn(
+              "ml-0.5 p-0.5 rounded hover:bg-muted/80 transition-opacity",
+              tab.pinned ? "opacity-100 text-primary" : "opacity-0 group-hover:opacity-60"
+            )}
+            aria-label={tab.pinned ? "Unpin tab" : "Pin tab"}
+            title={tab.pinned ? "Unpin tab" : "Pin tab"}
+          >
+            {tab.pinned
+              ? <Pin className="w-2.5 h-2.5" />
+              : <PinOff className="w-2.5 h-2.5" />
+            }
+          </button>
+          {!tab.pinned && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                if (tab.dirty && !window.confirm("You have unsaved changes. Are you sure you want to close this tab?")) {
+                  return;
+                }
+                closeTab(tab.id, tree.id);
+              }}
+              className={cn(
+                "ml-0.5 p-0.5 rounded hover:bg-muted/80 transition-opacity group/close",
+                tab.dirty ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+              )}
+              aria-label="Close tab"
+            >
+              {tab.dirty ? (
+                <>
+                  <Circle className="w-2 h-2 fill-current opacity-80 group-hover/close:hidden" />
+                  <X className="w-3 h-3 hidden group-hover/close:block" />
+                </>
+              ) : (
+                <X className="w-3 h-3" />
+              )}
+            </button>
+          )}
+        </div>
+      );
+    };
     return (
       <div
         className={cn(
@@ -338,16 +571,34 @@ export function EditorNode({ tree }: { tree: SplitTree }) {
           style={{ height: 29 }}
         >
           <div
-            className="absolute inset-0 flex items-end overflow-x-auto overflow-y-hidden"
+            className="absolute inset-0 flex items-stretch"
             role="tablist"
+            data-leaf-id={tree.id}
             aria-label="Editor tabs"
             onDragEnter={(e) => handleDragEnter(e, null)}
             onDragOver={handleDragOver}
             onDrop={(e) => handleDrop(e, tree.id)}
           >
-            {tree.tabs.map((tab, idx) => {
+            {pinnedTabs.length > 0 && (
+              <div
+                className={cn(
+                  "flex h-full shrink-0 items-end bg-background/60",
+                  scrollableTabs.length > 0 && "border-r",
+                )}
+              >
+                {pinnedTabs.map((tab, idx) => renderTab(tab, idx))}
+              </div>
+            )}
+            <div className="relative h-full min-w-0 flex-1">
+              <div
+                ref={tabScrollRef}
+                className="h-full overflow-x-auto overflow-y-hidden"
+              >
+                <div className="flex h-full min-w-max items-end">
+            {scrollableTabs.map((tab, idx) => {
               const isActive = tab.id === tree.activeTabId;
               const isDragTarget = dragOverTabId === tab.id;
+              const actualIdx = pinnedTabs.length + idx;
               return (
                 <div
                   key={tab.id}
@@ -357,7 +608,7 @@ export function EditorNode({ tree }: { tree: SplitTree }) {
                   tabIndex={isActive ? 0 : -1}
                   data-tab-id={tab.id}
                   className={cn(
-                    "group flex items-center gap-1 h-full px-2 text-xs cursor-pointer select-none shrink-0 transition-all border-b-2",
+                    "group flex items-center gap-1 h-full px-2 text-xs cursor-pointer select-none shrink-0 transition-all border-t-2",
                     isActive
                       ? "border-primary bg-background text-foreground"
                       : "border-transparent text-muted-foreground hover:text-foreground hover:bg-accent/40",
@@ -371,7 +622,7 @@ export function EditorNode({ tree }: { tree: SplitTree }) {
                   onDragEnd={handleDragEnd}
                   onDrop={(e) => {
                     e.stopPropagation(); // prevent container drop
-                    handleDrop(e, tree.id, idx);
+                    handleDrop(e, tree.id, actualIdx);
                   }}
                   onClick={() => setActiveTab(tab.id, tree.id)}
                   onKeyDown={(e) => {
@@ -391,15 +642,17 @@ export function EditorNode({ tree }: { tree: SplitTree }) {
                     }
 
                     const tabEls = Array.from(
-                      e.currentTarget.parentElement?.querySelectorAll<HTMLElement>('[role="tab"]') ?? [],
+                      document.querySelectorAll<HTMLElement>(
+                        `[data-leaf-id="${tree.id}"] [role="tab"]`,
+                      ),
                     );
                     if (tabEls.length === 0) return;
 
-                    let nextIndex = idx;
+                    let nextIndex = actualIdx;
                     if (e.key === "ArrowRight") {
-                      nextIndex = (idx + 1) % tabEls.length;
+                      nextIndex = (actualIdx + 1) % tabEls.length;
                     } else if (e.key === "ArrowLeft") {
-                      nextIndex = (idx - 1 + tabEls.length) % tabEls.length;
+                      nextIndex = (actualIdx - 1 + tabEls.length) % tabEls.length;
                     } else if (e.key === "Home") {
                       nextIndex = 0;
                     } else if (e.key === "End") {
@@ -517,6 +770,15 @@ export function EditorNode({ tree }: { tree: SplitTree }) {
                 </div>
               );
             })}
+                </div>
+              </div>
+              {tabOverflow.start && (
+                <div className="pointer-events-none absolute inset-y-0 left-0 w-6 bg-gradient-to-r from-muted/80 via-muted/30 to-transparent" />
+              )}
+              {tabOverflow.end && (
+                <div className="pointer-events-none absolute inset-y-0 right-0 w-8 bg-gradient-to-l from-muted/80 via-muted/30 to-transparent" />
+              )}
+            </div>
             {/* New tab button */}
             <button
               onClick={() => {
@@ -535,8 +797,7 @@ export function EditorNode({ tree }: { tree: SplitTree }) {
               <Plus className="w-3.5 h-3.5" />
             </button>
 
-            {/* Spacer to push actions to the right */}
-            <div className="flex-1 min-w-[20px]" />
+            <div className="mx-1 h-4 w-px bg-border/60 shrink-0" />
 
             {/* Pane Actions (always visible on hover of the tab bar, or just keep them subtle) */}
             <div className="flex items-center px-2 py-1 gap-1 shrink-0">
@@ -783,4 +1044,4 @@ export function EditorNode({ tree }: { tree: SplitTree }) {
       />
     </div>
   );
-}
+});

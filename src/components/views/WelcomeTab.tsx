@@ -1,7 +1,8 @@
 import { useLayoutStore } from "@/state/layoutStore";
 import { useSchemaStore } from "@/state/schemaStore";
 import { useAppVersion } from "@/hooks/useAppVersion";
-import { Database, FileCode2, Bot, CheckSquare, Terminal, Server } from "lucide-react";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { Database, FileCode2, Bot, CheckSquare, Terminal, Server, Heart } from "lucide-react";
 
 export function WelcomeTab() {
     const { openTab, togglePanel, setActiveView } = useLayoutStore();
@@ -96,6 +97,18 @@ export function WelcomeTab() {
                 {/* Footer hint */}
                 <p className="text-xs text-muted-foreground/60 text-center">
                     WorkGrid Studio v{appVersion}
+                </p>
+
+                {/* Support */}
+                <p className="text-xs text-muted-foreground/50 text-center">
+                    WorkGrid Studio is free and open source.{" "}
+                    <button
+                        onClick={() => openUrl("https://paypal.me/ja1030")}
+                        className="inline-flex items-center gap-1 hover:text-muted-foreground transition-colors underline-offset-2 hover:underline"
+                    >
+                        <Heart className="w-3 h-3" />
+                        Support the project
+                    </button>
                 </p>
             </div>
         </div>

@@ -10,6 +10,9 @@ interface LayoutPrefs {
   isPrimarySidebarVisible: boolean;
   isSecondarySidebarVisible: boolean;
   isBottomPanelVisible: boolean;
+  activeView?: ActivityView;
+  activeLeafId?: string | null;
+  editorTree?: SplitTree;
 }
 
 let prefsSaveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -27,6 +30,9 @@ function stateToPrefs(state: {
   isPrimarySidebarVisible: boolean;
   isSecondarySidebarVisible: boolean;
   isBottomPanelVisible: boolean;
+  activeView: ActivityView;
+  activeLeafId: string | null;
+  editorTree: SplitTree;
 }): LayoutPrefs {
   return {
     primarySidebarWidth: state.primarySidebarWidth,
@@ -35,6 +41,9 @@ function stateToPrefs(state: {
     isPrimarySidebarVisible: state.isPrimarySidebarVisible,
     isSecondarySidebarVisible: state.isSecondarySidebarVisible,
     isBottomPanelVisible: state.isBottomPanelVisible,
+    activeView: state.activeView,
+    activeLeafId: state.activeLeafId,
+    editorTree: state.editorTree,
   };
 }
 
@@ -42,7 +51,6 @@ export type SplitDirection = "horizontal" | "vertical";
 
 export type EditorTabType =
   | "sql"
-  | "results"
   | "schema"
   | "models"
   | "tasks"
@@ -98,6 +106,7 @@ interface LayoutState {
   activeLeafId: string | null;
 
   loadLayoutPrefs: () => Promise<void>;
+  saveLayoutPrefs: () => void;
   setActiveView: (view: ActivityView) => void;
   setActiveLeaf: (leafId: string) => void;
   setSidebarWidth: (width: number) => void;
@@ -154,6 +163,42 @@ function updateLeaf(
   };
 }
 
+function isEditorTab(value: unknown): value is EditorTab {
+  if (!value || typeof value !== "object") return false;
+  const tab = value as Partial<EditorTab>;
+  return (
+    typeof tab.id === "string" &&
+    typeof tab.title === "string" &&
+    typeof tab.type === "string"
+  );
+}
+
+function isSplitTree(value: unknown): value is SplitTree {
+  if (!value || typeof value !== "object") return false;
+
+  const tree = value as Partial<SplitTree>;
+  if (tree.type === "leaf") {
+    return (
+      typeof tree.id === "string" &&
+      Array.isArray(tree.tabs) &&
+      tree.tabs.every(isEditorTab) &&
+      (typeof tree.activeTabId === "string" || tree.activeTabId === null)
+    );
+  }
+
+  if (tree.type === "node") {
+    return (
+      typeof tree.id === "string" &&
+      (tree.direction === "horizontal" || tree.direction === "vertical") &&
+      typeof tree.ratio === "number" &&
+      isSplitTree(tree.a) &&
+      isSplitTree(tree.b)
+    );
+  }
+
+  return false;
+}
+
 export const useLayoutStore = create<LayoutState>((set) => ({
   activityBarWidth: 48,
   primarySidebarWidth: 260,
@@ -186,10 +231,18 @@ export const useLayoutStore = create<LayoutState>((set) => ({
       if (prefs.isPrimarySidebarVisible !== undefined) updates.isPrimarySidebarVisible = prefs.isPrimarySidebarVisible;
       if (prefs.isSecondarySidebarVisible !== undefined) updates.isSecondarySidebarVisible = prefs.isSecondarySidebarVisible;
       if (prefs.isBottomPanelVisible !== undefined) updates.isBottomPanelVisible = prefs.isBottomPanelVisible;
+      if (prefs.activeView) updates.activeView = prefs.activeView;
+      if (prefs.activeLeafId !== undefined) updates.activeLeafId = prefs.activeLeafId;
+      if (prefs.editorTree && isSplitTree(prefs.editorTree)) updates.editorTree = prefs.editorTree;
       if (Object.keys(updates).length > 0) set(updates);
     } catch {
       // Ignore — defaults apply
     }
+  },
+
+  saveLayoutPrefs: () => {
+    const state = useLayoutStore.getState();
+    debouncedSavePrefs(stateToPrefs(state));
   },
 
   setActiveView: (view) =>

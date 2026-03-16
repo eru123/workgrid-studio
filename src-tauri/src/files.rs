@@ -1,6 +1,6 @@
-use std::path::PathBuf;
-use std::fs;
 use crate::{AppError, AppResult};
+use std::fs;
+use std::path::PathBuf;
 
 pub const APP_PREFERENCES_FILE: &str = "preferences.json";
 
@@ -38,8 +38,7 @@ pub fn app_read_file(filename: String) -> AppResult<String> {
     if !path.exists() {
         return Ok(String::new());
     }
-    fs::read_to_string(&path)
-        .map_err(|e| AppError::io(format!("Read error: {}", e)))
+    fs::read_to_string(&path).map_err(|e| AppError::io(format!("Read error: {}", e)))
 }
 
 #[tauri::command]
@@ -48,12 +47,10 @@ pub fn app_write_file(filename: String, contents: String) -> AppResult<()> {
     let path = base.join("data").join(&filename);
     if let Some(parent) = path.parent() {
         if !parent.exists() {
-            fs::create_dir_all(parent)
-                .map_err(|e| AppError::io(format!("Write error: {}", e)))?;
+            fs::create_dir_all(parent).map_err(|e| AppError::io(format!("Write error: {}", e)))?;
         }
     }
-    fs::write(&path, contents)
-        .map_err(|e| AppError::io(format!("Write error: {}", e)))
+    fs::write(&path, contents).map_err(|e| AppError::io(format!("Write error: {}", e)))
 }
 
 #[tauri::command]

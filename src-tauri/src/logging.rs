@@ -1,27 +1,31 @@
+use crate::files::{app_data_dir, app_preferences_path, ensure_app_dirs};
+use crate::{AppError, AppResult};
+use chrono::Local;
+use serde::Deserialize;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use serde::Deserialize;
-use crate::{AppError, AppResult};
-use crate::files::{app_data_dir, app_preferences_path, ensure_app_dirs};
-use chrono::Local;
+use std::time::Duration;
 
 const DEFAULT_MAX_LOG_SIZE_MB: u64 = 10;
 const MIN_LOG_SIZE_MB: u64 = 1;
 const MAX_LOG_SIZE_MB: u64 = 250;
+const DEFAULT_MAX_LOG_AGE_DAYS: u64 = 14;
+const MIN_LOG_AGE_DAYS: u64 = 1;
+const MAX_LOG_AGE_DAYS: u64 = 365;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct LoggingPreferences {
     max_log_size_mb: Option<u64>,
+    max_log_age_days: Option<u64>,
 }
 
 pub fn log_dir_for(profile_id: &str) -> AppResult<PathBuf> {
     let base = app_data_dir()?;
     let dir = base.join("logs").join(profile_id);
     if !dir.exists() {
-        fs::create_dir_all(&dir)
-            .map_err(|e| format!("Failed to create log dir: {}", e))?;
+        fs::create_dir_all(&dir).map_err(|e| format!("Failed to create log dir: {}", e))?;
     }
     Ok(dir)
 }
@@ -32,12 +36,9 @@ pub fn timestamp() -> String {
 
 pub fn append_log(profile_id: &str, filename: &str, message: &str) {
     if let Ok(dir) = log_dir_for(profile_id) {
+        purge_expired_logs(&dir);
         let path = dir.join(filename);
-        if let Ok(mut file) = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)
-        {
+        if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&path) {
             let _ = writeln!(file, "[{}] {}", timestamp(), message);
         }
         enforce_log_retention(&path);
@@ -49,7 +50,11 @@ pub fn log_query(profile_id: &str, query: &str) {
 }
 
 pub fn log_query_result(profile_id: &str, query: &str, count: usize) {
-    append_log(profile_id, "mysql.log.txt", &format!("QUERY: {} → {} rows", query, count));
+    append_log(
+        profile_id,
+        "mysql.log.txt",
+        &format!("QUERY: {} → {} rows", query, count),
+    );
 }
 
 pub fn log_info(profile_id: &str, message: &str) {
@@ -74,8 +79,7 @@ pub fn read_profile_log(profile_id: String, log_type: String) -> AppResult<Strin
     if !path.exists() {
         return Ok(String::new());
     }
-    fs::read_to_string(&path)
-        .map_err(|e| AppError::io(format!("Read error: {}", e)))
+    fs::read_to_string(&path).map_err(|e| AppError::io(format!("Read error: {}", e)))
 }
 
 #[tauri::command]
@@ -144,6 +148,50 @@ fn current_max_log_size_bytes() -> u64 {
         .clamp(MIN_LOG_SIZE_MB, MAX_LOG_SIZE_MB)
         * 1024
         * 1024
+}
+
+fn current_max_log_age_days() -> u64 {
+    let Ok(path) = app_preferences_path() else {
+        return DEFAULT_MAX_LOG_AGE_DAYS;
+    };
+    let Ok(raw) = fs::read_to_string(path) else {
+        return DEFAULT_MAX_LOG_AGE_DAYS;
+    };
+    let Ok(prefs) = serde_json::from_str::<LoggingPreferences>(&raw) else {
+        return DEFAULT_MAX_LOG_AGE_DAYS;
+    };
+
+    prefs
+        .max_log_age_days
+        .unwrap_or(DEFAULT_MAX_LOG_AGE_DAYS)
+        .clamp(MIN_LOG_AGE_DAYS, MAX_LOG_AGE_DAYS)
+}
+
+fn purge_expired_logs(dir: &Path) {
+    let max_age = Duration::from_secs(current_max_log_age_days() * 24 * 60 * 60);
+
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Ok(metadata) = entry.metadata() else {
+            continue;
+        };
+        if !metadata.is_file() {
+            continue;
+        }
+        let Ok(modified) = metadata.modified() else {
+            continue;
+        };
+        let Ok(elapsed) = modified.elapsed() else {
+            continue;
+        };
+        if elapsed > max_age {
+            let _ = fs::remove_file(path);
+        }
+    }
 }
 
 fn enforce_log_retention(path: &Path) {

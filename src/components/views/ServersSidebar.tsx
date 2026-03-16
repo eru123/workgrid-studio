@@ -1,7 +1,13 @@
 import { useState, useEffect } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { homeDir, join } from "@tauri-apps/api/path";
-import { dbForgetHostKey } from "@/lib/db";
+import { dbConnect, dbDisconnect, dbForgetHostKey, dbPing } from "@/lib/db";
+import {
+  MariadbIcon,
+  MysqlIcon,
+  PostgresIcon,
+  SqliteIcon,
+} from "@/components/icons/DatabaseTypeIcons";
 import {
   DatabaseType,
   DB_TYPE_LABELS,
@@ -10,6 +16,7 @@ import {
 } from "@/state/profilesStore";
 import { useProfileManager } from "@/hooks/useProfileManager";
 import { useProfilesStore } from "@/state/profilesStore";
+import { useSchemaStore } from "@/state/schemaStore";
 import { useAppStore } from "@/state/appStore";
 import { ProfileListSkeleton } from "@/components/ui/Skeleton";
 import { cn } from "@/lib/utils/cn";
@@ -25,14 +32,14 @@ import {
   Loader2,
   MoreVertical,
   Database,
+  ShieldCheck,
 } from "lucide-react";
-import { SiPostgresql, SiMysql, SiSqlite, SiMariadb } from "react-icons/si";
 
 const DB_ICONS: Record<DatabaseType, React.ElementType> = {
-  postgres: SiPostgresql,
-  mysql: SiMysql,
-  sqlite: SiSqlite,
-  mariadb: SiMariadb,
+  postgres: PostgresIcon,
+  mysql: MysqlIcon,
+  sqlite: SqliteIcon,
+  mariadb: MariadbIcon,
   mssql: Database,
 };
 
@@ -67,6 +74,8 @@ function getConnectionStatusMeta(status?: string) {
 
 export function ServersSidebar() {
   const isLoaded = useProfilesStore((s) => s._loaded);
+  const latencies = useSchemaStore((s) => s.latencies);
+  const serverVersions = useSchemaStore((s) => s.serverVersions);
   const {
     profiles,
     viewMode,
@@ -89,6 +98,11 @@ export function ServersSidebar() {
     x: number;
     y: number;
   } | null>(null);
+  const [isTestingConnection, setIsTestingConnection] = useState(false);
+  const [testConnectionResult, setTestConnectionResult] = useState<{
+    tone: "success" | "error";
+    message: string;
+  } | null>(null);
 
   useEffect(() => {
     const handleClose = () => setContextMenu(null);
@@ -101,6 +115,78 @@ export function ServersSidebar() {
   }, []);
 
   const isSqlite = formData.type === "sqlite";
+
+  useEffect(() => {
+    setTestConnectionResult(null);
+  }, [editingId, formData.type, viewMode]);
+
+  const handleTestConnection = async () => {
+    if (formData.type !== "mysql" && formData.type !== "mariadb") {
+      const message = "Test Connection currently supports MySQL and MariaDB profiles.";
+      setTestConnectionResult({ tone: "error", message });
+      useAppStore.getState().addToast({
+        title: "Test Connection Unavailable",
+        description: message,
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsTestingConnection(true);
+    setTestConnectionResult(null);
+
+    const tempProfileId = `test-${crypto.randomUUID()}`;
+
+    try {
+      await dbConnect({
+        profile_id: tempProfileId,
+        host: formData.host,
+        port: formData.port ?? DB_TYPE_DEFAULT_PORTS[formData.type] ?? 3306,
+        user: formData.user,
+        password: formData.password,
+        database: formData.database || null,
+        ssl: formData.ssl,
+        ssl_ca_file: formData.sslCaFile || null,
+        ssl_cert_file: formData.sslCertFile || null,
+        ssl_key_file: formData.sslKeyFile || null,
+        ssl_reject_unauthorized: formData.sslRejectUnauthorized ?? false,
+        db_type: formData.type,
+        ssh: formData.ssh,
+        ssh_host: formData.sshHost || "",
+        ssh_port: formData.sshPort || 22,
+        ssh_user: formData.sshUser || "",
+        ssh_password: formData.sshPassword || null,
+        ssh_key_file: formData.sshKeyFile || null,
+        ssh_passphrase: formData.sshPassphrase || null,
+        ssh_strict_key_checking: formData.sshStrictKeyChecking ?? false,
+        ssh_keep_alive_interval: formData.sshKeepAliveInterval ?? 0,
+        ssh_compression: formData.sshCompression ?? true,
+      });
+
+      const latency = await dbPing(tempProfileId);
+      const message = `Connected successfully in ${latency}ms.`;
+      setTestConnectionResult({ tone: "success", message });
+      useAppStore.getState().addToast({
+        title: "Connection Test Passed",
+        description: message,
+      });
+    } catch (error) {
+      const message = String(error);
+      setTestConnectionResult({ tone: "error", message });
+      useAppStore.getState().addToast({
+        title: "Connection Test Failed",
+        description: message,
+        variant: "destructive",
+      });
+    } finally {
+      try {
+        await dbDisconnect(tempProfileId);
+      } catch {
+        // Best-effort cleanup for temporary test connections.
+      }
+      setIsTestingConnection(false);
+    }
+  };
 
   return (
     <div className="h-full flex flex-col relative bg-background">
@@ -149,10 +235,16 @@ export function ServersSidebar() {
         ) : (
           profiles.map((profile) => {
             const statusMeta = getConnectionStatusMeta(profile.connectionStatus);
+            const latency = latencies[profile.id] ?? null;
+            const serverVersion = serverVersions[profile.id] ?? null;
             const connectionTarget =
               profile.type === "sqlite"
                 ? profile.filePath || "No file set"
                 : `${profile.host}:${profile.port ?? "—"}`;
+
+            const lastConnectedLabel = profile.lastConnectedAt
+              ? new Date(profile.lastConnectedAt).toLocaleString()
+              : "Never";
 
             return (
               <div
@@ -178,7 +270,7 @@ export function ServersSidebar() {
                     }
                   }}
                   className="w-full text-left px-3 py-1.5 flex items-center gap-2.5 transition-colors group relative hover:bg-accent/50 cursor-pointer"
-                  title="Double-click to connect / open"
+                  title={`${profile.name}\n${DB_TYPE_LABELS[profile.type]} • ${statusMeta.label}\n${connectionTarget}\nLast connected: ${lastConnectedLabel}`}
                   aria-label={`${profile.name}. ${statusMeta.label}. ${connectionTarget}. Press Enter to connect or open.`}
                 >
                   {/* DB Icon + status */}
@@ -189,10 +281,7 @@ export function ServersSidebar() {
                         <Icon
                           className="w-3.5 h-3.5 text-muted-foreground transition-colors group-hover/item:text-foreground"
                           style={{
-                            color:
-                              profile.connectionStatus === "connected"
-                                ? profile.color
-                                : undefined,
+                            color: DB_TYPE_COLORS[profile.type],
                           }}
                         />
                       );
@@ -207,13 +296,32 @@ export function ServersSidebar() {
                   </div>
 
                   <div className="flex-1 min-w-0">
-                    <div className="text-[13px] font-medium truncate leading-tight">
-                      {profile.name}
+                    <div className="flex items-center gap-2">
+                      <div className="text-[13px] font-medium truncate leading-tight">
+                        {profile.name}
+                      </div>
+                      {profile.connectionStatus === "connected" && latency !== null && (
+                        <span
+                          className={cn(
+                            "shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-mono",
+                            latency === -1
+                              ? "bg-red-500/10 text-red-400"
+                              : latency > 200
+                                ? "bg-amber-500/10 text-amber-400"
+                                : "bg-primary/10 text-primary",
+                          )}
+                        >
+                          {latency === -1 ? "err" : `${latency}ms`}
+                        </span>
+                      )}
                     </div>
                     <div className="text-[10px] text-muted-foreground truncate leading-tight mt-0.5">
                       {profile.type === "sqlite"
                         ? profile.filePath || "No file set"
                         : `${profile.host}:${profile.port ?? "—"}`}
+                    </div>
+                    <div className="text-[10px] text-muted-foreground/80 truncate leading-tight mt-0.5">
+                      {serverVersion || DB_TYPE_LABELS[profile.type]}
                     </div>
                     <div className="mt-1 flex items-center">
                       <span
@@ -222,6 +330,10 @@ export function ServersSidebar() {
                           statusMeta.badgeClassName,
                         )}
                       >
+                        <span
+                          className="h-1.5 w-1.5 rounded-full"
+                          style={{ backgroundColor: DB_TYPE_COLORS[profile.type] }}
+                        />
                         <span
                           className={cn(
                             "h-1.5 w-1.5 rounded-full",
@@ -944,7 +1056,34 @@ export function ServersSidebar() {
               </div>
 
               {/* Modal Footer */}
-              <div className="h-14 border-t flex items-center justify-end px-5 gap-3 bg-muted/20 shrink-0">
+              <div className="border-t bg-muted/20 shrink-0">
+                {testConnectionResult && (
+                  <div
+                    className={cn(
+                      "px-5 pt-3 text-[11px]",
+                      testConnectionResult.tone === "success"
+                        ? "text-emerald-400"
+                        : "text-red-400",
+                    )}
+                  >
+                    {testConnectionResult.message}
+                  </div>
+                )}
+                <div className="h-14 flex items-center justify-between px-5 gap-3">
+                  <button
+                    type="button"
+                    onClick={handleTestConnection}
+                    disabled={isTestingConnection}
+                    className="inline-flex items-center gap-1.5 rounded-md border px-3 py-2 text-xs font-medium text-foreground transition-colors hover:bg-secondary disabled:opacity-50"
+                  >
+                    {isTestingConnection ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <ShieldCheck className="h-3.5 w-3.5" />
+                    )}
+                    {isTestingConnection ? "Testing..." : "Test Connection"}
+                  </button>
+                  <div className="flex items-center gap-3">
                 <button
                   onClick={handleCancel}
                   className="px-4 py-2 text-xs font-medium rounded-md hover:bg-secondary text-foreground transition-colors"
@@ -958,6 +1097,8 @@ export function ServersSidebar() {
                 >
                   {viewMode === "edit" ? "Save Changes" : "Create Connection"}
                 </button>
+                  </div>
+                </div>
               </div>
             </div>
           </div>

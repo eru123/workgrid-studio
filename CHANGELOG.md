@@ -1,6 +1,10 @@
 # Changelog
 
 ## [Unreleased]
+- **Workspace & Layout:** Added comprehensive project setup and layout management, and removed the legacy results tab flow to simplify the editor workspace.
+- **Grid & Query UX:** Improved table data grid stability with fixed-width sticky columns and clearer selected-cell styling for better scanability.
+- **Stability & Polish:** Resolved store-selector crashes caused by nullish coalescing and bundled broader UI/UX fixes surfaced during internal testing.
+- **Contributor Experience:** Updated contribution guidelines to cover linting and pre-commit hook expectations.
 
 ## [0.1.6] - 2026-03-15
 - **[Breaking] Vault & Security:** Migrated to secure, per-installation vault encryption via the OS credential store. Added Content Security Policy (CSP) and restricted file-system permissions.
@@ -10,6 +14,7 @@
 - **Core backend & AI:** Modularized the Rust backend, optimized AI query generation, resolved cryptographic vulnerabilities, and added failsafes for corrupted AI logs.
 - **Ecosystem:** Launched the `wgs-website` React workspace, refreshed application branding/icons, and formalized open-source contribution and security policies.
 - **Maintenance:** Consolidated logging systems, updated CI/CD workflows, bumped dependencies, and improved the app updater endpoint.
+- Create ci.yml
 
 ## [0.1.5] - 2026-03-14
 - Exclude main branch from changelog workflow

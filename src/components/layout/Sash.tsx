@@ -21,6 +21,8 @@ export function Sash({
     onDragRef.current = onDrag;
 
     const isDragging = useRef(false);
+    const frameRef = useRef<number | null>(null);
+    const pendingDeltaRef = useRef(0);
 
     const handlePointerDown = useCallback(
         (e: React.PointerEvent<HTMLDivElement>) => {
@@ -41,17 +43,30 @@ export function Sash({
                 lastX = me.clientX;
                 lastY = me.clientY;
 
-                // Call the latest onDrag from ref (avoids stale closure)
-                // If the panels are stacked vertically (direction="vertical"), the sash is a horizontal line -> drag vertical (dy)
-                if (direction === "vertical") {
-                    onDragRef.current?.(dy);
-                } else {
-                    onDragRef.current?.(dx);
+                pendingDeltaRef.current += direction === "vertical" ? dy : dx;
+
+                if (frameRef.current === null) {
+                    frameRef.current = window.requestAnimationFrame(() => {
+                        frameRef.current = null;
+                        const delta = pendingDeltaRef.current;
+                        pendingDeltaRef.current = 0;
+                        if (delta !== 0) {
+                            onDragRef.current?.(delta);
+                        }
+                    });
                 }
             };
 
             const onPointerUp = (ue: PointerEvent) => {
                 isDragging.current = false;
+                if (frameRef.current !== null) {
+                    window.cancelAnimationFrame(frameRef.current);
+                    frameRef.current = null;
+                }
+                if (pendingDeltaRef.current !== 0) {
+                    onDragRef.current?.(pendingDeltaRef.current);
+                    pendingDeltaRef.current = 0;
+                }
                 if (target.hasPointerCapture(ue.pointerId)) {
                     target.releasePointerCapture(ue.pointerId);
                 }

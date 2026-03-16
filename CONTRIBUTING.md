@@ -77,23 +77,27 @@ pnpm tauri dev
 
 2. **Make your changes.** Keep commits focused — one logical change per commit.
 
-3. **Type-check** before pushing:
+3. **Validate** before pushing:
    ```bash
+   pnpm lint
    pnpm build
    ```
-   This runs `tsc`, Vite build, and version consistency checks. Fix all errors before opening a PR.
+   This runs ESLint, `tsc`, the Vite build, and version consistency checks. Fix all errors before opening a PR.
 
-4. **Push** your branch and open a pull request against `main`.
+4. **Pre-commit hooks** run automatically after `pnpm install`.
+   Husky runs `pnpm lint` and `pnpm build` before each commit so broken changes are caught locally.
 
-5. Fill in the pull request description, including:
+5. **Push** your branch and open a pull request against `main`.
+
+6. Fill in the pull request description, including:
    - What the change does and why.
    - Any related issue numbers (`Closes #123`).
    - Screenshots or screen recordings for UI changes.
-
-6. A maintainer will review your PR. Please be responsive to feedback — PRs with no activity for 30 days may be closed.
+7. A maintainer will review your PR. Please be responsive to feedback. PRs with no activity for 30 days may be closed.
 
 ### Pull request checklist
 
+- [ ] ESLint passes (`pnpm lint`)
 - [ ] TypeScript strict mode passes (`pnpm build`)
 - [ ] No `// @ts-ignore` or `// @ts-expect-error` added without justification
 - [ ] UI changes tested in both light and dark themes
@@ -109,7 +113,7 @@ pnpm tauri dev
 - Use the `cn()` helper for conditional Tailwind classes.
 - Use `crypto.randomUUID()` for ID generation.
 - Keep components focused; avoid mixing unrelated concerns in a single file.
-- Do not add ESLint, Prettier, or other tooling configuration without prior discussion.
+- Keep lint clean and prefer fixing warnings at the source instead of suppressing them.
 
 ---
 

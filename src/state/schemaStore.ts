@@ -1,5 +1,6 @@
+import { startTransition } from "react";
 import { create } from "zustand";
-import { dbListDatabases, dbListTables } from "@/lib/db";
+import { dbGetTablesInfo, dbGetVariables, dbListDatabases, dbListTables, type TableInfo } from "@/lib/db";
 
 const AUTO_REFRESH_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 const autoRefreshTimers = new Map<string, ReturnType<typeof setInterval>>();
@@ -33,11 +34,16 @@ interface SchemaState {
 
     // Per-profile ping latency (ms). null = unknown, -1 = error
     latencies: Record<string, number | null>;
+    serverVersions: Record<string, string | null>;
+    tableInfos: Record<string, TableInfo[]>;
 
     // Actions
     addConnection: (profileId: string, name: string, color: string) => void;
     removeConnection: (profileId: string) => void;
     setLatency: (profileId: string, ms: number | null) => void;
+    setServerVersion: (profileId: string, version: string | null) => void;
+    setTableInfos: (profileId: string, db: string, tableInfos: TableInfo[]) => void;
+    fetchServerVersion: (profileId: string) => Promise<void>;
 
     setDatabases: (profileId: string, dbs: string[]) => void;
     setTables: (profileId: string, db: string, tables: string[]) => void;
@@ -62,11 +68,15 @@ export const useSchemaStore = create<SchemaState>((set) => ({
     loadingColumns: {},
     errors: {},
     latencies: {},
+    serverVersions: {},
+    tableInfos: {},
 
     addConnection: (profileId, name, color) => {
-        set((state) => ({
-            connectedProfiles: { ...state.connectedProfiles, [profileId]: { name, color } },
-        }));
+        startTransition(() => {
+            set((state) => ({
+                connectedProfiles: { ...state.connectedProfiles, [profileId]: { name, color } },
+            }));
+        });
         // Start 5-minute auto-refresh for this profile
         if (!autoRefreshTimers.has(profileId)) {
             const timer = setInterval(() => {
@@ -74,6 +84,7 @@ export const useSchemaStore = create<SchemaState>((set) => ({
             }, AUTO_REFRESH_INTERVAL_MS);
             autoRefreshTimers.set(profileId, timer);
         }
+        void useSchemaStore.getState().fetchServerVersion(profileId);
     },
 
     removeConnection: (profileId) => {
@@ -81,68 +92,144 @@ export const useSchemaStore = create<SchemaState>((set) => ({
         const timer = autoRefreshTimers.get(profileId);
         if (timer) { clearInterval(timer); autoRefreshTimers.delete(profileId); }
 
-        set((state) => {
-            const next = { ...state };
-            const cp = { ...next.connectedProfiles };
-            delete cp[profileId];
+        startTransition(() => {
+            set((state) => {
+                const next = { ...state };
+                const cp = { ...next.connectedProfiles };
+                delete cp[profileId];
 
-            // Clean up all cached data for this profile
-            const dbs = { ...next.databases };
-            delete dbs[profileId];
+                // Clean up all cached data for this profile
+                const dbs = { ...next.databases };
+                delete dbs[profileId];
 
-            const tables = { ...next.tables };
-            const columns = { ...next.columns };
-            const errors = { ...next.errors };
-            for (const key of Object.keys(tables)) {
-                if (key.startsWith(`${profileId}::`)) delete tables[key];
-            }
-            for (const key of Object.keys(columns)) {
-                if (key.startsWith(`${profileId}::`)) delete columns[key];
-            }
-            for (const key of Object.keys(errors)) {
-                if (key.startsWith(profileId)) delete errors[key];
-            }
+                const tables = { ...next.tables };
+                const tableInfos = { ...next.tableInfos };
+                const columns = { ...next.columns };
+                const errors = { ...next.errors };
+                for (const key of Object.keys(tables)) {
+                    if (key.startsWith(`${profileId}::`)) delete tables[key];
+                }
+                for (const key of Object.keys(tableInfos)) {
+                    if (key.startsWith(`${profileId}::`)) delete tableInfos[key];
+                }
+                for (const key of Object.keys(columns)) {
+                    if (key.startsWith(`${profileId}::`)) delete columns[key];
+                }
+                for (const key of Object.keys(errors)) {
+                    if (key.startsWith(profileId)) delete errors[key];
+                }
 
-            const latencies = { ...next.latencies };
-            delete latencies[profileId];
+                const latencies = { ...next.latencies };
+                delete latencies[profileId];
 
-            return { connectedProfiles: cp, databases: dbs, tables, columns, errors, latencies };
+                const serverVersions = { ...next.serverVersions };
+                delete serverVersions[profileId];
+
+                return {
+                    connectedProfiles: cp,
+                    databases: dbs,
+                    tables,
+                    tableInfos,
+                    columns,
+                    errors,
+                    latencies,
+                    serverVersions,
+                };
+            });
         });
     },
 
     setDatabases: (profileId, dbs) =>
-        set((state) => ({
-            databases: { ...state.databases, [profileId]: dbs },
-        })),
+        startTransition(() => {
+            set((state) => ({
+                databases: { ...state.databases, [profileId]: dbs },
+            }));
+        }),
 
     setTables: (profileId, db, tbls) =>
-        set((state) => ({
-            tables: { ...state.tables, [`${profileId}::${db}`]: tbls },
-        })),
+        startTransition(() => {
+            set((state) => ({
+                tables: { ...state.tables, [`${profileId}::${db}`]: tbls },
+            }));
+        }),
+
+    setTableInfos: (profileId, db, tableInfos) =>
+        startTransition(() => {
+            set((state) => ({
+                tableInfos: { ...state.tableInfos, [`${profileId}::${db}`]: tableInfos },
+                tables: {
+                    ...state.tables,
+                    [`${profileId}::${db}`]: tableInfos
+                        .filter((tableInfo) => tableInfo.type_ === "BASE TABLE")
+                        .map((tableInfo) => tableInfo.name),
+                },
+            }));
+        }),
 
     setColumns: (profileId, db, table, cols) =>
-        set((state) => ({
-            columns: { ...state.columns, [`${profileId}::${db}::${table}`]: cols },
-        })),
+        startTransition(() => {
+            set((state) => ({
+                columns: { ...state.columns, [`${profileId}::${db}::${table}`]: cols },
+            }));
+        }),
 
     setLoading: (key, kind, loading) =>
-        set((state) => {
-            const loadingKey = kind === "databases" ? "loadingDatabases" : kind === "tables" ? "loadingTables" : "loadingColumns";
-            return { [loadingKey]: { ...state[loadingKey], [key]: loading } };
+        startTransition(() => {
+            set((state) => {
+                const loadingKey = kind === "databases" ? "loadingDatabases" : kind === "tables" ? "loadingTables" : "loadingColumns";
+                return { [loadingKey]: { ...state[loadingKey], [key]: loading } };
+            });
         }),
 
     setLatency: (profileId, ms) =>
-        set((state) => ({ latencies: { ...state.latencies, [profileId]: ms } })),
+        startTransition(() => {
+            set((state) => ({ latencies: { ...state.latencies, [profileId]: ms } }));
+        }),
+
+    setServerVersion: (profileId, version) =>
+        startTransition(() => {
+            set((state) => ({
+                serverVersions: { ...state.serverVersions, [profileId]: version },
+            }));
+        }),
 
     setError: (key, error) =>
-        set((state) => ({ errors: { ...state.errors, [key]: error } })),
+        startTransition(() => {
+            set((state) => ({ errors: { ...state.errors, [key]: error } }));
+        }),
 
     clearError: (key) =>
-        set((state) => {
-            const errors = { ...state.errors };
-            delete errors[key];
-            return { errors };
+        startTransition(() => {
+            set((state) => {
+                const errors = { ...state.errors };
+                delete errors[key];
+                return { errors };
+            });
         }),
+
+    fetchServerVersion: async (profileId) => {
+        const store = useSchemaStore.getState();
+        if (store.serverVersions[profileId] !== undefined) {
+            return;
+        }
+
+        try {
+            const variables = await dbGetVariables(profileId);
+            const variableMap = new Map(
+                variables.map((variable) => [variable.name.toLowerCase(), variable]),
+            );
+            const version = variableMap.get("version")?.global_value
+                || variableMap.get("version")?.session_value
+                || "";
+            const comment = variableMap.get("version_comment")?.global_value
+                || variableMap.get("version_comment")?.session_value
+                || "";
+            const normalized = [comment, version].filter(Boolean).join(" ").trim() || null;
+            store.setServerVersion(profileId, normalized);
+        } catch {
+            store.setServerVersion(profileId, null);
+        }
+    },
 
     refreshDatabases: async (profileId) => {
         const store = useSchemaStore.getState();
@@ -164,10 +251,15 @@ export const useSchemaStore = create<SchemaState>((set) => ({
         store.setLoading(cacheKey, "tables", true);
         store.clearError(`tbl-${cacheKey}`);
         try {
-            const tbls = await dbListTables(profileId, db);
-            store.setTables(profileId, db, tbls);
+            const tableInfos = await dbGetTablesInfo(profileId, db);
+            store.setTableInfos(profileId, db, tableInfos);
         } catch (e) {
-            store.setError(`tbl-${cacheKey}`, String(e));
+            try {
+                const tbls = await dbListTables(profileId, db);
+                store.setTables(profileId, db, tbls);
+            } catch (fallbackError) {
+                store.setError(`tbl-${cacheKey}`, String(fallbackError));
+            }
         } finally {
             store.setLoading(cacheKey, "tables", false);
         }
