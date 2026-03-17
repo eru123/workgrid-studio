@@ -6,11 +6,12 @@ use crate::{AppError, AppResult};
 use ssh2::Session;
 use std::collections::HashMap;
 use std::fs;
+use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 pub fn known_hosts_path() -> AppResult<std::path::PathBuf> {
     Ok(app_data_dir()?.join("known_hosts.json"))
@@ -387,8 +388,10 @@ pub fn establish_ssh_tunnel(pid: &str, params: &ConnectParams) -> AppResult<Tunn
                             peer, local_port
                         ),
                     );
+                    // Open the SSH channel in blocking mode for reliability.
+                    sess.set_blocking(true);
                     match sess.channel_direct_tcpip(&target_host, target_port, None) {
-                        Ok(channel) => {
+                        Ok(mut channel) => {
                             log_ssh_verbose(
                                 &pid_clone,
                                 verbose_clone,
@@ -397,27 +400,83 @@ pub fn establish_ssh_tunnel(pid: &str, params: &ConnectParams) -> AppResult<Tunn
                                     target_host, target_port, peer
                                 ),
                             );
-                            let mut channel_read = channel.stream(0);
-                            let mut channel_write = channel.clone();
-                            let mut local_read = match local_stream.try_clone() {
-                                Ok(stream) => stream,
-                                Err(error) => {
-                                    log_ssh_error(
-                                        &pid_clone,
-                                        &format!(
-                                            "Failed to clone local SSH tunnel stream for {}: {}",
-                                            peer, error
-                                        ),
-                                    );
-                                    continue;
-                                }
-                            };
-                            let mut local_write = local_stream;
 
-                            std::thread::spawn(move || {
-                                let _ = std::io::copy(&mut local_read, &mut channel_write);
-                            });
-                            let _ = std::io::copy(&mut channel_read, &mut local_write);
+                            // Switch both sides to non-blocking so a single thread can
+                            // poll both directions without racing on the libssh2 session.
+                            // (libssh2 is NOT thread-safe; the previous two-thread approach
+                            // caused "packet out of order" by concurrently touching the
+                            // same session structure from two threads.)
+                            sess.set_blocking(false);
+                            if let Err(e) = local_stream.set_nonblocking(true) {
+                                log_ssh_error(
+                                    &pid_clone,
+                                    &format!(
+                                        "Failed to set local stream non-blocking for {}: {}",
+                                        peer, e
+                                    ),
+                                );
+                                let _ = channel.close();
+                                sess.set_blocking(true);
+                                continue;
+                            }
+
+                            let mut local = local_stream;
+                            let mut buf = [0u8; 16384];
+
+                            // Single-thread bidirectional copy loop.
+                            'copy: loop {
+                                if shutdown_clone.load(Ordering::Relaxed) {
+                                    break 'copy;
+                                }
+
+                                let mut progress = false;
+
+                                // Remote → Local
+                                match channel.read(&mut buf) {
+                                    Ok(0) => break 'copy,
+                                    Ok(n) => {
+                                        if local.write_all(&buf[..n]).is_err() {
+                                            break 'copy;
+                                        }
+                                        progress = true;
+                                    }
+                                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+                                    Err(_) => break 'copy,
+                                }
+
+                                // Local → Remote
+                                match local.read(&mut buf) {
+                                    Ok(0) => break 'copy,
+                                    Ok(n) => {
+                                        let data = &buf[..n];
+                                        let mut written = 0;
+                                        while written < n {
+                                            match channel.write(&data[written..]) {
+                                                Ok(m) => written += m,
+                                                Err(ref e)
+                                                    if e.kind()
+                                                        == std::io::ErrorKind::WouldBlock =>
+                                                {
+                                                    std::thread::sleep(Duration::from_millis(1));
+                                                }
+                                                Err(_) => break 'copy,
+                                            }
+                                        }
+                                        progress = true;
+                                    }
+                                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+                                    Err(_) => break 'copy,
+                                }
+
+                                if !progress {
+                                    std::thread::sleep(Duration::from_millis(1));
+                                }
+                            }
+
+                            let _ = channel.close();
+                            // Reset to blocking so the next channel_direct_tcpip succeeds.
+                            sess.set_blocking(true);
+
                             log_ssh_verbose(
                                 &pid_clone,
                                 verbose_clone,
