@@ -87,6 +87,7 @@ export function ServersSidebar() {
     handleCancel,
     handleDelete,
     handleConnect,
+    handleCancelConnect,
     handleDoubleClick,
     handleTypeChange,
     updateField,
@@ -370,12 +371,18 @@ export function ServersSidebar() {
                         <PlugZap className="w-3.5 h-3.5" />
                       </button>
                     ) : profile.connectionStatus === "connecting" ? (
-                      <div
-                        className="w-6 h-6 flex items-center justify-center"
-                        aria-label={`Connecting ${profile.name}`}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleCancelConnect(profile.id);
+                        }}
+                        title="Cancel connection"
+                        className="w-6 h-6 flex items-center justify-center rounded hover:bg-red-500/20 hover:text-red-500 transition-colors group/cancel"
+                        aria-label={`Cancel connecting ${profile.name}`}
                       >
-                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      </div>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin group-hover/cancel:hidden" />
+                        <X className="w-3.5 h-3.5 hidden group-hover/cancel:block" />
+                      </button>
                     ) : (
                       <button
                         onClick={(e) => {

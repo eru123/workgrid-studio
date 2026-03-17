@@ -44,6 +44,10 @@ export async function dbConnect(params: ConnectParams): Promise<string> {
     return invoke<string>("db_connect", { params });
 }
 
+export async function dbCancelConnect(profileId: string): Promise<void> {
+    return invoke<void>("db_cancel_connect", { profileId });
+}
+
 export async function dbDisconnect(profileId: string): Promise<string> {
     return invoke<string>("db_disconnect", { profileId });
 }

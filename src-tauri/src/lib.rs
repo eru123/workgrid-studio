@@ -29,7 +29,10 @@ pub struct TunnelHandle {
 
 pub struct DbState {
     pub pools: Mutex<HashMap<String, Pool>>,
-    pub tunnels: Mutex<HashMap<String, TunnelHandle>>, // profile_id -> tunnel handle
+    pub tunnels: Mutex<HashMap<String, TunnelHandle>>,
+    /// Per-profile cancellation flags. Set to `true` by `db_cancel_connect`
+    /// while `db_connect` is in flight; checked at each major phase boundary.
+    pub cancel_tokens: Mutex<HashMap<String, Arc<AtomicBool>>>,
 }
 
 impl DbState {
@@ -37,6 +40,7 @@ impl DbState {
         Self {
             pools: Mutex::new(HashMap::new()),
             tunnels: Mutex::new(HashMap::new()),
+            cancel_tokens: Mutex::new(HashMap::new()),
         }
     }
 }
@@ -69,6 +73,7 @@ pub fn run() {
             logging::clear_profile_log,
             logging::clear_all_logs,
             db::db_connect,
+            db::db_cancel_connect,
             db::db_disconnect,
             db::db_list_databases,
             db::db_list_tables,

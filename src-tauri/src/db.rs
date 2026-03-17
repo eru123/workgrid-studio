@@ -5,6 +5,8 @@ use crate::{AppError, AppResult, DbState};
 use mysql_async::prelude::*;
 use mysql_async::{Opts, OptsBuilder, Pool, PoolConstraints, PoolOpts, TxOpts};
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, State};
 
@@ -302,6 +304,22 @@ where
 
 // ─── DB Commands ────────────────────────────────────────────────────
 
+/// Signal an in-flight `db_connect` for `profile_id` to abort at its next
+/// check-point.  Safe to call even if no connection attempt is in progress.
+#[tauri::command]
+pub async fn db_cancel_connect(
+    state: State<'_, DbState>,
+    profile_id: String,
+) -> AppResult<()> {
+    if let Ok(tokens) = state.cancel_tokens.lock() {
+        if let Some(token) = tokens.get(&profile_id) {
+            token.store(true, Ordering::Relaxed);
+            log_info(&profile_id, "Connection cancellation requested.");
+        }
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn db_connect(state: State<'_, DbState>, params: ConnectParams) -> AppResult<String> {
     let mut params = params;
@@ -355,6 +373,14 @@ pub async fn db_connect(state: State<'_, DbState>, params: ConnectParams) -> App
         return Err(AppError::validation(msg));
     }
 
+    // Register a fresh cancel token for this connection attempt.
+    // Any stale token from a previous attempt is overwritten with false.
+    let cancel_token = Arc::new(AtomicBool::new(false));
+    {
+        let mut tokens = state.cancel_tokens.lock().map_err(|e| e.to_string())?;
+        tokens.insert(pid.clone(), cancel_token.clone());
+    }
+
     // Encrypt password if not already encrypted
     if !params.password.starts_with("wkgrd:") && !params.password.is_empty() {
         params.password = encrypt_password(params.password.clone())?;
@@ -395,6 +421,13 @@ pub async fn db_connect(state: State<'_, DbState>, params: ConnectParams) -> App
             verbose,
             "SSH secret material decrypted for active connection attempt.",
         );
+
+        // Cancel check: abort before any blocking SSH work begins.
+        if cancel_token.load(Ordering::Relaxed) {
+            let msg = "Connection cancelled.".to_string();
+            log_info(&pid, &msg);
+            return Err(AppError::ssh(msg));
+        }
 
         // Establish SSH Tunnel
         {
@@ -451,6 +484,15 @@ pub async fn db_connect(state: State<'_, DbState>, params: ConnectParams) -> App
         let mut tunnels = state.tunnels.lock().map_err(|e| e.to_string())?;
         tunnels.insert(pid.clone(), handle);
     }
+
+    // Cancel check: abort after SSH tunnel is up but before TCP to MySQL.
+    // The tunnel will be cleaned up by the disconnect path on the next call.
+    if cancel_token.load(Ordering::Relaxed) {
+        let msg = "Connection cancelled.".to_string();
+        log_info(&pid, &msg);
+        return Err(AppError::ssh(msg));
+    }
+
     log_info(
         &pid,
         &format!(
@@ -582,7 +624,26 @@ pub async fn db_connect(state: State<'_, DbState>, params: ConnectParams) -> App
     let pool = Pool::new(opts);
     let mysql_connect_started = Instant::now();
 
-    match pool.get_conn().await {
+    // Wrap the async MySQL handshake in a select! so a cancel request during
+    // a slow TCP connect or MySQL greeting exchange is handled immediately.
+    let cancel_for_select = cancel_token.clone();
+    let get_conn_result = tokio::select! {
+        r = pool.get_conn() => r,
+        _ = async move {
+            loop {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                if cancel_for_select.load(Ordering::Relaxed) {
+                    return;
+                }
+            }
+        } => {
+            let msg = "Connection cancelled.".to_string();
+            log_info(&pid, &msg);
+            return Err(AppError::ssh(msg));
+        }
+    };
+
+    match get_conn_result {
         Ok(conn) => {
             drop(conn);
             log_info(
@@ -619,6 +680,11 @@ pub async fn db_connect(state: State<'_, DbState>, params: ConnectParams) -> App
         verbose,
         &format!("Active MySQL pool count is now {}.", pools.len()),
     );
+
+    // Clean up the cancel token on successful connection.
+    if let Ok(mut tokens) = state.cancel_tokens.lock() {
+        tokens.remove(&pid);
+    }
 
     let success_message = format!(
         "Connected to {} in {} ms",
