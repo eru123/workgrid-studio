@@ -1,19 +1,19 @@
 # Changelog
 
 ## [Unreleased]
+- **Explorer & Database View:** Auto-loads tables for filtered databases, hides empty databases, and reorganizes database view tabs for a cleaner navigation flow.
+- **Connection Flow & SSH Compatibility:** Adds connection cancellation support, improves SSH key handling, and expands compatibility with OpenSSH key formats.
+- **SSH Tunneling:** Simplifies the SSH tunnel implementation with a single-threaded bidirectional copy model to reduce connection complexity.
+- **Diagnostics & Error Handling:** Enhances SSH/MySQL connection logging with clearer failure reporting to make connection issues easier to debug.
+- **Dependencies:** Refreshes the main JavaScript dependency group, updates the `wgs-updater` workspace dependencies, and bumps Rust `rand` from `0.8.5` to `0.9.2`.
+- **Maintenance:** Ignores test artifacts to keep the release and repository noise down.
+
 
 ## [0.1.7] - 2026-03-16
 - **Workspace & Layout:** Added comprehensive project setup and layout management, and removed the legacy results tab flow to simplify the editor workspace.
 - **Grid & Query UX:** Improved table data grid stability with fixed-width sticky columns and clearer selected-cell styling for better scanability.
 - **Stability & Polish:** Resolved store-selector crashes caused by nullish coalescing and bundled broader UI/UX fixes surfaced during internal testing.
 - **Contributor Experience:** Updated contribution guidelines to cover linting and pre-commit hook expectations.
-- feat(explorer): auto-load tables for filtered databases and hide empty databases
-- refactor: reorganize database view tabs and improve SSH key handling
-- refactor: add connection cancellation and OpenSSH key support
-- refactor: simplify SSH tunnel implementation with single-threaded bidirectional copy
-- refactor: simplify SSH tunnel implementation with single-threaded bidirectional copy
-- ignore: test files
-- refactor: enhance connection logging and error handling
 
 ## [0.1.6] - 2026-03-15
 - **[Breaking] Vault & Security:** Migrated to secure, per-installation vault encryption via the OS credential store. Added Content Security Policy (CSP) and restricted file-system permissions.

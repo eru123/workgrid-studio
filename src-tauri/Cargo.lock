@@ -6288,7 +6288,7 @@ dependencies = [
 
 [[package]]
 name = "workgrid-studio"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "aes-gcm",
  "base64 0.22.1",
@@ -6296,7 +6296,7 @@ dependencies = [
  "csv",
  "keyring",
  "mysql_async",
- "rand 0.8.5",
+ "rand 0.9.2",
  "reqwest",
  "serde",
  "serde_json",

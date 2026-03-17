@@ -208,10 +208,8 @@ export function Workbench() {
   const theme = globalPrefs.theme || "system";
 
   const handleToggleTheme = () => {
-    let next: "light" | "dark" | "system" = "system";
-    if (theme === "dark") next = "light";
-    else if (theme === "light") next = "system";
-    else next = "dark";
+    const next: "light" | "dark" | "system" =
+      theme === "dark" ? "light" : theme === "light" ? "system" : "dark";
     setGlobalPrefs({ ...globalPrefs, theme: next });
   };
 

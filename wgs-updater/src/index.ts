@@ -83,7 +83,7 @@ app.get("/api/update/:target/:current_version", async (c) => {
 	// Map the Tauri target triple to the candidate asset file suffixes.
 	// Multiple suffixes are tried in order so the endpoint works regardless of
 	// which bundle types were included in a given release.
-	let candidates: string[] = [];
+	let candidates!: string[];
 	if (target.includes("windows")) {
 		// Tauri v2 can ship either an NSIS or MSI updater zip — try both.
 		candidates = ["x64-setup.nsis.zip", "x64_en-US.msi.zip"];
