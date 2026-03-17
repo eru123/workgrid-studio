@@ -146,6 +146,17 @@ fn trimmed_option(value: Option<&String>) -> Option<&str> {
         .filter(|entry| !entry.is_empty())
 }
 
+/// Return a non-sensitive summary for an optional sensitive value.
+/// This is safe to log because it never includes the underlying data,
+/// only whether it is present or not.
+fn summarize_sensitive_option(value: Option<&String>) -> &'static str {
+    if trimmed_option(value).is_some() {
+        "<provided>"
+    } else {
+        "<unset>"
+    }
+}
+
 fn preview_value(value: &str, verbose: bool) -> String {
     if verbose {
         value.to_string()
@@ -308,16 +319,8 @@ pub fn establish_ssh_tunnel(pid: &str, params: &ConnectParams) -> AppResult<Tunn
             params.ssh_keep_alive_interval,
             auth_method,
             preview_option(trimmed_option(params.ssh_key_file.as_ref()), verbose),
-            if trimmed_option(params.ssh_password.as_ref()).is_some() {
-                "<provided>"
-            } else {
-                "<unset>"
-            },
-            if trimmed_option(params.ssh_passphrase.as_ref()).is_some() {
-                "<provided>"
-            } else {
-                "<unset>"
-            },
+            summarize_sensitive_option(params.ssh_password.as_ref()),
+            summarize_sensitive_option(params.ssh_passphrase.as_ref()),
         ),
     );
 
