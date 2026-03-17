@@ -33,6 +33,7 @@ import {
   MoreVertical,
   Database,
   ShieldCheck,
+  Key,
 } from "lucide-react";
 
 const DB_ICONS: Record<DatabaseType, React.ElementType> = {
@@ -87,6 +88,7 @@ export function ServersSidebar() {
     handleCancel,
     handleDelete,
     handleConnect,
+    handleCancelConnect,
     handleDoubleClick,
     handleTypeChange,
     updateField,
@@ -135,11 +137,20 @@ export function ServersSidebar() {
     setIsTestingConnection(true);
     setTestConnectionResult(null);
 
-    const tempProfileId = `test-${crypto.randomUUID()}`;
+    const editingProfile = editingId
+      ? profiles.find((profile) => profile.id === editingId)
+      : null;
+    const testProfileId =
+      editingId &&
+      editingProfile &&
+      editingProfile.connectionStatus !== "connected" &&
+      editingProfile.connectionStatus !== "connecting"
+        ? editingId
+        : `test-${crypto.randomUUID()}`;
 
     try {
       await dbConnect({
-        profile_id: tempProfileId,
+        profile_id: testProfileId,
         host: formData.host,
         port: formData.port ?? DB_TYPE_DEFAULT_PORTS[formData.type] ?? 3306,
         user: formData.user,
@@ -161,9 +172,10 @@ export function ServersSidebar() {
         ssh_strict_key_checking: formData.sshStrictKeyChecking ?? false,
         ssh_keep_alive_interval: formData.sshKeepAliveInterval ?? 0,
         ssh_compression: formData.sshCompression ?? true,
+        connection_verbose_logging: formData.connectionVerboseLogging ?? false,
       });
 
-      const latency = await dbPing(tempProfileId);
+      const latency = await dbPing(testProfileId);
       const message = `Connected successfully in ${latency}ms.`;
       setTestConnectionResult({ tone: "success", message });
       useAppStore.getState().addToast({
@@ -180,7 +192,7 @@ export function ServersSidebar() {
       });
     } finally {
       try {
-        await dbDisconnect(tempProfileId);
+        await dbDisconnect(testProfileId);
       } catch {
         // Best-effort cleanup for temporary test connections.
       }
@@ -360,12 +372,18 @@ export function ServersSidebar() {
                         <PlugZap className="w-3.5 h-3.5" />
                       </button>
                     ) : profile.connectionStatus === "connecting" ? (
-                      <div
-                        className="w-6 h-6 flex items-center justify-center"
-                        aria-label={`Connecting ${profile.name}`}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleCancelConnect(profile.id);
+                        }}
+                        title="Cancel connection"
+                        className="w-6 h-6 flex items-center justify-center rounded hover:bg-red-500/20 hover:text-red-500 transition-colors group/cancel"
+                        aria-label={`Cancel connecting ${profile.name}`}
                       >
-                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      </div>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin group-hover/cancel:hidden" />
+                        <X className="w-3.5 h-3.5 hidden group-hover/cancel:block" />
+                      </button>
                     ) : (
                       <button
                         onClick={(e) => {
@@ -916,54 +934,83 @@ export function ServersSidebar() {
                           />
                         </div>
 
-                        <div className="grid grid-cols-2 gap-3">
-                          <div>
-                            <label className="text-xs font-medium text-muted-foreground block mb-1.5">
-                              SSH Key File (Optional)
-                            </label>
-                            <div className="flex gap-2">
-                              <input
-                                type="text"
-                                value={formData.sshKeyFile || ""}
-                                onChange={(e) => updateField("sshKeyFile", e.target.value)}
-                                placeholder="/path/to/id_rsa"
-                                className="flex-1 h-9 rounded-md border bg-secondary/50 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all font-mono"
-                              />
+                        <div>
+                          <label className="text-xs font-medium text-muted-foreground block mb-1.5">
+                            SSH Private Key File <span className="text-muted-foreground/50">(optional)</span>
+                          </label>
+                          {formData.sshKeyFile ? (
+                            <div className="flex items-center gap-2 h-9 px-3 rounded-md border bg-secondary/50 text-sm">
+                              <Key className="w-3.5 h-3.5 shrink-0 text-primary/70" />
+                              <span className="flex-1 truncate font-mono text-xs text-foreground" title={formData.sshKeyFile}>
+                                {formData.sshKeyFile.replace(/.*[\\/]/, "")}
+                              </span>
                               <button
+                                type="button"
                                 onClick={async () => {
                                   const selected = await open({
                                     multiple: false,
                                     directory: false,
                                     defaultPath: await join(await homeDir(), ".ssh"),
-                                    filters: [{ name: "Key", extensions: ["*", "pem", "key"] }],
+                                    filters: [{ name: "Key files", extensions: ["*", "pem", "key"] }],
                                   });
                                   if (typeof selected === "string") {
                                     updateField("sshKeyFile", selected);
                                   }
                                 }}
-                                className="h-9 px-3 rounded-md border bg-secondary font-medium hover:bg-secondary/80 hover:text-foreground text-xs transition-all"
+                                className="text-[10px] text-muted-foreground hover:text-foreground transition-colors shrink-0"
                               >
-                                Browse
+                                Change
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  updateField("sshKeyFile", undefined);
+                                  updateField("sshPassphrase", "");
+                                }}
+                                className="text-muted-foreground hover:text-red-500 rounded hover:bg-red-500/10 p-0.5 transition-colors shrink-0"
+                                title="Remove key file"
+                              >
+                                <X className="w-3.5 h-3.5" />
                               </button>
                             </div>
-                          </div>
-                          <div>
-                            <label className="text-xs font-medium text-muted-foreground block mb-1.5">
-                              {formData.sshKeyFile ? "Key Passphrase" : "SSH Password"}
-                            </label>
-                            <input
-                              type="password"
-                              value={formData.sshKeyFile ? formData.sshPassphrase : formData.sshPassword}
-                              onChange={(e) =>
-                                updateField(
-                                  formData.sshKeyFile ? "sshPassphrase" : "sshPassword",
-                                  e.target.value,
-                                )
-                              }
-                              placeholder="••••••••"
-                              className="w-full h-9 rounded-md border bg-secondary/50 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all"
-                            />
-                          </div>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                const selected = await open({
+                                  multiple: false,
+                                  directory: false,
+                                  defaultPath: await join(await homeDir(), ".ssh"),
+                                  filters: [{ name: "Key files", extensions: ["*", "pem", "key"] }],
+                                });
+                                if (typeof selected === "string") {
+                                  updateField("sshKeyFile", selected);
+                                }
+                              }}
+                              className="w-full h-9 rounded-md border border-dashed border-border/70 bg-secondary/30 hover:bg-secondary/60 hover:border-primary/50 text-xs text-muted-foreground hover:text-foreground flex items-center justify-center gap-2 transition-all"
+                            >
+                              <Key className="w-3.5 h-3.5" />
+                              Select private key file…
+                            </button>
+                          )}
+                        </div>
+
+                        <div>
+                          <label className="text-xs font-medium text-muted-foreground block mb-1.5">
+                            {formData.sshKeyFile ? "Key Passphrase" : "SSH Password"}
+                          </label>
+                          <input
+                            type="password"
+                            value={formData.sshKeyFile ? (formData.sshPassphrase ?? "") : (formData.sshPassword ?? "")}
+                            onChange={(e) =>
+                              updateField(
+                                formData.sshKeyFile ? "sshPassphrase" : "sshPassword",
+                                e.target.value,
+                              )
+                            }
+                            placeholder="••••••••"
+                            className="w-full h-9 rounded-md border bg-secondary/50 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all"
+                          />
                         </div>
 
                         <div className="pt-2 border-t border-border/50 mt-1">
@@ -1051,6 +1098,26 @@ export function ServersSidebar() {
                         </div>
                       </div>
                     )}
+
+                    <div className="pt-3 border-t mt-1 border-border/50">
+                      <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/70 block mb-2">
+                        Diagnostics
+                      </label>
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="space-y-0.5">
+                          <label className="text-xs font-medium">Verbose Connection Logging</label>
+                          <p className="text-[10px] text-muted-foreground">
+                            Log step-by-step SSH and MySQL connection diagnostics for this profile
+                          </p>
+                        </div>
+                        <input
+                          type="checkbox"
+                          checked={formData.connectionVerboseLogging ?? false}
+                          onChange={(e) => updateField("connectionVerboseLogging", e.target.checked)}
+                          className="h-3.5 w-3.5 rounded border-gray-300 text-primary focus:ring-primary"
+                        />
+                      </div>
+                    </div>
                   </div>
                 )}
               </div>

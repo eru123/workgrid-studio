@@ -9,6 +9,11 @@ use rand::RngCore;
 use std::collections::HashMap;
 use std::fs;
 
+fn fill_random(bytes: &mut [u8]) {
+    let mut rng = rand::rng();
+    rng.fill_bytes(bytes);
+}
+
 /// Retrieve or create the 32-byte AES-256-GCM master key used for vault and
 /// password encryption.
 ///
@@ -91,7 +96,7 @@ pub fn get_or_create_key_from_file() -> AppResult<[u8; 32]> {
     }
 
     let mut key = [0u8; 32];
-    rand::thread_rng().fill_bytes(&mut key);
+    fill_random(&mut key);
     write_secret_key_to_file(&key)?;
     Ok(key)
 }
@@ -119,7 +124,7 @@ pub fn vault_set(key: String, secret: String) -> AppResult<()> {
     let cipher_key = get_or_create_secret_key()?;
     let cipher = Aes256Gcm::new(&cipher_key.into());
     let mut nonce_bytes = [0u8; 12];
-    rand::thread_rng().fill_bytes(&mut nonce_bytes);
+    fill_random(&mut nonce_bytes);
     let nonce = Nonce::from_slice(&nonce_bytes);
 
     let ciphertext = cipher
@@ -198,7 +203,7 @@ pub fn encrypt_password(password: String) -> AppResult<String> {
     let cipher = Aes256Gcm::new(&key.into());
 
     let mut nonce_bytes = [0u8; 12];
-    rand::thread_rng().fill_bytes(&mut nonce_bytes);
+    fill_random(&mut nonce_bytes);
     let nonce = Nonce::from_slice(&nonce_bytes);
 
     match cipher.encrypt(nonce, password.as_bytes()) {

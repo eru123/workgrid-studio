@@ -1545,6 +1545,7 @@ const ProfileNode = memo(function ProfileNode({
   const latency = useSchemaStore((s) => s.latencies[profileId] ?? null);
   const serverVersion = useSchemaStore((s) => s.serverVersions[profileId] ?? null);
   const refreshDatabases = useSchemaStore((s) => s.refreshDatabases);
+  const refreshTables = useSchemaStore((s) => s.refreshTables);
   const openTab = useLayoutStore((s) => s.openTab);
 
   const connectionStatus = useProfilesStore((s) => s.profiles.find((p) => p.id === profileId)?.connectionStatus);
@@ -1586,6 +1587,19 @@ const ProfileNode = memo(function ProfileNode({
       return databases;
     }
   }, [databases, dbFilter]);
+
+  // Auto-load table data for all databases when tableFilter is active so the
+  // table filter works without requiring the user to manually expand each node.
+  useEffect(() => {
+    if (!tableFilter.trim() || !databases?.length) return;
+    const store = useSchemaStore.getState();
+    for (const db of databases) {
+      const cacheKey = `${profileId}::${db}`;
+      if (!store.tables[cacheKey] && !store.loadingTables[cacheKey]) {
+        void refreshTables(profileId, db);
+      }
+    }
+  }, [tableFilter, databases, profileId, refreshTables]);
 
   const handleLabelClick = () => {
     openTab({
@@ -1840,7 +1854,8 @@ const DatabaseNode = memo(function DatabaseNode({
 }) {
   const cacheKey = `${profileId}::${database}`;
   const tables = useSchemaStore((s) => s.tables[cacheKey]);
-  const tableInfos = useSchemaStore((s) => s.tableInfos[cacheKey]) ?? [];
+  const rawTableInfos = useSchemaStore((s) => s.tableInfos[cacheKey]);
+  const tableInfos = useMemo(() => rawTableInfos ?? [], [rawTableInfos]);
   const loading = useSchemaStore((s) => s.loadingTables[cacheKey]);
   const error = useSchemaStore((s) => s.errors[`tbl-${cacheKey}`]);
   const refreshTables = useSchemaStore((s) => s.refreshTables);
@@ -1942,6 +1957,12 @@ const DatabaseNode = memo(function DatabaseNode({
       return tables;
     }
   }, [tables, tableFilter]);
+
+  // When a table filter is active and this database has no matching tables,
+  // hide the entire database node so only relevant databases are visible.
+  if (tableFilter.trim() && tables !== undefined && filteredTables !== null && filteredTables.length === 0) {
+    return null;
+  }
 
   // Single click on label → open database tab OR select if ctrl/cmd held
   const handleLabelClick = (e: React.MouseEvent | React.KeyboardEvent) => {

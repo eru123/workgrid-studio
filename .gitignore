@@ -33,3 +33,5 @@ src-tauri/errors.txt
 src-tauri/error.txt
 src-tauri/check.err
 .tauri/*
+/test-*
+.claude/settings.json

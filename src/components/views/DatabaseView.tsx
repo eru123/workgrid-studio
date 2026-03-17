@@ -7,6 +7,8 @@ import {
   dbGetStatus,
   dbGetProcesses,
   dbKillProcess,
+  dbQuery,
+  dbExecuteQuery,
   DatabaseInfo,
   TableInfo,
   VariableInfo,
@@ -32,6 +34,13 @@ import {
   Rows3,
   Pencil,
   RefreshCw,
+  Plus,
+  Trash2,
+  ShieldCheck,
+  User,
+  Users,
+  Lock,
+  Unlock,
 } from "lucide-react";
 
 type SubTab =
@@ -40,7 +49,8 @@ type SubTab =
   | "variables"
   | "status"
   | "processes"
-  | "commands";
+  | "commands"
+  | "users";
 
 interface Props {
   tabId: string;
@@ -152,6 +162,15 @@ function buildTableFilterSuggestions(
   return out.slice(0, 8);
 }
 
+// ─── User types ──────────────────────────────────────────────────────
+
+interface MySqlUser {
+  user: string;
+  host: string;
+  accountLocked: boolean;
+  passwordExpired: boolean;
+}
+
 export function DatabaseView({
   tabId,
   profileId,
@@ -177,6 +196,9 @@ export function DatabaseView({
   const [errorVars, setErrorVars] = useState<string | null>(null);
   const [errorStatus, setErrorStatus] = useState<string | null>(null);
   const [errorProcesses, setErrorProcesses] = useState<string | null>(null);
+  const [userRows, setUserRows] = useState<MySqlUser[]>([]);
+  const [loadingUsers, setLoadingUsers] = useState(false);
+  const [errorUsers, setErrorUsers] = useState<string | null>(null);
 
   // Fetch databases
   useEffect(() => {
@@ -194,7 +216,7 @@ export function DatabaseView({
   useEffect(() => {
     if (database && activeTab === "databases") setActiveTab("tables");
     if (!database && activeTab === "tables") setActiveTab("databases");
-  }, [database]);
+  }, [database, activeTab]);
 
   // Fetch tables
   useEffect(() => {
@@ -208,30 +230,30 @@ export function DatabaseView({
     }
   }, [profileId, database, activeTab]);
 
-  const fetchVariables = () => {
+  const fetchVariables = useCallback(() => {
     setLoadingVars(true);
     setErrorVars(null);
     dbGetVariables(profileId)
       .then(setVariables)
       .catch((e) => setErrorVars(String(e)))
       .finally(() => setLoadingVars(false));
-  };
+  }, [profileId]);
 
   // Fetch variables
   useEffect(() => {
     if (activeTab === "variables" && variables.length === 0) {
       fetchVariables();
     }
-  }, [profileId, activeTab, variables.length]);
+  }, [profileId, activeTab, variables.length, fetchVariables]);
 
-  const fetchStatus = () => {
+  const fetchStatus = useCallback(() => {
     setLoadingStatus(true);
     setErrorStatus(null);
     dbGetStatus(profileId)
       .then(setStatusInfos)
       .catch((e) => setErrorStatus(String(e)))
       .finally(() => setLoadingStatus(false));
-  };
+  }, [profileId]);
 
   // Fetch status (shared by status and commands tabs)
   useEffect(() => {
@@ -241,23 +263,47 @@ export function DatabaseView({
     ) {
       fetchStatus();
     }
-  }, [profileId, activeTab, statusInfos.length]);
+  }, [profileId, activeTab, statusInfos.length, fetchStatus]);
 
-  const fetchProcesses = () => {
+  const fetchProcesses = useCallback(() => {
     setLoadingProcesses(true);
     setErrorProcesses(null);
     dbGetProcesses(profileId)
       .then(setProcessInfos)
       .catch((e) => setErrorProcesses(String(e)))
       .finally(() => setLoadingProcesses(false));
-  };
+  }, [profileId]);
 
   // Fetch processes
   useEffect(() => {
     if (activeTab === "processes" && processInfos.length === 0) {
       fetchProcesses();
     }
-  }, [profileId, activeTab, processInfos.length]);
+  }, [profileId, activeTab, processInfos.length, fetchProcesses]);
+
+  const fetchUsers = useCallback(() => {
+    setLoadingUsers(true);
+    setErrorUsers(null);
+    dbQuery(profileId, "SELECT User, Host, account_locked, password_expired FROM mysql.user ORDER BY User, Host")
+      .then((results) => {
+        const rows = results[0]?.rows ?? [];
+        setUserRows(rows.map((r) => ({
+          user: String(r[0] ?? ""),
+          host: String(r[1] ?? ""),
+          accountLocked: String(r[2] ?? "") === "Y",
+          passwordExpired: String(r[3] ?? "") === "Y",
+        })));
+      })
+      .catch((e) => setErrorUsers(String(e)))
+      .finally(() => setLoadingUsers(false));
+  }, [profileId]);
+
+  // Fetch users
+  useEffect(() => {
+    if (activeTab === "users" && userRows.length === 0 && !errorUsers) {
+      fetchUsers();
+    }
+  }, [profileId, activeTab, userRows.length, errorUsers, fetchUsers]);
 
   const triggerRefresh = useCallback(() => {
     if (activeTab === "databases") {
@@ -276,8 +322,10 @@ export function DatabaseView({
       fetchStatus();
     } else if (activeTab === "processes") {
       fetchProcesses();
+    } else if (activeTab === "users") {
+      fetchUsers();
     }
-  }, [activeTab, database, profileId]);
+  }, [activeTab, database, profileId, fetchUsers, fetchVariables, fetchStatus, fetchProcesses]);
 
   const [globalCtxMenu, setGlobalCtxMenu] = useState<{ x: number; y: number } | null>(null);
 
@@ -339,6 +387,11 @@ export function DatabaseView({
         id: "commands",
         label: `Command-Statistics (${numCommands || "…"})`,
         icon: <BarChart2 className="w-3 h-3 text-cyan-500" />,
+      },
+      {
+        id: "users",
+        label: `Users (${userRows.length || "…"})`,
+        icon: <Users className="w-3 h-3 text-emerald-500" />,
       },
     );
   }
@@ -445,6 +498,16 @@ export function DatabaseView({
             loading={loadingStatus}
             error={errorStatus}
             onReload={fetchStatus}
+          />
+        )}
+
+        {activeTab === "users" && (
+          <UsersTable
+            profileId={profileId}
+            users={userRows}
+            loading={loadingUsers}
+            error={errorUsers}
+            onReload={fetchUsers}
           />
         )}
       </div>
@@ -1906,6 +1969,503 @@ function CommandStatisticsTable({
               F5 or Ctrl + R
             </span>
           </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Users Table ─────────────────────────────────────────────────────
+
+interface AddUserFormData {
+  user: string;
+  host: string;
+  password: string;
+  allPrivileges: boolean;
+  database: string;
+}
+
+interface EditUserFormData {
+  newPassword: string;
+  changePassword: boolean;
+  accountLocked: boolean;
+}
+
+function UsersTable({
+  profileId,
+  users,
+  loading,
+  error,
+  onReload,
+}: {
+  profileId: string;
+  users: MySqlUser[];
+  loading: boolean;
+  error: string | null;
+  onReload: () => void;
+}) {
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [editingUser, setEditingUser] = useState<MySqlUser | null>(null);
+  const [deletingUser, setDeletingUser] = useState<MySqlUser | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [actionPending, setActionPending] = useState(false);
+
+  const [addForm, setAddForm] = useState<AddUserFormData>({
+    user: "",
+    host: "%",
+    password: "",
+    allPrivileges: false,
+    database: "",
+  });
+
+  const [editForm, setEditForm] = useState<EditUserFormData>({
+    newPassword: "",
+    changePassword: false,
+    accountLocked: false,
+  });
+
+  const openEdit = (u: MySqlUser) => {
+    setEditingUser(u);
+    setEditForm({ newPassword: "", changePassword: false, accountLocked: u.accountLocked });
+    setActionError(null);
+  };
+
+  const handleAdd = async () => {
+    if (!addForm.user.trim()) return;
+    setActionPending(true);
+    setActionError(null);
+    try {
+      const escapedPw = addForm.password.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+      const escapedUser = addForm.user.replace(/\\/g, "\\\\").replace(/`/g, "``");
+      const escapedHost = addForm.host.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+      await dbExecuteQuery(
+        profileId,
+        `CREATE USER \`${escapedUser}\`@'${escapedHost}' IDENTIFIED BY '${escapedPw}'`,
+      );
+      if (addForm.allPrivileges) {
+        const scope = addForm.database.trim()
+          ? `\`${addForm.database.trim().replace(/`/g, "``")}\`.*`
+          : `*.*`;
+        await dbExecuteQuery(
+          profileId,
+          `GRANT ALL PRIVILEGES ON ${scope} TO \`${escapedUser}\`@'${escapedHost}'`,
+        );
+        await dbExecuteQuery(profileId, "FLUSH PRIVILEGES");
+      }
+      setShowAddModal(false);
+      setAddForm({ user: "", host: "%", password: "", allPrivileges: false, database: "" });
+      onReload();
+    } catch (e) {
+      setActionError(String(e));
+    } finally {
+      setActionPending(false);
+    }
+  };
+
+  const escapeSqlSingleQuotedString = (value: string): string =>
+    value.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+
+  const handleEdit = async () => {
+    if (!editingUser) return;
+    setActionPending(true);
+    setActionError(null);
+    try {
+      const escapedUser = editingUser.user.replace(/`/g, "``");
+      const escapedHost = escapeSqlSingleQuotedString(editingUser.host);
+      if (editForm.changePassword && editForm.newPassword) {
+        const escapedPw = escapeSqlSingleQuotedString(editForm.newPassword);
+        await dbExecuteQuery(
+          profileId,
+          `ALTER USER \`${escapedUser}\`@'${escapedHost}' IDENTIFIED BY '${escapedPw}'`,
+        );
+      }
+      const lockClause = editForm.accountLocked ? "ACCOUNT LOCK" : "ACCOUNT UNLOCK";
+      await dbExecuteQuery(
+        profileId,
+        `ALTER USER \`${escapedUser}\`@'${escapedHost}' ${lockClause}`,
+      );
+      setEditingUser(null);
+      onReload();
+    } catch (e) {
+      setActionError(String(e));
+    } finally {
+      setActionPending(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!deletingUser) return;
+    setActionPending(true);
+    setActionError(null);
+    try {
+      const escapedUser = deletingUser.user.replace(/`/g, "``");
+      const escapedHost = escapeSqlSingleQuotedString(deletingUser.host);
+      await dbExecuteQuery(
+        profileId,
+        `DROP USER \`${escapedUser}\`@'${escapedHost}'`,
+      );
+      setDeletingUser(null);
+      onReload();
+    } catch (e) {
+      setActionError(String(e));
+    } finally {
+      setActionPending(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="p-8 flex items-center justify-center gap-2 text-muted-foreground text-xs">
+        <Loader2 className="w-4 h-4 animate-spin" />
+        Loading users…
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="p-8 flex items-center justify-center gap-2 text-red-400 text-xs">
+        <AlertCircle className="w-4 h-4" />
+        {error}
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex-1 flex flex-col overflow-hidden relative">
+      {/* Toolbar */}
+      <div className="h-8 border-b flex items-center gap-1.5 px-2 shrink-0 bg-muted/10">
+        <button
+          onClick={() => {
+            setShowAddModal(true);
+            setActionError(null);
+          }}
+          className="h-6 px-2.5 rounded border bg-background hover:bg-accent text-xs flex items-center gap-1.5 text-foreground transition-colors"
+        >
+          <Plus className="w-3 h-3" />
+          Add User
+        </button>
+        <div className="flex-1" />
+        <button
+          onClick={onReload}
+          className="h-6 w-6 rounded border bg-background hover:bg-accent flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
+          title="Refresh (F5)"
+        >
+          <RefreshCw className="w-3 h-3" />
+        </button>
+      </div>
+
+      {/* Table */}
+      <div className="flex-1 overflow-auto">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="border-b bg-background text-muted-foreground sticky top-0 z-10 shadow-sm">
+              <th className="text-left px-3 py-1.5 font-semibold">Username</th>
+              <th className="text-left px-3 py-1.5 font-semibold">Host</th>
+              <th className="text-left px-3 py-1.5 font-semibold">Status</th>
+              <th className="px-3 py-1.5 w-20" />
+            </tr>
+          </thead>
+          <tbody>
+            {users.map((u) => (
+              <tr
+                key={`${u.user}@${u.host}`}
+                className="border-b border-border/20 hover:bg-accent/30 transition-colors group"
+              >
+                <td className="px-3 py-1.5 flex items-center gap-1.5">
+                  <User className="w-3 h-3 text-emerald-500 shrink-0" />
+                  <span className="font-mono text-foreground">
+                    {u.user || (
+                      <span className="text-muted-foreground italic">anonymous</span>
+                    )}
+                  </span>
+                </td>
+                <td className="px-3 py-1.5 font-mono text-muted-foreground">{u.host}</td>
+                <td className="px-3 py-1.5">
+                  <div className="flex items-center gap-1.5">
+                    {u.accountLocked ? (
+                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-[2px] bg-red-500/10 text-red-400 border border-red-500/20 text-[10px]">
+                        <Lock className="w-2.5 h-2.5" />
+                        Locked
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-[2px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px]">
+                        <Unlock className="w-2.5 h-2.5" />
+                        Active
+                      </span>
+                    )}
+                    {u.passwordExpired && (
+                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-[2px] bg-yellow-500/10 text-yellow-400 border border-yellow-500/20 text-[10px]">
+                        <ShieldCheck className="w-2.5 h-2.5" />
+                        Pwd Expired
+                      </span>
+                    )}
+                  </div>
+                </td>
+                <td className="px-3 py-1.5">
+                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity justify-end">
+                    <button
+                      onClick={() => openEdit(u)}
+                      className="h-5 w-5 rounded flex items-center justify-center hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
+                      title="Edit user"
+                    >
+                      <Pencil className="w-3 h-3" />
+                    </button>
+                    <button
+                      onClick={() => {
+                        setDeletingUser(u);
+                        setActionError(null);
+                      }}
+                      className="h-5 w-5 rounded flex items-center justify-center hover:bg-red-500/10 text-muted-foreground hover:text-red-500 transition-colors"
+                      title="Drop user"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+            {users.length === 0 && (
+              <tr>
+                <td colSpan={4} className="px-3 py-8 text-center text-muted-foreground">
+                  No users found.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Add User Modal */}
+      {showAddModal && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-background/60 backdrop-blur-[1px]">
+          <div className="bg-popover border shadow-2xl rounded-md w-100 flex flex-col overflow-hidden">
+            <div className="h-9 px-3 border-b flex items-center justify-between bg-muted/30">
+              <span className="text-xs font-semibold flex items-center gap-2">
+                <Plus className="w-3.5 h-3.5 text-emerald-500" />
+                Add User
+              </span>
+              <X
+                className="w-4 h-4 cursor-pointer text-muted-foreground hover:text-foreground"
+                onClick={() => !actionPending && setShowAddModal(false)}
+              />
+            </div>
+            <div className="p-4 flex flex-col gap-3 text-xs">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-muted-foreground font-medium block mb-1">Username</label>
+                  <input
+                    type="text"
+                    value={addForm.user}
+                    onChange={(e) => setAddForm((f) => ({ ...f, user: e.target.value }))}
+                    placeholder="newuser"
+                    className="w-full h-8 rounded border bg-background px-2 font-mono text-xs outline-none focus:border-primary/50 transition-colors"
+                    disabled={actionPending}
+                    autoFocus
+                  />
+                </div>
+                <div>
+                  <label className="text-muted-foreground font-medium block mb-1">Host</label>
+                  <input
+                    type="text"
+                    value={addForm.host}
+                    onChange={(e) => setAddForm((f) => ({ ...f, host: e.target.value }))}
+                    placeholder="%"
+                    className="w-full h-8 rounded border bg-background px-2 font-mono text-xs outline-none focus:border-primary/50 transition-colors"
+                    disabled={actionPending}
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="text-muted-foreground font-medium block mb-1">Password</label>
+                <input
+                  type="password"
+                  value={addForm.password}
+                  onChange={(e) => setAddForm((f) => ({ ...f, password: e.target.value }))}
+                  placeholder="••••••••"
+                  className="w-full h-8 rounded border bg-background px-2 text-xs outline-none focus:border-primary/50 transition-colors"
+                  disabled={actionPending}
+                />
+              </div>
+              <label className="flex items-center gap-2 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={addForm.allPrivileges}
+                  onChange={(e) => setAddForm((f) => ({ ...f, allPrivileges: e.target.checked }))}
+                  disabled={actionPending}
+                />
+                <span className="text-foreground">Grant ALL PRIVILEGES</span>
+              </label>
+              {addForm.allPrivileges && (
+                <div>
+                  <label className="text-muted-foreground font-medium block mb-1">
+                    Database{" "}
+                    <span className="text-muted-foreground/50">(leave blank for global *.*)</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={addForm.database}
+                    onChange={(e) => setAddForm((f) => ({ ...f, database: e.target.value }))}
+                    placeholder="mydb"
+                    className="w-full h-8 rounded border bg-background px-2 font-mono text-xs outline-none focus:border-primary/50 transition-colors"
+                    disabled={actionPending}
+                  />
+                </div>
+              )}
+              {actionError && (
+                <div className="p-2 border rounded bg-red-500/10 border-red-500/20 text-red-500 text-[11px] font-mono break-all">
+                  {actionError}
+                </div>
+              )}
+            </div>
+            <div className="p-3 border-t bg-muted/10 flex justify-end gap-2">
+              <button
+                onClick={() => !actionPending && setShowAddModal(false)}
+                disabled={actionPending}
+                className="px-4 py-1.5 border bg-background rounded text-xs hover:bg-muted/50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleAdd}
+                disabled={actionPending || !addForm.user.trim()}
+                className="px-4 py-1.5 bg-primary text-primary-foreground rounded text-xs font-medium hover:bg-primary/90 transition-colors flex items-center gap-2 disabled:opacity-50"
+              >
+                {actionPending && <Loader2 className="w-3 h-3 animate-spin" />}
+                Create User
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit User Modal */}
+      {editingUser && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-background/60 backdrop-blur-[1px]">
+          <div className="bg-popover border shadow-2xl rounded-md w-96 flex flex-col overflow-hidden">
+            <div className="h-9 px-3 border-b flex items-center justify-between bg-muted/30">
+              <span className="text-xs font-semibold flex items-center gap-2">
+                <Pencil className="w-3.5 h-3.5 text-primary" />
+                Edit User:{" "}
+                <span className="font-mono text-foreground">
+                  {editingUser.user}@{editingUser.host}
+                </span>
+              </span>
+              <X
+                className="w-4 h-4 cursor-pointer text-muted-foreground hover:text-foreground"
+                onClick={() => !actionPending && setEditingUser(null)}
+              />
+            </div>
+            <div className="p-4 flex flex-col gap-3 text-xs">
+              <label className="flex items-center gap-2 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={editForm.accountLocked}
+                  onChange={(e) => setEditForm((f) => ({ ...f, accountLocked: e.target.checked }))}
+                  disabled={actionPending}
+                />
+                <Lock className="w-3 h-3 text-muted-foreground" />
+                <span className="text-foreground">Lock account</span>
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={editForm.changePassword}
+                  onChange={(e) =>
+                    setEditForm((f) => ({ ...f, changePassword: e.target.checked, newPassword: "" }))
+                  }
+                  disabled={actionPending}
+                />
+                <Key className="w-3 h-3 text-muted-foreground" />
+                <span className="text-foreground">Change password</span>
+              </label>
+              {editForm.changePassword && (
+                <div>
+                  <label className="text-muted-foreground font-medium block mb-1">New Password</label>
+                  <input
+                    type="password"
+                    value={editForm.newPassword}
+                    onChange={(e) => setEditForm((f) => ({ ...f, newPassword: e.target.value }))}
+                    placeholder="••••••••"
+                    className="w-full h-8 rounded border bg-background px-2 text-xs outline-none focus:border-primary/50 transition-colors"
+                    disabled={actionPending}
+                    autoFocus
+                  />
+                </div>
+              )}
+              {actionError && (
+                <div className="p-2 border rounded bg-red-500/10 border-red-500/20 text-red-500 text-[11px] font-mono break-all">
+                  {actionError}
+                </div>
+              )}
+            </div>
+            <div className="p-3 border-t bg-muted/10 flex justify-end gap-2">
+              <button
+                onClick={() => !actionPending && setEditingUser(null)}
+                disabled={actionPending}
+                className="px-4 py-1.5 border bg-background rounded text-xs hover:bg-muted/50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleEdit}
+                disabled={actionPending}
+                className="px-4 py-1.5 bg-primary text-primary-foreground rounded text-xs font-medium hover:bg-primary/90 transition-colors flex items-center gap-2 disabled:opacity-50"
+              >
+                {actionPending && <Loader2 className="w-3 h-3 animate-spin" />}
+                Save Changes
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {deletingUser && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-background/60 backdrop-blur-[1px]">
+          <div className="bg-popover border shadow-2xl rounded-md w-88 flex flex-col overflow-hidden">
+            <div className="h-9 px-3 border-b flex items-center justify-between bg-muted/30">
+              <span className="text-xs font-semibold flex items-center gap-2">
+                <Trash2 className="w-3.5 h-3.5 text-red-500" />
+                Drop User
+              </span>
+              <X
+                className="w-4 h-4 cursor-pointer text-muted-foreground hover:text-foreground"
+                onClick={() => !actionPending && setDeletingUser(null)}
+              />
+            </div>
+            <div className="p-4 text-xs">
+              <p className="text-foreground/80">
+                Drop user{" "}
+                <span className="font-mono font-semibold text-foreground">
+                  {deletingUser.user}@{deletingUser.host}
+                </span>
+                ? This will permanently remove the user and revoke all their privileges.
+              </p>
+              {actionError && (
+                <div className="p-2 border rounded bg-red-500/10 border-red-500/20 text-red-500 text-[11px] font-mono break-all mt-3">
+                  {actionError}
+                </div>
+              )}
+            </div>
+            <div className="p-3 border-t bg-muted/10 flex justify-end gap-2">
+              <button
+                onClick={() => !actionPending && setDeletingUser(null)}
+                disabled={actionPending}
+                className="px-4 py-1.5 border bg-background rounded text-xs hover:bg-muted/50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDelete}
+                disabled={actionPending}
+                className="px-4 py-1.5 bg-red-500 text-white rounded text-xs font-medium hover:bg-red-600 transition-colors flex items-center gap-2 disabled:opacity-50"
+              >
+                {actionPending && <Loader2 className="w-3 h-3 animate-spin" />}
+                Drop User
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

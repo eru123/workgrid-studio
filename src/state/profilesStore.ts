@@ -84,6 +84,7 @@ export interface SavedProfile {
   sshStrictKeyChecking?: boolean;
   sshKeepAliveInterval?: number;
   sshCompression?: boolean;
+  connectionVerboseLogging?: boolean;
   lastConnectedAt: number | null;
   createdAt: number;
   preferences?: ProfilePreferences;
@@ -130,6 +131,7 @@ export function createDefaultFormData(type?: DatabaseType): ProfileFormData {
     sshStrictKeyChecking: false,
     sshKeepAliveInterval: 0,
     sshCompression: true,
+    connectionVerboseLogging: false,
   };
 }
 

@@ -144,7 +144,7 @@ export const CommandPalette: React.FC = () => {
             });
         });
         return items;
-    }, [profiles, isOpen]);
+    }, [profiles]);
 
     const allItems = useMemo(
         () => [...actionItems, ...allTabs, ...schemaItems],

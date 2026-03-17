@@ -11,7 +11,7 @@ import {
 import { useSchemaStore } from "@/state/schemaStore";
 import { useLayoutStore } from "@/state/layoutStore";
 import { useAppStore } from "@/state/appStore";
-import { dbConnect, dbDisconnect } from "@/lib/db";
+import { dbCancelConnect, dbConnect, dbDisconnect } from "@/lib/db";
 import {
     appendConnectionOutput,
     formatConnectionTarget,
@@ -83,6 +83,7 @@ export function useProfileManager() {
             sshStrictKeyChecking: profile.sshStrictKeyChecking ?? false,
             sshKeepAliveInterval: profile.sshKeepAliveInterval ?? 0,
             sshCompression: profile.sshCompression ?? true,
+            connectionVerboseLogging: profile.connectionVerboseLogging ?? false,
         });
         setEditingId(profile.id);
         setViewMode("edit");
@@ -254,6 +255,7 @@ export function useProfileManager() {
                     ssh_strict_key_checking: profile.sshStrictKeyChecking ?? false,
                     ssh_keep_alive_interval: profile.sshKeepAliveInterval ?? 0,
                     ssh_compression: profile.sshCompression ?? true,
+                    connection_verbose_logging: profile.connectionVerboseLogging ?? false,
                 });
                 setConnectionStatus(id, "connected");
                 appendConnectionOutput(
@@ -266,22 +268,42 @@ export function useProfileManager() {
                 addConnection(id, profile.name, profile.color);
                 setActiveView("explorer");
             } catch (e) {
-                setConnectionStatus(id, "error");
-                appendConnectionOutput(
-                    profile,
-                    "error",
-                    reconnectAttempt
-                        ? `Reconnect attempt ${reconnectAttempt} failed for ${target}: ${formatOutputError(e)}`
-                        : `Connection failed for ${target}: ${formatOutputError(e)}`,
-                );
-                if (!silentFailureToast) {
-                    useAppStore.getState().addToast({
-                        title: "Connection Failed",
-                        description: String(e),
-                        variant: "destructive",
-                    });
+                const errorMsg = formatOutputError(e);
+                const wasCancelled = errorMsg.includes("Connection cancelled");
+                setConnectionStatus(id, wasCancelled ? "disconnected" : "error");
+                if (wasCancelled) {
+                    appendConnectionOutput(
+                        profile,
+                        "info",
+                        `Connection to ${target} was cancelled.`,
+                    );
+                } else {
+                    appendConnectionOutput(
+                        profile,
+                        "error",
+                        reconnectAttempt
+                            ? `Reconnect attempt ${reconnectAttempt} failed for ${target}: ${errorMsg}`
+                            : `Connection failed for ${target}: ${errorMsg}`,
+                    );
+                    if (!silentFailureToast) {
+                        useAppStore.getState().addToast({
+                            title: "Connection Failed",
+                            description: String(e),
+                            variant: "destructive",
+                        });
+                    }
                 }
             }
+        }
+    };
+
+    const handleCancelConnect = async (id: string) => {
+        const profile = useProfilesStore.getState().profiles.find((p) => p.id === id);
+        if (!profile || profile.connectionStatus !== "connecting") return;
+        try {
+            await dbCancelConnect(id);
+        } catch {
+            // ignore — the connect attempt will time out on its own
         }
     };
 
@@ -332,6 +354,7 @@ export function useProfileManager() {
 
         // Connection
         handleConnect,
+        handleCancelConnect,
         handleDoubleClick,
 
         // Form

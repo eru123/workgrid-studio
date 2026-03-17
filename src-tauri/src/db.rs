@@ -1,10 +1,12 @@
 use crate::crypto::{decrypt_password, encrypt_password};
-use crate::logging::{log_error, log_info, log_query, log_query_result};
+use crate::logging::{log_error, log_info, log_mysql_verbose, log_query, log_query_result};
 use crate::ssh::{establish_ssh_tunnel, shutdown_tunnel};
 use crate::{AppError, AppResult, DbState};
 use mysql_async::prelude::*;
 use mysql_async::{Opts, OptsBuilder, Pool, PoolConstraints, PoolOpts, TxOpts};
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, State};
 
@@ -41,6 +43,8 @@ pub struct ConnectParams {
     pub ssh_keep_alive_interval: u32,
     #[serde(default = "default_true")]
     pub ssh_compression: bool,
+    #[serde(default)]
+    pub connection_verbose_logging: bool,
 }
 
 pub fn default_true() -> bool {
@@ -226,6 +230,49 @@ fn format_timeout_label(timeout_ms: u64) -> String {
     }
 }
 
+fn configured_label(value: bool) -> &'static str {
+    if value {
+        "enabled"
+    } else {
+        "disabled"
+    }
+}
+
+fn option_label(value: Option<&str>) -> &'static str {
+    match value {
+        Some(value) if !value.trim().is_empty() => "<provided>",
+        _ => "<unset>",
+    }
+}
+
+fn option_path(value: Option<&str>, verbose: bool) -> String {
+    match value {
+        Some(value) if !value.trim().is_empty() => {
+            if verbose {
+                value.to_string()
+            } else {
+                "<provided>".to_string()
+            }
+        }
+        _ => "<unset>".to_string(),
+    }
+}
+
+fn database_label(database: Option<&str>) -> &str {
+    match database {
+        Some(value) if !value.trim().is_empty() => value,
+        _ => "<none>",
+    }
+}
+
+fn db_driver_label(db_type: &str) -> &str {
+    if db_type.is_empty() {
+        "mysql"
+    } else {
+        db_type
+    }
+}
+
 async fn run_query_with_timeout<T, F>(
     profile_id: &str,
     label: &str,
@@ -257,11 +304,64 @@ where
 
 // ─── DB Commands ────────────────────────────────────────────────────
 
+/// Signal an in-flight `db_connect` for `profile_id` to abort at its next
+/// check-point.  Safe to call even if no connection attempt is in progress.
+#[tauri::command]
+pub async fn db_cancel_connect(
+    state: State<'_, DbState>,
+    profile_id: String,
+) -> AppResult<()> {
+    if let Ok(tokens) = state.cancel_tokens.lock() {
+        if let Some(token) = tokens.get(&profile_id) {
+            token.store(true, Ordering::Relaxed);
+            log_info(&profile_id, "Connection cancellation requested.");
+        }
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn db_connect(state: State<'_, DbState>, params: ConnectParams) -> AppResult<String> {
     let mut params = params;
+    let connect_started = Instant::now();
     let pid = params.profile_id.clone();
     let db_type = params.db_type.as_str();
+    let verbose = params.connection_verbose_logging;
+    let target = format!("{}@{}:{}", params.user, params.host, params.port);
+
+    log_info(
+        &pid,
+        &format!(
+            "Connection requested: driver={}, target={}, database={}, ssl={}, ssh={}, verbose={}",
+            db_driver_label(db_type),
+            target,
+            database_label(params.database.as_deref()),
+            configured_label(params.ssl),
+            configured_label(params.ssh),
+            configured_label(verbose),
+        ),
+    );
+    log_mysql_verbose(
+        &pid,
+        verbose,
+        &format!(
+            "Connection options: password={}, ssl_verify_server_cert={}, ssl_ca={}, ssl_cert={}, ssl_key={}, ssh_host={}, ssh_port={}, ssh_user={}, ssh_password={}, ssh_key={}, ssh_passphrase={}, ssh_strict_key_checking={}, ssh_keep_alive_interval={}s, ssh_compression={}",
+            option_label(Some(params.password.as_str())),
+            configured_label(params.ssl_reject_unauthorized),
+            option_path(params.ssl_ca_file.as_deref(), verbose),
+            option_path(params.ssl_cert_file.as_deref(), verbose),
+            option_path(params.ssl_key_file.as_deref(), verbose),
+            params.ssh_host.as_deref().unwrap_or("<unset>"),
+            params.ssh_port.unwrap_or(22),
+            params.ssh_user.as_deref().unwrap_or("<unset>"),
+            option_label(params.ssh_password.as_deref()),
+            option_path(params.ssh_key_file.as_deref(), verbose),
+            option_label(params.ssh_passphrase.as_deref()),
+            params.ssh_strict_key_checking,
+            params.ssh_keep_alive_interval,
+            params.ssh_compression,
+        ),
+    );
 
     // Backend safety net: only mysql and mariadb are supported
     if !db_type.is_empty() && db_type != "mysql" && db_type != "mariadb" {
@@ -271,6 +371,14 @@ pub async fn db_connect(state: State<'_, DbState>, params: ConnectParams) -> App
         );
         log_error(&pid, &msg);
         return Err(AppError::validation(msg));
+    }
+
+    // Register a fresh cancel token for this connection attempt.
+    // Any stale token from a previous attempt is overwritten with false.
+    let cancel_token = Arc::new(AtomicBool::new(false));
+    {
+        let mut tokens = state.cancel_tokens.lock().map_err(|e| e.to_string())?;
+        tokens.insert(pid.clone(), cancel_token.clone());
     }
 
     // Encrypt password if not already encrypted
@@ -295,6 +403,11 @@ pub async fn db_connect(state: State<'_, DbState>, params: ConnectParams) -> App
     // Decrypt passwords for the actual connection
     let mut conn_params = params.clone();
     conn_params.password = decrypt_password(params.password.clone())?;
+    log_mysql_verbose(
+        &pid,
+        verbose,
+        "Database password decrypted for active connection attempt.",
+    );
 
     if params.ssh {
         if let Some(ssh_pass) = conn_params.ssh_password.as_mut() {
@@ -302,6 +415,18 @@ pub async fn db_connect(state: State<'_, DbState>, params: ConnectParams) -> App
         }
         if let Some(ssh_passphrase) = conn_params.ssh_passphrase.as_mut() {
             *ssh_passphrase = decrypt_password(ssh_passphrase.clone())?;
+        }
+        log_mysql_verbose(
+            &pid,
+            verbose,
+            "SSH secret material decrypted for active connection attempt.",
+        );
+
+        // Cancel check: abort before any blocking SSH work begins.
+        if cancel_token.load(Ordering::Relaxed) {
+            let msg = "Connection cancelled.".to_string();
+            log_info(&pid, &msg);
+            return Err(AppError::ssh(msg));
         }
 
         // Establish SSH Tunnel
@@ -313,6 +438,7 @@ pub async fn db_connect(state: State<'_, DbState>, params: ConnectParams) -> App
                 tunnels.remove(&pid)
             };
             if let Some(old) = old_tunnel {
+                log_info(&pid, "Closing previous SSH tunnel before reconnecting.");
                 shutdown_tunnel(old);
             }
             // Debug telemetry: log active tunnel count after cleanup.
@@ -323,28 +449,56 @@ pub async fn db_connect(state: State<'_, DbState>, params: ConnectParams) -> App
                     tunnels.len()
                 );
             }
+            if let Ok(tunnels) = state.tunnels.lock() {
+                log_mysql_verbose(
+                    &pid,
+                    verbose,
+                    &format!(
+                        "Active SSH tunnel count after reconnect cleanup: {}",
+                        tunnels.len()
+                    ),
+                );
+            }
         }
         let handle = establish_ssh_tunnel(&pid, &conn_params)?;
         log_info(
             &pid,
-            &format!("SSH Tunnel established: localhost:{}", handle.local_port),
+            &format!(
+                "SSH tunnel established: 127.0.0.1:{} -> {}:{}",
+                handle.local_port, params.host, params.port
+            ),
         );
 
         // Redirect connection to local port
         conn_params.host = "127.0.0.1".to_string();
         conn_params.port = handle.local_port;
+        log_mysql_verbose(
+            &pid,
+            verbose,
+            &format!(
+                "MySQL TCP target redirected through SSH tunnel to {}:{}",
+                conn_params.host, conn_params.port
+            ),
+        );
 
         let mut tunnels = state.tunnels.lock().map_err(|e| e.to_string())?;
         tunnels.insert(pid.clone(), handle);
     }
 
-    let target = format!("{}@{}:{}", params.user, params.host, params.port);
+    // Cancel check: abort after SSH tunnel is up but before TCP to MySQL.
+    // The tunnel will be cleaned up by the disconnect path on the next call.
+    if cancel_token.load(Ordering::Relaxed) {
+        let msg = "Connection cancelled.".to_string();
+        log_info(&pid, &msg);
+        return Err(AppError::ssh(msg));
+    }
+
     log_info(
         &pid,
         &format!(
             "Connecting to {} ({}) ...",
             target,
-            if db_type.is_empty() { "mysql" } else { db_type }
+            db_driver_label(db_type)
         ),
     );
 
@@ -353,6 +507,16 @@ pub async fn db_connect(state: State<'_, DbState>, params: ConnectParams) -> App
         .tcp_port(conn_params.port)
         .user(Some(conn_params.user.clone()))
         .pass(Some(conn_params.password.clone()));
+    log_mysql_verbose(
+        &pid,
+        verbose,
+        &format!(
+            "Prepared MySQL TCP target {}:{} with database {}.",
+            conn_params.host,
+            conn_params.port,
+            database_label(conn_params.database.as_deref())
+        ),
+    );
 
     if let Some(ref db) = conn_params.database {
         if !db.is_empty() {
@@ -361,6 +525,23 @@ pub async fn db_connect(state: State<'_, DbState>, params: ConnectParams) -> App
     }
 
     if params.ssl {
+        log_info(
+            &pid,
+            &format!(
+                "MySQL TLS is enabled. Server certificate validation is {}.",
+                configured_label(params.ssl_reject_unauthorized)
+            ),
+        );
+        log_mysql_verbose(
+            &pid,
+            verbose,
+            &format!(
+                "MySQL TLS asset configuration: ca={}, client_cert={}, client_key={}",
+                option_path(params.ssl_ca_file.as_deref(), verbose),
+                option_path(params.ssl_cert_file.as_deref(), verbose),
+                option_path(params.ssl_key_file.as_deref(), verbose),
+            ),
+        );
         let mut ssl_opts = mysql_async::SslOpts::default();
 
         if !params.ssl_reject_unauthorized {
@@ -376,6 +557,7 @@ pub async fn db_connect(state: State<'_, DbState>, params: ConnectParams) -> App
                     return Err(AppError::validation(msg));
                 }
                 ssl_opts = ssl_opts.with_root_certs(vec![path.into()]);
+                log_mysql_verbose(&pid, verbose, "Validated MySQL CA certificate path.");
             }
         }
 
@@ -393,6 +575,7 @@ pub async fn db_connect(state: State<'_, DbState>, params: ConnectParams) -> App
                     return Err(AppError::validation(msg));
                 }
                 has_cert = true;
+                log_mysql_verbose(&pid, verbose, "Validated MySQL client certificate path.");
             }
         }
 
@@ -405,12 +588,18 @@ pub async fn db_connect(state: State<'_, DbState>, params: ConnectParams) -> App
                     return Err(AppError::validation(msg));
                 }
                 has_key = true;
+                log_mysql_verbose(&pid, verbose, "Validated MySQL client key path.");
             }
         }
 
         if has_cert && has_key {
             let identity = mysql_async::ClientIdentity::new(cert_path.into(), key_path.into());
             ssl_opts = ssl_opts.with_client_identity(Some(identity));
+            log_mysql_verbose(
+                &pid,
+                verbose,
+                "Configured MySQL mutual TLS client identity.",
+            );
         } else if has_cert || has_key {
             let msg = "Both Client Certificate and Client Key must be provided for mutual TLS."
                 .to_string();
@@ -419,18 +608,52 @@ pub async fn db_connect(state: State<'_, DbState>, params: ConnectParams) -> App
         }
 
         builder = builder.ssl_opts(Some(ssl_opts));
+    } else {
+        log_mysql_verbose(&pid, verbose, "MySQL TLS disabled for this connection.");
     }
 
     let pool_opts = PoolOpts::new().with_constraints(PoolConstraints::new(0, 5).unwrap());
     builder = builder.pool_opts(Some(pool_opts));
+    log_mysql_verbose(
+        &pid,
+        verbose,
+        "Configured MySQL pool constraints: min=0, max=5.",
+    );
 
     let opts: Opts = builder.into();
     let pool = Pool::new(opts);
+    let mysql_connect_started = Instant::now();
 
-    match pool.get_conn().await {
+    // Wrap the async MySQL handshake in a select! so a cancel request during
+    // a slow TCP connect or MySQL greeting exchange is handled immediately.
+    let cancel_for_select = cancel_token.clone();
+    let get_conn_result = tokio::select! {
+        r = pool.get_conn() => r,
+        _ = async move {
+            loop {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                if cancel_for_select.load(Ordering::Relaxed) {
+                    return;
+                }
+            }
+        } => {
+            let msg = "Connection cancelled.".to_string();
+            log_info(&pid, &msg);
+            return Err(AppError::ssh(msg));
+        }
+    };
+
+    match get_conn_result {
         Ok(conn) => {
             drop(conn);
-            log_info(&pid, &format!("Connected to {}", target));
+            log_info(
+                &pid,
+                &format!(
+                    "Connected to {} in {} ms",
+                    target,
+                    mysql_connect_started.elapsed().as_millis()
+                ),
+            );
         }
         Err(e) => {
             let msg = format!("Connection failed to {}: {}", target, e);
@@ -446,13 +669,30 @@ pub async fn db_connect(state: State<'_, DbState>, params: ConnectParams) -> App
     })?;
 
     if let Some(old_pool) = pools.remove(&pid) {
+        log_mysql_verbose(&pid, verbose, "Replacing existing MySQL pool for profile.");
         tauri::async_runtime::spawn(async move {
             let _ = old_pool.disconnect().await;
         });
     }
     pools.insert(pid.clone(), pool);
+    log_mysql_verbose(
+        &pid,
+        verbose,
+        &format!("Active MySQL pool count is now {}.", pools.len()),
+    );
 
-    Ok(format!("Connected to {}", target))
+    // Clean up the cancel token on successful connection.
+    if let Ok(mut tokens) = state.cancel_tokens.lock() {
+        tokens.remove(&pid);
+    }
+
+    let success_message = format!(
+        "Connected to {} in {} ms",
+        target,
+        connect_started.elapsed().as_millis()
+    );
+    log_mysql_verbose(&pid, verbose, &success_message);
+    Ok(success_message)
 }
 
 #[tauri::command]
@@ -471,6 +711,7 @@ pub async fn db_disconnect(state: State<'_, DbState>, profile_id: String) -> App
     }; // lock released here
 
     if let Some(pool) = pool {
+        log_info(&profile_id, "Closing MySQL pool.");
         let _ = pool.disconnect().await;
     }
 
@@ -481,6 +722,7 @@ pub async fn db_disconnect(state: State<'_, DbState>, profile_id: String) -> App
         tunnels.remove(&profile_id)
     };
     if let Some(handle) = tunnel {
+        log_info(&profile_id, "Shutting down SSH tunnel.");
         shutdown_tunnel(handle);
     }
     // Debug telemetry: log active tunnel count after disconnect.

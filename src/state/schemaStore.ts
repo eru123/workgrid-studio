@@ -85,6 +85,7 @@ export const useSchemaStore = create<SchemaState>((set) => ({
             autoRefreshTimers.set(profileId, timer);
         }
         void useSchemaStore.getState().fetchServerVersion(profileId);
+        void useSchemaStore.getState().refreshDatabases(profileId);
     },
 
     removeConnection: (profileId) => {

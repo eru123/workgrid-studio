@@ -208,10 +208,8 @@ export function Workbench() {
   const theme = globalPrefs.theme || "system";
 
   const handleToggleTheme = () => {
-    let next: "light" | "dark" | "system" = "system";
-    if (theme === "dark") next = "light";
-    else if (theme === "light") next = "system";
-    else next = "dark";
+    const next: "light" | "dark" | "system" =
+      theme === "dark" ? "light" : theme === "light" ? "system" : "dark";
     setGlobalPrefs({ ...globalPrefs, theme: next });
   };
 
@@ -277,7 +275,7 @@ export function Workbench() {
         // Silently ignore startup update check failures
       }
     })();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+   
   }, []);
 
   useEffect(() => {
@@ -396,8 +394,9 @@ export function Workbench() {
       }
     });
 
+    const intervalsRef = scheduledQueryIntervalsRef.current;
     return () => {
-      Object.keys(scheduledQueryIntervalsRef.current).forEach(clearScheduledInterval);
+      Object.keys(intervalsRef).forEach(clearScheduledInterval);
     };
   }, [
     loadAllSavedQueries,
@@ -743,7 +742,7 @@ export function Workbench() {
 // ─── Bottom Panel ───────────────────────────────────────────────────
 
 type PanelTab = "output" | "problems" | "logs" | "ailogs";
-type LogFilter = "mysql" | "error";
+type LogFilter = "mysql" | "ssh" | "error";
 
 interface ProblemItem {
   id: string;
@@ -810,6 +809,7 @@ function BottomPanel({ isSecondary }: { isSecondary?: boolean }) {
   const connectedProfiles = profiles.filter(
     (p) => p.connectionStatus === "connected",
   );
+  const logProfiles = profiles;
 
   const isBottomPanelSplit = useLayoutStore((s) => s.isBottomPanelSplit);
   const toggleBottomPanelSplit = useLayoutStore((s) => s.toggleBottomPanelSplit);
@@ -825,18 +825,18 @@ function BottomPanel({ isSecondary }: { isSecondary?: boolean }) {
   const [logViewport, setLogViewport] = useState({ scrollTop: 0, clientHeight: 1 });
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Auto-select first connected profile
+  // Auto-select first available profile for log viewing
   useEffect(() => {
-    if (!selectedProfileId && connectedProfiles.length > 0) {
-      setSelectedProfileId(connectedProfiles[0].id);
+    if (!selectedProfileId && logProfiles.length > 0) {
+      setSelectedProfileId(logProfiles[0].id);
     }
     if (
       selectedProfileId &&
-      !connectedProfiles.find((p) => p.id === selectedProfileId)
+      !logProfiles.find((p) => p.id === selectedProfileId)
     ) {
-      setSelectedProfileId(connectedProfiles[0]?.id ?? "");
+      setSelectedProfileId(logProfiles[0]?.id ?? "");
     }
-  }, [connectedProfiles, selectedProfileId]);
+  }, [logProfiles, selectedProfileId]);
 
   // ── Logs fetching ───────────────────────────────────────────────
   const fetchLogs = useCallback(async () => {
@@ -1108,14 +1108,14 @@ function BottomPanel({ isSecondary }: { isSecondary?: boolean }) {
 
         <div className="ml-auto flex items-center gap-2">
           {/* Logs-specific: Profile selector */}
-          {activeTab === "logs" && connectedProfiles.length > 0 && (
+          {activeTab === "logs" && logProfiles.length > 0 && (
             <select
               value={selectedProfileId}
               onChange={(e) => setSelectedProfileId(e.target.value)}
               className="h-6 text-[11px] rounded border bg-secondary/50 text-foreground px-1.5 outline-none"
               aria-label="Select log profile"
             >
-              {connectedProfiles.map((p) => (
+              {logProfiles.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.name}
                 </option>
@@ -1131,7 +1131,8 @@ function BottomPanel({ isSecondary }: { isSecondary?: boolean }) {
               className="h-6 text-[11px] rounded border bg-secondary/50 text-foreground px-1.5 outline-none"
               aria-label="Select log type"
             >
-              <option value="mysql">Query Log</option>
+              <option value="mysql">MySQL Log</option>
+              <option value="ssh">SSH Log</option>
               <option value="error">Error Log</option>
             </select>
           )}
@@ -1329,9 +1330,9 @@ function BottomPanel({ isSecondary }: { isSecondary?: boolean }) {
         {/* ── Logs ───────────────────────────────────────────── */}
         {activeTab === "logs" && (
           <div className="p-3 font-mono text-xs leading-5">
-            {connectedProfiles.length === 0 ? (
+            {logProfiles.length === 0 ? (
               <span className="text-muted-foreground">
-                Connect to a database to view logs.
+                Create a connection profile to view logs.
               </span>
             ) : logContent ? (
               <pre className="whitespace-pre-wrap break-all text-muted-foreground">
@@ -1345,6 +1346,10 @@ function BottomPanel({ isSecondary }: { isSecondary?: boolean }) {
                       "min-h-5",
                       line.includes("ERROR") && "text-red-400",
                       line.includes("INFO") && "text-blue-400/70",
+                      line.includes("VERBOSE") && "text-amber-300/80",
+                      line.includes("SSH") &&
+                      !line.includes("ERROR") &&
+                      "text-cyan-300/80",
                       line.includes("QUERY") &&
                       !line.includes("ERROR") &&
                       "text-foreground/80",
@@ -1359,8 +1364,7 @@ function BottomPanel({ isSecondary }: { isSecondary?: boolean }) {
               </pre>
             ) : (
               <span className="text-muted-foreground">
-                No log entries yet. Interact with the database to see queries
-                here.
+                No log entries yet. Run a connection attempt or query to capture diagnostics here.
               </span>
             )}
           </div>

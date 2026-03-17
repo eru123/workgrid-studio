@@ -1764,19 +1764,18 @@ export function TableDesigner({ tabId, leafId, profileId, database, tableName }:
       options,
     });
 
-    let sql = "";
     if (isEditMode) {
       if (!loadedSnapshot) {
         setError("Table schema is still loading. Please wait.");
         return;
       }
-      sql = alterTableSql(database, loadedSnapshot, nextSnapshot) || "";
+      const sql = alterTableSql(database, loadedSnapshot, nextSnapshot) || "";
       if (!sql) {
         setSuccess("No changes to save.");
         return;
       }
     } else {
-      sql = createTableSql(database, nextSnapshot);
+      const sql = createTableSql(database, nextSnapshot);
       if (sql.startsWith("--")) {
         setError(sql.replace(/^--\s*/, ""));
         return;
@@ -1799,12 +1798,9 @@ export function TableDesigner({ tabId, leafId, profileId, database, tableName }:
       options,
     });
 
-    let sql = "";
-    if (isEditMode) {
-      sql = alterTableSql(database, loadedSnapshot!, nextSnapshot) || "";
-    } else {
-      sql = createTableSql(database, nextSnapshot);
-    }
+    const sql = isEditMode
+      ? alterTableSql(database, loadedSnapshot!, nextSnapshot) || ""
+      : createTableSql(database, nextSnapshot);
 
     setSaving(true);
     setError(null);
@@ -3009,7 +3005,7 @@ const ColumnRow = memo(function ColumnRow({
   );
   const defaultSuggestions = useMemo(
     () => buildDefaultValueSuggestions(col),
-    [col.datatype, col.length, col.allowNull, col.defaultVal],
+    [col],
   );
   const handleComment = useCallback(
     (v: string) => onUpdate(col.id, "comment", v),
