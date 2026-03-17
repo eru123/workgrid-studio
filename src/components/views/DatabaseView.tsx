@@ -2062,15 +2062,18 @@ function UsersTable({
     }
   };
 
+  const escapeSqlSingleQuotedString = (value: string): string =>
+    value.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+
   const handleEdit = async () => {
     if (!editingUser) return;
     setActionPending(true);
     setActionError(null);
     try {
       const escapedUser = editingUser.user.replace(/`/g, "``");
-      const escapedHost = editingUser.host.replace(/'/g, "\\'");
+      const escapedHost = escapeSqlSingleQuotedString(editingUser.host);
       if (editForm.changePassword && editForm.newPassword) {
-        const escapedPw = editForm.newPassword.replace(/'/g, "\\'");
+        const escapedPw = escapeSqlSingleQuotedString(editForm.newPassword);
         await dbExecuteQuery(
           profileId,
           `ALTER USER \`${escapedUser}\`@'${escapedHost}' IDENTIFIED BY '${escapedPw}'`,
@@ -2096,7 +2099,7 @@ function UsersTable({
     setActionError(null);
     try {
       const escapedUser = deletingUser.user.replace(/`/g, "``");
-      const escapedHost = deletingUser.host.replace(/'/g, "\\'");
+      const escapedHost = escapeSqlSingleQuotedString(deletingUser.host);
       await dbExecuteQuery(
         profileId,
         `DROP USER \`${escapedUser}\`@'${escapedHost}'`,
