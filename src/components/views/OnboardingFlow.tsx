@@ -91,6 +91,7 @@ export function OnboardingFlow({ onClose }: Props) {
                 ssh_strict_key_checking: form.sshStrictKeyChecking ?? false,
                 ssh_keep_alive_interval: form.sshKeepAliveInterval ?? 0,
                 ssh_compression: form.sshCompression ?? true,
+                connection_verbose_logging: form.connectionVerboseLogging ?? false,
             });
             setConnectionStatus(profile.id, "connected");
             addConnection(profile.id, profile.name, profile.color);

@@ -135,11 +135,20 @@ export function ServersSidebar() {
     setIsTestingConnection(true);
     setTestConnectionResult(null);
 
-    const tempProfileId = `test-${crypto.randomUUID()}`;
+    const editingProfile = editingId
+      ? profiles.find((profile) => profile.id === editingId)
+      : null;
+    const testProfileId =
+      editingId &&
+      editingProfile &&
+      editingProfile.connectionStatus !== "connected" &&
+      editingProfile.connectionStatus !== "connecting"
+        ? editingId
+        : `test-${crypto.randomUUID()}`;
 
     try {
       await dbConnect({
-        profile_id: tempProfileId,
+        profile_id: testProfileId,
         host: formData.host,
         port: formData.port ?? DB_TYPE_DEFAULT_PORTS[formData.type] ?? 3306,
         user: formData.user,
@@ -161,9 +170,10 @@ export function ServersSidebar() {
         ssh_strict_key_checking: formData.sshStrictKeyChecking ?? false,
         ssh_keep_alive_interval: formData.sshKeepAliveInterval ?? 0,
         ssh_compression: formData.sshCompression ?? true,
+        connection_verbose_logging: formData.connectionVerboseLogging ?? false,
       });
 
-      const latency = await dbPing(tempProfileId);
+      const latency = await dbPing(testProfileId);
       const message = `Connected successfully in ${latency}ms.`;
       setTestConnectionResult({ tone: "success", message });
       useAppStore.getState().addToast({
@@ -180,7 +190,7 @@ export function ServersSidebar() {
       });
     } finally {
       try {
-        await dbDisconnect(tempProfileId);
+        await dbDisconnect(testProfileId);
       } catch {
         // Best-effort cleanup for temporary test connections.
       }
@@ -1051,6 +1061,26 @@ export function ServersSidebar() {
                         </div>
                       </div>
                     )}
+
+                    <div className="pt-3 border-t mt-1 border-border/50">
+                      <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/70 block mb-2">
+                        Diagnostics
+                      </label>
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="space-y-0.5">
+                          <label className="text-xs font-medium">Verbose Connection Logging</label>
+                          <p className="text-[10px] text-muted-foreground">
+                            Log step-by-step SSH and MySQL connection diagnostics for this profile
+                          </p>
+                        </div>
+                        <input
+                          type="checkbox"
+                          checked={formData.connectionVerboseLogging ?? false}
+                          onChange={(e) => updateField("connectionVerboseLogging", e.target.checked)}
+                          className="h-3.5 w-3.5 rounded border-gray-300 text-primary focus:ring-primary"
+                        />
+                      </div>
+                    </div>
                   </div>
                 )}
               </div>

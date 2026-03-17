@@ -26,6 +26,7 @@ export interface ConnectParams {
     ssh_strict_key_checking: boolean;
     ssh_keep_alive_interval: number;
     ssh_compression: boolean;
+    connection_verbose_logging: boolean;
 }
 
 export interface ColumnInfo {
@@ -151,7 +152,7 @@ export async function dbKillProcess(profileId: string, processId: number): Promi
 
 // ─── Log commands ───────────────────────────────────────────────────
 
-export type LogType = "mysql" | "error" | "all";
+export type LogType = "mysql" | "ssh" | "error" | "all";
 
 export async function readProfileLog(profileId: string, logType: LogType): Promise<string> {
     return invoke<string>("read_profile_log", { profileId, logType });

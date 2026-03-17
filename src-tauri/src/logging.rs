@@ -7,6 +7,10 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+pub const MYSQL_LOG_FILE: &str = "mysql.log.txt";
+pub const ERROR_LOG_FILE: &str = "error.log.txt";
+pub const SSH_LOG_FILE: &str = "ssh.log.txt";
+
 const DEFAULT_MAX_LOG_SIZE_MB: u64 = 10;
 const MIN_LOG_SIZE_MB: u64 = 1;
 const MAX_LOG_SIZE_MB: u64 = 250;
@@ -46,33 +50,63 @@ pub fn append_log(profile_id: &str, filename: &str, message: &str) {
 }
 
 pub fn log_query(profile_id: &str, query: &str) {
-    append_log(profile_id, "mysql.log.txt", &format!("QUERY: {}", query));
+    append_log(profile_id, MYSQL_LOG_FILE, &format!("QUERY: {}", query));
 }
 
 pub fn log_query_result(profile_id: &str, query: &str, count: usize) {
     append_log(
         profile_id,
-        "mysql.log.txt",
+        MYSQL_LOG_FILE,
         &format!("QUERY: {} → {} rows", query, count),
     );
 }
 
 pub fn log_info(profile_id: &str, message: &str) {
-    append_log(profile_id, "mysql.log.txt", &format!("INFO: {}", message));
+    log_mysql_info(profile_id, message);
 }
 
 pub fn log_error(profile_id: &str, message: &str) {
-    append_log(profile_id, "error.log.txt", &format!("ERROR: {}", message));
+    log_mysql_error(profile_id, message);
+}
+
+pub fn log_mysql_info(profile_id: &str, message: &str) {
+    append_log(profile_id, MYSQL_LOG_FILE, &format!("INFO: {}", message));
+}
+
+pub fn log_mysql_verbose(profile_id: &str, enabled: bool, message: &str) {
+    if enabled {
+        append_log(profile_id, MYSQL_LOG_FILE, &format!("VERBOSE: {}", message));
+    }
+}
+
+pub fn log_mysql_error(profile_id: &str, message: &str) {
+    append_log(profile_id, ERROR_LOG_FILE, &format!("ERROR: {}", message));
     // Also log errors to mysql.log for full timeline
-    append_log(profile_id, "mysql.log.txt", &format!("ERROR: {}", message));
+    append_log(profile_id, MYSQL_LOG_FILE, &format!("ERROR: {}", message));
+}
+
+pub fn log_ssh_info(profile_id: &str, message: &str) {
+    append_log(profile_id, SSH_LOG_FILE, &format!("INFO: {}", message));
+}
+
+pub fn log_ssh_verbose(profile_id: &str, enabled: bool, message: &str) {
+    if enabled {
+        append_log(profile_id, SSH_LOG_FILE, &format!("VERBOSE: {}", message));
+    }
+}
+
+pub fn log_ssh_error(profile_id: &str, message: &str) {
+    append_log(profile_id, ERROR_LOG_FILE, &format!("ERROR: {}", message));
+    append_log(profile_id, SSH_LOG_FILE, &format!("ERROR: {}", message));
 }
 
 #[tauri::command]
 pub fn read_profile_log(profile_id: String, log_type: String) -> AppResult<String> {
     let filename = match log_type.as_str() {
-        "query" | "mysql" => "mysql.log.txt",
-        "error" => "error.log.txt",
-        _ => return Err("Unknown log type. Use 'mysql' or 'error'.".into()),
+        "query" | "mysql" => MYSQL_LOG_FILE,
+        "error" => ERROR_LOG_FILE,
+        "ssh" => SSH_LOG_FILE,
+        _ => return Err("Unknown log type. Use 'mysql', 'ssh', or 'error'.".into()),
     };
     let dir = log_dir_for(&profile_id)?;
     let path = dir.join(filename);
@@ -85,11 +119,12 @@ pub fn read_profile_log(profile_id: String, log_type: String) -> AppResult<Strin
 #[tauri::command]
 pub fn clear_profile_log(profile_id: String, log_type: String) -> AppResult<()> {
     let filename = match log_type.as_str() {
-        "query" | "mysql" => "mysql.log.txt",
-        "error" => "error.log.txt",
+        "query" | "mysql" => MYSQL_LOG_FILE,
+        "error" => ERROR_LOG_FILE,
+        "ssh" => SSH_LOG_FILE,
         "all" => {
             let dir = log_dir_for(&profile_id)?;
-            for f in &["mysql.log.txt", "error.log.txt"] {
+            for f in &[MYSQL_LOG_FILE, SSH_LOG_FILE, ERROR_LOG_FILE] {
                 let p = dir.join(f);
                 if p.exists() {
                     let _ = fs::remove_file(&p);
@@ -97,7 +132,7 @@ pub fn clear_profile_log(profile_id: String, log_type: String) -> AppResult<()> 
             }
             return Ok(());
         }
-        _ => return Err("Unknown log type. Use 'mysql', 'error', or 'all'.".into()),
+        _ => return Err("Unknown log type. Use 'mysql', 'ssh', 'error', or 'all'.".into()),
     };
     let dir = log_dir_for(&profile_id)?;
     let path = dir.join(filename);
