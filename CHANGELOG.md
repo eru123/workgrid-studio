@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.1.7] - 2026-03-16
 - **Workspace & Layout:** Added comprehensive project setup and layout management, and removed the legacy results tab flow to simplify the editor workspace.
 - **Grid & Query UX:** Improved table data grid stability with fixed-width sticky columns and clearer selected-cell styling for better scanability.
 - **Stability & Polish:** Resolved store-selector crashes caused by nullish coalescing and bundled broader UI/UX fixes surfaced during internal testing.
