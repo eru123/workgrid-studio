@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.1.8] - 2026-03-17
 - **Explorer & Database View:** Auto-loads tables for filtered databases, hides empty databases, and reorganizes database view tabs for a cleaner navigation flow.
 - **Connection Flow & SSH Compatibility:** Adds connection cancellation support, improves SSH key handling, and expands compatibility with OpenSSH key formats.
 - **SSH Tunneling:** Simplifies the SSH tunnel implementation with a single-threaded bidirectional copy model to reduce connection complexity.
