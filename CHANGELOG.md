@@ -7,7 +7,7 @@
 - **Diagnostics & Error Handling:** Enhances SSH/MySQL connection logging with clearer failure reporting to make connection issues easier to debug.
 - **Dependencies:** Refreshes the main JavaScript dependency group, updates the `wgs-updater` workspace dependencies, and bumps Rust `rand` from `0.8.5` to `0.9.2`.
 - **Maintenance:** Ignores test artifacts to keep the release and repository noise down.
-
+- Potential fix for code scanning alert no. 27: Cleartext logging of sensitive information
 
 ## [0.1.7] - 2026-03-16
 - **Workspace & Layout:** Added comprehensive project setup and layout management, and removed the legacy results tab flow to simplify the editor workspace.
