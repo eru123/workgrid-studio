@@ -149,8 +149,11 @@ fn trimmed_option(value: Option<&String>) -> Option<&str> {
 /// Return a non-sensitive summary for an optional sensitive value.
 /// This is safe to log because it never includes the underlying data,
 /// only whether it is present or not.
+///
+/// Intentionally avoids calling `trimmed_option` so that sensitive values
+/// never flow through that function's taint path into log calls.
 fn summarize_sensitive_option(value: Option<&String>) -> &'static str {
-    if trimmed_option(value).is_some() {
+    if value.map_or(false, |s| !s.trim().is_empty()) {
         "<provided>"
     } else {
         "<unset>"
@@ -296,7 +299,7 @@ pub fn establish_ssh_tunnel(pid: &str, params: &ConnectParams) -> AppResult<Tunn
     let target_port = params.port;
     let auth_method = if trimmed_option(params.ssh_key_file.as_ref()).is_some() {
         "public-key"
-    } else if trimmed_option(params.ssh_password.as_ref()).is_some() {
+    } else if params.ssh_password.as_ref().map_or(false, |s| !s.trim().is_empty()) {
         "password"
     } else {
         "none"

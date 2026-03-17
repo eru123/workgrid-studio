@@ -2035,9 +2035,9 @@ function UsersTable({
     setActionPending(true);
     setActionError(null);
     try {
-      const escapedPw = addForm.password.replace(/'/g, "\\'");
-      const escapedUser = addForm.user.replace(/`/g, "``");
-      const escapedHost = addForm.host.replace(/'/g, "\\'");
+      const escapedPw = addForm.password.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+      const escapedUser = addForm.user.replace(/\\/g, "\\\\").replace(/`/g, "``");
+      const escapedHost = addForm.host.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
       await dbExecuteQuery(
         profileId,
         `CREATE USER \`${escapedUser}\`@'${escapedHost}' IDENTIFIED BY '${escapedPw}'`,
