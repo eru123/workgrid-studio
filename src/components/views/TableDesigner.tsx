@@ -3005,7 +3005,7 @@ const ColumnRow = memo(function ColumnRow({
   );
   const defaultSuggestions = useMemo(
     () => buildDefaultValueSuggestions(col),
-    [col.datatype, col.length, col.allowNull, col.defaultVal],
+    [col],
   );
   const handleComment = useCallback(
     (v: string) => onUpdate(col.id, "comment", v),

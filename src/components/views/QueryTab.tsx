@@ -530,7 +530,7 @@ function sortQueryGridRows(
 
 export function QueryTab({
   tabId,
-  leafId,
+  leafId: _leafId,
   profileId,
   database: initialDatabase,
   savedQueryId,
@@ -729,7 +729,6 @@ export function QueryTab({
   // ── Database from schema store ────────────────────────────
   const connectedProfiles = useSchemaStore((s) => s.connectedProfiles);
   const refreshDatabases = useSchemaStore((s) => s.refreshDatabases);
-  const openTab = useLayoutStore((s) => s.openTab);
   const updateTab = useLayoutStore((s) => s.updateTab);
 
   const saveSavedQuery = useSavedQueriesStore((s) => s.saveQuery);
@@ -739,8 +738,10 @@ export function QueryTab({
   // Must be declared before any hook selector that references it (avoids TDZ)
   const [selectedProfileId, setSelectedProfileId] = useState(profileId);
 
-  const savedQueries =
-    useSavedQueriesStore((s) => s.byProfile[selectedProfileId || profileId]) ?? [];
+  const rawSavedQueries = useSavedQueriesStore(
+    (s) => s.byProfile[selectedProfileId || profileId],
+  );
+  const savedQueries = useMemo(() => rawSavedQueries ?? [], [rawSavedQueries]);
   const aiBlocked = useProfilesStore(
     (s) => s.globalPreferences.blockAiRequests ?? false,
   );
@@ -790,7 +791,7 @@ export function QueryTab({
   const loadingDatabases = useSchemaStore((s) =>
     selectedProfileId ? s.loadingDatabases[selectedProfileId] ?? false : false,
   );
-  const databases = storeDatabases ?? [];
+  const databases = useMemo(() => storeDatabases ?? [], [storeDatabases]);
 
   useEffect(() => {
     if (
@@ -1095,6 +1096,90 @@ export function QueryTab({
     [searchActiveResult, resultSorts, activeResultIdx],
   );
 
+  // ── Current result set (needed by scroll helpers below) ───
+  const activeResult = results[activeResultIdx] ?? null;
+  const activeResultSort = resultSorts[activeResultIdx];
+  const activeSortedRows = useMemo(
+    () => sortQueryGridRows(activeResult, activeResultSort),
+    [activeResult, activeResultSort],
+  );
+  const activeVisibleRowCount = useMemo(() => {
+    if (!activeResult) return 0;
+    const defaultCount = Math.min(activeResult.rows.length, maxResultRows);
+    return Math.min(
+      activeResult.rows.length,
+      visibleRowCounts[activeResultIdx] ?? defaultCount,
+    );
+  }, [activeResult, activeResultIdx, maxResultRows, visibleRowCounts]);
+  const activeDisplayedRows = useMemo(() => {
+    return activeSortedRows.slice(0, activeVisibleRowCount);
+  }, [activeSortedRows, activeVisibleRowCount]);
+  const shouldVirtualizeResults =
+    !wordWrap && activeDisplayedRows.length > 200;
+
+  const ensureResultRowsLoaded = useCallback((resultIndex: number, rowIdx: number) => {
+    setVisibleRowCounts((prev) => {
+      const result = results[resultIndex];
+      if (!result) return prev;
+
+      const current =
+        prev[resultIndex] ?? Math.min(result.rows.length, maxResultRows);
+      if (rowIdx < current) return prev;
+
+      const nextCount = Math.min(
+        result.rows.length,
+        Math.max(current + maxResultRows, rowIdx + 1),
+      );
+      if (nextCount === current) return prev;
+
+      return {
+        ...prev,
+        [resultIndex]: nextCount,
+      };
+    });
+  }, [results, maxResultRows]);
+
+  const scrollResultCellIntoView = useCallback((
+    rowIdx: number,
+    colIdx: number,
+    block: ScrollLogicalPosition = "nearest",
+  ) => {
+    ensureResultRowsLoaded(activeResultIdx, rowIdx);
+
+    const scroller = resultScrollRef.current;
+    if (scroller && shouldVirtualizeResults) {
+      const targetTop = rowIdx * QUERY_RESULT_ROW_HEIGHT_PX;
+      if (block === "center") {
+        scroller.scrollTop = Math.max(
+          0,
+          targetTop - (scroller.clientHeight - QUERY_RESULT_ROW_HEIGHT_PX) / 2,
+        );
+      } else {
+        const bottomEdge = scroller.scrollTop + scroller.clientHeight;
+        if (targetTop < scroller.scrollTop) {
+          scroller.scrollTop = targetTop;
+        } else if (targetTop + QUERY_RESULT_ROW_HEIGHT_PX > bottomEdge) {
+          scroller.scrollTop =
+            targetTop - scroller.clientHeight + QUERY_RESULT_ROW_HEIGHT_PX;
+        }
+      }
+    }
+
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        const cellEl = document.getElementById(`qcell-${rowIdx}-${colIdx}`);
+        cellEl?.scrollIntoView({ block, inline: "nearest" });
+      });
+    });
+  }, [ensureResultRowsLoaded, activeResultIdx, shouldVirtualizeResults]);
+
+  const scrollToMatch = useCallback((idx: number, matches = findMatches) => {
+    const match = matches[idx];
+    if (!match) return;
+
+    scrollResultCellIntoView(match.rowIdx, match.colIdx, "center");
+  }, [findMatches, scrollResultCellIntoView]);
+
   const handleSearch = useCallback((q: string) => {
     setFindQuery(q);
     if (!q || !searchActiveResult) {
@@ -1119,14 +1204,7 @@ export function QueryTab({
     if (matches.length > 0) {
       scrollToMatch(0, matches);
     }
-  }, [searchActiveResult, searchActiveRows]);
-
-  const scrollToMatch = (idx: number, matches = findMatches) => {
-    const match = matches[idx];
-    if (!match) return;
-
-    scrollResultCellIntoView(match.rowIdx, match.colIdx, "center");
-  };
+  }, [searchActiveResult, searchActiveRows, scrollToMatch]);
 
   const findNext = () => {
     if (findMatches.length === 0) return;
@@ -1175,7 +1253,7 @@ export function QueryTab({
       setFindMatches([]);
       setCurrentMatchIdx(0);
     }
-  }, [activeResultIdx, handleSearch]);
+  }, [activeResultIdx, handleSearch, findQuery]);
 
   useEffect(() => {
     const scroller = resultScrollRef.current;
@@ -1249,6 +1327,7 @@ export function QueryTab({
     searchActiveResult,
     searchActiveRows,
     shouldHandleResultGridKeys,
+    scrollResultCellIntoView,
   ]);
 
   useEffect(() => {
@@ -1258,7 +1337,7 @@ export function QueryTab({
       `qcell-${selectedCell.rowIdx}-${selectedCell.colIdx}`,
     ) as HTMLElement | null;
     cellEl?.focus({ preventScroll: true });
-  }, [activeResultIdx, selectedCell]);
+  }, [activeResultIdx, selectedCell, ensureResultRowsLoaded]);
 
   const copyCellContextValue = useCallback(() => {
     if (!cellContextMenu) return;
@@ -1467,17 +1546,12 @@ export function QueryTab({
     [
       addHistoryItem,
       connectedProfiles,
-      leafId,
       maxResultRows,
-      openTab,
       queryTimeoutMs,
       selectedProfileId,
       selectedDb,
-      refreshDatabases,
       running,
-
       sql,
-      tabId,
     ],
   );
 
@@ -1862,15 +1936,9 @@ export function QueryTab({
     [splitPercent],
   );
 
-  // ── Current result set ────────────────────────────────────
-  const activeResult = results[activeResultIdx] ?? null;
-  const activeResultSort = resultSorts[activeResultIdx];
+  // ── Current result set (continued) ───────────────────────
   const hasExplainPane = isExplaining || !!explainPayload || !!explainError;
   const showExplainPane = activeBottomPane === "explain" && hasExplainPane;
-  const activeSortedRows = useMemo(
-    () => sortQueryGridRows(activeResult, activeResultSort),
-    [activeResult, activeResultSort],
-  );
   const activeNumericColumns = useMemo(() => {
     const numericCols = new Set<number>();
     if (!activeResult) return numericCols;
@@ -1928,21 +1996,8 @@ export function QueryTab({
     },
     [activeResult, activeResultIdx, setResultColWidth, wordWrap],
   );
-  const activeVisibleRowCount = useMemo(() => {
-    if (!activeResult) return 0;
-    const defaultCount = Math.min(activeResult.rows.length, maxResultRows);
-    return Math.min(
-      activeResult.rows.length,
-      visibleRowCounts[activeResultIdx] ?? defaultCount,
-    );
-  }, [activeResult, activeResultIdx, maxResultRows, visibleRowCounts]);
-  const activeDisplayedRows = useMemo(() => {
-    return activeSortedRows.slice(0, activeVisibleRowCount);
-  }, [activeSortedRows, activeVisibleRowCount]);
   const hasMoreActiveRows =
     !!activeResult && activeVisibleRowCount < activeResult.rows.length;
-  const shouldVirtualizeResults =
-    !wordWrap && activeDisplayedRows.length > 200;
   const virtualStartIdx = shouldVirtualizeResults
     ? clamp(
       Math.floor(resultViewport.scrollTop / QUERY_RESULT_ROW_HEIGHT_PX) -
@@ -1970,62 +2025,6 @@ export function QueryTab({
   const bottomVirtualSpacerHeight = shouldVirtualizeResults
     ? (activeDisplayedRows.length - virtualEndIdx) * QUERY_RESULT_ROW_HEIGHT_PX
     : 0;
-
-  function ensureResultRowsLoaded(resultIndex: number, rowIdx: number) {
-    setVisibleRowCounts((prev) => {
-      const result = results[resultIndex];
-      if (!result) return prev;
-
-      const current =
-        prev[resultIndex] ?? Math.min(result.rows.length, maxResultRows);
-      if (rowIdx < current) return prev;
-
-      const nextCount = Math.min(
-        result.rows.length,
-        Math.max(current + maxResultRows, rowIdx + 1),
-      );
-      if (nextCount === current) return prev;
-
-      return {
-        ...prev,
-        [resultIndex]: nextCount,
-      };
-    });
-  }
-
-  function scrollResultCellIntoView(
-    rowIdx: number,
-    colIdx: number,
-    block: ScrollLogicalPosition = "nearest",
-  ) {
-    ensureResultRowsLoaded(activeResultIdx, rowIdx);
-
-    const scroller = resultScrollRef.current;
-    if (scroller && shouldVirtualizeResults) {
-      const targetTop = rowIdx * QUERY_RESULT_ROW_HEIGHT_PX;
-      if (block === "center") {
-        scroller.scrollTop = Math.max(
-          0,
-          targetTop - (scroller.clientHeight - QUERY_RESULT_ROW_HEIGHT_PX) / 2,
-        );
-      } else {
-        const bottomEdge = scroller.scrollTop + scroller.clientHeight;
-        if (targetTop < scroller.scrollTop) {
-          scroller.scrollTop = targetTop;
-        } else if (targetTop + QUERY_RESULT_ROW_HEIGHT_PX > bottomEdge) {
-          scroller.scrollTop =
-            targetTop - scroller.clientHeight + QUERY_RESULT_ROW_HEIGHT_PX;
-        }
-      }
-    }
-
-    window.requestAnimationFrame(() => {
-      window.requestAnimationFrame(() => {
-        const cellEl = document.getElementById(`qcell-${rowIdx}-${colIdx}`);
-        cellEl?.scrollIntoView({ block, inline: "nearest" });
-      });
-    });
-  }
 
   // ── Row count summary ─────────────────────────────────────
 

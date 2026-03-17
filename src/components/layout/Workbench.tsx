@@ -275,7 +275,7 @@ export function Workbench() {
         // Silently ignore startup update check failures
       }
     })();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+   
   }, []);
 
   useEffect(() => {
@@ -394,8 +394,9 @@ export function Workbench() {
       }
     });
 
+    const intervalsRef = scheduledQueryIntervalsRef.current;
     return () => {
-      Object.keys(scheduledQueryIntervalsRef.current).forEach(clearScheduledInterval);
+      Object.keys(intervalsRef).forEach(clearScheduledInterval);
     };
   }, [
     loadAllSavedQueries,

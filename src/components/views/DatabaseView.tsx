@@ -216,7 +216,7 @@ export function DatabaseView({
   useEffect(() => {
     if (database && activeTab === "databases") setActiveTab("tables");
     if (!database && activeTab === "tables") setActiveTab("databases");
-  }, [database]);
+  }, [database, activeTab]);
 
   // Fetch tables
   useEffect(() => {
@@ -230,30 +230,30 @@ export function DatabaseView({
     }
   }, [profileId, database, activeTab]);
 
-  const fetchVariables = () => {
+  const fetchVariables = useCallback(() => {
     setLoadingVars(true);
     setErrorVars(null);
     dbGetVariables(profileId)
       .then(setVariables)
       .catch((e) => setErrorVars(String(e)))
       .finally(() => setLoadingVars(false));
-  };
+  }, [profileId]);
 
   // Fetch variables
   useEffect(() => {
     if (activeTab === "variables" && variables.length === 0) {
       fetchVariables();
     }
-  }, [profileId, activeTab, variables.length]);
+  }, [profileId, activeTab, variables.length, fetchVariables]);
 
-  const fetchStatus = () => {
+  const fetchStatus = useCallback(() => {
     setLoadingStatus(true);
     setErrorStatus(null);
     dbGetStatus(profileId)
       .then(setStatusInfos)
       .catch((e) => setErrorStatus(String(e)))
       .finally(() => setLoadingStatus(false));
-  };
+  }, [profileId]);
 
   // Fetch status (shared by status and commands tabs)
   useEffect(() => {
@@ -263,23 +263,23 @@ export function DatabaseView({
     ) {
       fetchStatus();
     }
-  }, [profileId, activeTab, statusInfos.length]);
+  }, [profileId, activeTab, statusInfos.length, fetchStatus]);
 
-  const fetchProcesses = () => {
+  const fetchProcesses = useCallback(() => {
     setLoadingProcesses(true);
     setErrorProcesses(null);
     dbGetProcesses(profileId)
       .then(setProcessInfos)
       .catch((e) => setErrorProcesses(String(e)))
       .finally(() => setLoadingProcesses(false));
-  };
+  }, [profileId]);
 
   // Fetch processes
   useEffect(() => {
     if (activeTab === "processes" && processInfos.length === 0) {
       fetchProcesses();
     }
-  }, [profileId, activeTab, processInfos.length]);
+  }, [profileId, activeTab, processInfos.length, fetchProcesses]);
 
   const fetchUsers = useCallback(() => {
     setLoadingUsers(true);
@@ -325,7 +325,7 @@ export function DatabaseView({
     } else if (activeTab === "users") {
       fetchUsers();
     }
-  }, [activeTab, database, profileId, fetchUsers]);
+  }, [activeTab, database, profileId, fetchUsers, fetchVariables, fetchStatus, fetchProcesses]);
 
   const [globalCtxMenu, setGlobalCtxMenu] = useState<{ x: number; y: number } | null>(null);
 

@@ -1854,7 +1854,8 @@ const DatabaseNode = memo(function DatabaseNode({
 }) {
   const cacheKey = `${profileId}::${database}`;
   const tables = useSchemaStore((s) => s.tables[cacheKey]);
-  const tableInfos = useSchemaStore((s) => s.tableInfos[cacheKey]) ?? [];
+  const rawTableInfos = useSchemaStore((s) => s.tableInfos[cacheKey]);
+  const tableInfos = useMemo(() => rawTableInfos ?? [], [rawTableInfos]);
   const loading = useSchemaStore((s) => s.loadingTables[cacheKey]);
   const error = useSchemaStore((s) => s.errors[`tbl-${cacheKey}`]);
   const refreshTables = useSchemaStore((s) => s.refreshTables);

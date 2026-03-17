@@ -110,7 +110,7 @@ export function EditDatabaseModal({ profileId, database, onClose, onCompleted }:
             lines.push(`ALTER DATABASE \`${database}\` CHARACTER SET '${charset}' COLLATE '${collation}';`);
         }
         return lines.join("\n");
-    }, [newName, collation, database, defaultCollation]);
+    }, [newName, collation, database]);
 
     const handleSubmit = async () => {
         if (!hasChanges || !confirmed) return;

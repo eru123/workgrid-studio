@@ -490,7 +490,7 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
     } finally {
       setLoading(false);
     }
-  }, [profileId, countQuery, dataQuery, queryTimeoutMs]);
+  }, [profileId, countQuery, dataQuery, queryTimeoutMs, database]);
 
   // Auto-fetch on mount and when query params change
   useEffect(() => {
@@ -711,6 +711,17 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
     cellEl?.focus({ preventScroll: true });
   }, [selectedCellKey]);
 
+  const scrollToMatch = useCallback((idx: number, matches = findMatches) => {
+    const match = matches[idx];
+    if (!match) return;
+
+    const cellId = `cell-${match.rowIdx}-${match.colName}`;
+    const el = document.getElementById(cellId);
+    if (el) {
+      el.scrollIntoView({ block: "center", inline: "center" });
+    }
+  }, [findMatches]);
+
   const handleSearch = useCallback((q: string) => {
     if (!q) {
       setFindMatches([]);
@@ -737,18 +748,7 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
     if (matches.length > 0) {
       scrollToMatch(0, matches);
     }
-  }, [rows, visibleColumns, columns]);
-
-  const scrollToMatch = (idx: number, matches = findMatches) => {
-    const match = matches[idx];
-    if (!match) return;
-
-    const cellId = `cell-${match.rowIdx}-${match.colName}`;
-    const el = document.getElementById(cellId);
-    if (el) {
-      el.scrollIntoView({ block: "center", inline: "center" });
-    }
-  };
+  }, [rows, visibleColumns, columns, scrollToMatch]);
 
   const findNext = () => {
     if (findMatches.length === 0) return;
