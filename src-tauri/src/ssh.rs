@@ -160,20 +160,6 @@ fn summarize_sensitive_option(value: Option<&String>) -> &'static str {
     }
 }
 
-fn preview_value(value: &str, verbose: bool) -> String {
-    if verbose {
-        value.to_string()
-    } else {
-        "<redacted>".to_string()
-    }
-}
-
-fn preview_option(value: Option<&str>, verbose: bool) -> String {
-    match value {
-        Some(value) if !value.is_empty() => preview_value(value, verbose),
-        _ => "<unset>".to_string(),
-    }
-}
 
 /// Trust-On-First-Use host key verification.
 ///
@@ -297,7 +283,7 @@ pub fn establish_ssh_tunnel(pid: &str, params: &ConnectParams) -> AppResult<Tunn
         .ok_or_else(|| AppError::ssh("SSH user not provided"))?;
     let target_host = params.host.clone();
     let target_port = params.port;
-    let auth_method = if trimmed_option(params.ssh_key_file.as_ref()).is_some() {
+    let auth_method = if params.ssh_key_file.as_ref().map_or(false, |s| !s.trim().is_empty()) {
         "public-key"
     } else if params.ssh_password.as_ref().map_or(false, |s| !s.trim().is_empty()) {
         "password"
@@ -321,7 +307,7 @@ pub fn establish_ssh_tunnel(pid: &str, params: &ConnectParams) -> AppResult<Tunn
             params.ssh_compression,
             params.ssh_keep_alive_interval,
             auth_method,
-            preview_option(trimmed_option(params.ssh_key_file.as_ref()), verbose),
+            summarize_sensitive_option(params.ssh_key_file.as_ref()),
             summarize_sensitive_option(params.ssh_password.as_ref()),
             summarize_sensitive_option(params.ssh_passphrase.as_ref()),
         ),
