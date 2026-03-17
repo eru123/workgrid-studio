@@ -146,6 +146,16 @@ fn trimmed_option(value: Option<&String>) -> Option<&str> {
         .filter(|entry| !entry.is_empty())
 }
 
+/// Like `trimmed_option`, but intended only for sensitive values (passwords,
+/// passphrases, tokens, etc.). The result of this function must never be
+/// logged or otherwise exposed; it is only for internal use such as
+/// authentication calls.
+fn trimmed_sensitive_option(value: Option<&String>) -> Option<&str> {
+    value
+        .map(|entry| entry.trim())
+        .filter(|entry| !entry.is_empty())
+}
+
 /// Return a non-sensitive summary for an optional sensitive value.
 /// This is safe to log because it never includes the underlying data,
 /// only whether it is present or not.
@@ -415,9 +425,11 @@ pub fn establish_ssh_tunnel(pid: &str, params: &ConnectParams) -> AppResult<Tunn
     if let Some(key_path) = trimmed_option(params.ssh_key_file.as_ref()) {
         let key_file = std::path::Path::new(key_path);
 
-        // Use trimmed_option so an empty passphrase field is treated as None
-        // rather than Some(""), which causes libssh2 to reject valid keys.
-        let passphrase = trimmed_option(params.ssh_passphrase.as_ref());
+        // Use trimmed_sensitive_option so an empty passphrase field is treated
+        // as None rather than Some(""), which causes libssh2 to reject valid
+        // keys. This helper is only for sensitive data and must never be used
+        // for logging.
+        let passphrase = trimmed_sensitive_option(params.ssh_passphrase.as_ref());
 
         let key_content = fs::read_to_string(key_file).ok();
         let is_openssh_format = key_content
@@ -513,7 +525,7 @@ pub fn establish_ssh_tunnel(pid: &str, params: &ConnectParams) -> AppResult<Tunn
             log_ssh_error(pid, &message);
             return Err(AppError::ssh(message));
         }
-    } else if let Some(password) = trimmed_option(params.ssh_password.as_ref()) {
+    } else if let Some(password) = trimmed_sensitive_option(params.ssh_password.as_ref()) {
         sess.userauth_password(ssh_user, password)
             .map_err(|error| {
                 let message = format!("SSH password authentication failed: {}", error);
