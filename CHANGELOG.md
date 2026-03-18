@@ -1,6 +1,247 @@
 # Changelog
 
 ## [Unreleased]
+- chore(deps-dev): bump the dependencies group with 3 updates
+- chore: bump version to v0.1.8
+- Potential fix for code scanning alert no. 28: Cleartext logging of sensitive information
+- Potential fix for code scanning alert no. 26: Incomplete string escaping or encoding
+- Potential fix for code scanning alert no. 27: Cleartext logging of sensitive information
+- feat(explorer): auto-load tables for filtered databases and hide empty databases
+- refactor: reorganize database view tabs and improve SSH key handling
+- refactor: add connection cancellation and OpenSSH key support
+- refactor: simplify SSH tunnel implementation with single-threaded bidirectional copy
+- refactor: simplify SSH tunnel implementation with single-threaded bidirectional copy
+- ignore: test files
+- refactor: enhance connection logging and error handling
+- chore: bump version to v0.1.7
+- fix: UI/UX improvements and bug fixes that address internal testing issues
+- fix: adjust selected cell styling to improve visual distinction
+- fix: set fixed width for sticky columns in table data grid
+- refactor: remove results tab functionality and cleanup related code
+- fix: remove nullish coalescing from store selectors that cause UI Crash
+- feat: add comprehensive project setup and layout management
+- Create ci.yml
+- Update contribution guidelines to include linting and pre-commit hooks
+- chore: bump workgrid-studio version to 0.1.6
+- chore: bump version to v0.1.6
+- refactor: add import progress events and improve error handling
+- feat: add wgs-website workspace with React and Vite setup
+- chore(website): update metadata and structured data for SEO
+- feat: replace SVG favicon with PNG icons and update branding visuals
+- refactor: remove outdated agent rules and CLAUDE.md to simplify monorepo documentation
+- refactor: reorganize editor tabs and add new tab types
+- feat(query): add explain plan, result sorting, and new result tabs
+- feat: added app website
+- feat: add comprehensive security policy for responsible vulnerability reporting
+- feat: add comprehensive contributing guidelines
+- feat: add GitHub issue templates and update README with contribution guidelines
+- chore: add license section to README
+- feat: add bundle analyzer and virtualization for query results
+- feat: enhance editor tabs with keyboard navigation and ARIA accessibility
+- feat(privacy): add comprehensive privacy controls and disclosure
+- feat(connection): add auto-reconnect and structured error handling
+- style(query-tab): prevent text wrapping in toolbar controls
+- feat: add loading state and skeleton UI for query history
+- refactor: simplify timestamp generation using chrono crate
+- Potential fix for code scanning alert no. 17: Hard-coded cryptographic value
+- fix: correct sash direction and cursor styling for layout panels
+- refactor: simplify secret key management and improve reliability
+- refactor: consolidate output logging and enhance bottom panel UX
+- refactor: optimize AI query generation and database operations
+- Potential fix for code scanning alert no. 5: Hard-coded cryptographic value
+- fix: Handle corrupted AI logs gracefully with backup creation
+- Fix search navigation and selection bounds in ExplorerTree
+- refactor(ssh): improve tunnel shutdown logic with proper thread joining
+- refactor: replace RngCore with Rng for improved randomness generation
+- chore: bump workgrid-studio version to 0.1.5 in Cargo.lock
+- Update manual-multi-platform-build.yml
+- Update changelog-on-push.yml
+- Update manual-multi-platform-build.yml
+- Update manual-multi-platform-build.yml
+- Update changelog-on-push.yml
+- fix(deps): update dependencies and lockfile for improved compatibility
+- chore: fix missing newline in tauri configuration file
+- fix: update updater endpoint to handle multiple bundle types and improve CORS support
+- Modularized the rust backend
+- feat: add edge drop zones for tab splitting and improve drag-and-drop UX
+- feat: add per-profile ping latency display in explorer tree
+- feat: enhance cell context menu with JSON/CSV/SQL export and add search functionality
+- refactor: add import result type and host key management UI
+- refactor: update db import functions and add host key management
+- Add forget_host_key function to Tauri command exports
+- refactor: update db_import_csv return type to structured format
+- refactor: replace leak-prone tunnel shutdown with bounded join and channel signaling
+- chore: expand file system permissions and improve file dialog UX
+- feat: add OS credential store integration for vault encryption keys
+- feat: load query history on app initialization
+- refactor: optimize CSV import with transaction and error handling
+- refactor: improve tunnel shutdown and thread cleanup
+- fix: Properly clean up SSH tunnel threads on reconnect
+- refactor: replace basic SSH host key logging with TOFU verification
+- chore: restrict file system permissions to user home directory
+- build(security): add Content Security Policy for Tauri app
+- fix(vault)!: use secure per-installation encryption key
+- chore: bump version to v0.1.5
+- Create dependabot.yml
+- feat: Implement a new API endpoint for Tauri update checks using GitHub releases.
+- docs(project): overhaul project documentation and updater service
+- Update manual-multi-platform-build.yml
+- Add environment variable for Node.js version
+- chore(changelog): exclude merge and changelog update commits
+- Exclude main branch from changelog workflow
+- chore: bump version to v0.1.4
+- Enhance manual build workflow for versioning and changelog
+- Add GitHub Actions workflow to update changelog
+- feat(changelog): introduce automated changelog management
+- chore: bump version to v0.1.3
+- feat(updater): add automatic application update service
+- Add Tauri signing keys to build workflow
+- feat: add clear_ai_logs function to Tauri API
+- chore: bump version to v0.1.2
+- Remove pnpm version from manual build workflow
+- update
+- chore: bump version to v0.1.1
+- refactor: optimize tab rendering and enhance editor UX
+- feat: enhance table editing and schema cache management
+- feat: add AI chat sidebar with model selection and query generation
+- Add process plugin and implement auto-update functionality
+- feat: add updater plugin and capability for application updates
+- chore(deps): update dependencies and add new security features
+- Add window state management plugin for persistent window positioning and sizing
+- feat(layout): add layout preferences persistence and auto-load
+- feat: add column resizing functionality to table headers
+- feat: add column resizing support to table data view
+- Add keyboard navigation (arrow keys and Tab) for result grids in Query and Table Data tabs
+- refactor: enhance empty state design in ExplorerTree with visual illustration
+- feat: add skeleton loading component and implement loading state for servers sidebar
+- feat(workbench): add task count badge to activity bar
+- Remove unused greet command from Tauri backend
+- feat: add CSV import functionality with batched inserts
+- Add database ping functionality and connection keep-alive mechanism
+- feat: implement bottom panel split view with drag-to-resize functionality
+- feat: add text highlighting for database and table filters in ExplorerTree
+- Add cell context menu with copy actions and improve query tab UX
+- refactor: improve pool management and connection handling
+- refactor: improve SSH tunnel management with proper cleanup and shutdown handling
+- feat: add SSH tunnel support with encrypted credentials
+- feat: add command palette and find-in-results functionality
+- feat: add advanced SSH configuration options
+- feat: add SSH tunneling support for database connections
+- feat: add comprehensive SSL/TLS support for database connections
+- feat: add password encryption/decryption for database profiles
+- refactor: implement drag-and-drop tab reordering and moving
+- fix: add save confirmation modal and column diff highlighting in table designer
+- refactor: remove unused editor tab types from layout store
+- refactor: optimize QueryTab save and open file handlers
+- Remove unused JSON schema reference from default capabilities
+- fixed the fs.write_file permission error
+- feat: add file system and dialog plugins for enhanced data management
+- feat: add table data editing with add, delete, update, and apply changes
+- refactor: migrate ServersSidebar to use ProfileManager hook
+- chore: update .gitignore to include .env file
+- remove leak key
+- feat: add stored objects transfer and validation in EditDatabaseModal
+- refactor: replace vertical sash with horizontal sash in secondary sidebar
+- feat: add AI chat sidebar with SQL generation and query execution
+- feat: add Ctrl+N shortcut to open new SQL query tab
+- feat: add settings page with theme and editor preferences
+- refactor: migrate theme management from appStore to profilesStore
+- feat: add task persistence and auto-save functionality
+- refactor: reorganize QueryTab component structure and improve UI layout
+- refactor: remove minimap and status bar from query tab
+- refactor: optimize problem fetching to prevent infinite re-renders
+- fix: pass current query to AI generation for better context
+- feat: add schema DDL export for AI query generation
+- refactor: add AI query logging and improve error handling
+- feat: add AI model provider management and query generation
+- fix: only highlight border for active leaf when editor is split
+- feat(explorer): add refresh database functionality to context menu
+- feat: implement EditorNode component to manage editor tabs with lazy-loaded views and introduce TableDesigner view
+- feat: add unsaved changes warning and visual indicators
+- fix: Add min-w-0 and min-h-0 classes to prevent layout overflow issues
+- feat: add toast notifications for database operations
+- feat: add toast notifications and improve connection form UX
+- refactor: improve sash styling and drag direction logic
+- feat(layout): add active leaf tracking and improve tab management
+- feat: add pane actions and close leaf functionality
+- fix: Add database type validation and connection handling
+- ignore local files for developer task tracking
+- Add global refresh functionality with context menu and F5 shortcut
+- add context menu on free zone area
+- remove bold name on hightlighted tab
+- show columns even if no data available
+- table data view column remove auto upper case
+- added hightlights to table create/edit
+- feat: Introduce TableDesigner Column table' rows context menu implementation for column indexing features
+- feat(Server Manager): Change single click connect to double click
+- feat: auto close context menu on scroll events at explorer view
+- Refactor profilesStore and remove sessionStore
+- feat(TableDataTab): add SQL highlighting to AutocompleteInput for improved user experience
+- feat(TableDataTab): integrate AutocompleteInput for enhanced WHERE clause input
+- refactor(TablesTable): simplify filtering and sorting logic for improved readability
+- fix(TablesTable): move loading and error handling to the top for better readability
+- feat: implement AutocompleteInput component for enhanced user input in DatabaseView and TableDesigner
+- feat: add TableDataTab component for displaying and managing table data
+- feat(TableDesigner): refactor subTabs and column rendering for improved performance and readability
+- Fix: DB Table edit tab bugs and issues regarding with getting data from the database server
+- feat(QueryTab): remove HeidiSQL formatting option and simplify SQL formatting choices
+- feat(QueryTab): add SQL formatting functionality with multiple options
+- feat(QueryTab): add bracket and quote wrapping functionality in SQL editor
+- feat(QueryTab, sqlHighlight): implement matching brackets highlighting in SQL editor
+- feat(QueryTab, sqlHighlight): add active query range functionality and enhance SQL highlighting
+- Implement debounced autocomplete updates in QueryTab component
+- fix(QueryTab): remove unnecessary uppercase styling from table headers for improved readability
+- fix(EditorNode): adjust tab bar height and padding for improved layout consistency
+- feat(QueryTab, SqlAutocomplete): implement SQL autocomplete feature with context-aware suggestions
+- feat(QueryTab): add SQL syntax highlighting functionality for improved query editor experience
+- fix(EditorNode): update tab icons and enhance context menu functionality for improved user experience
+- fix(QueryTab): enhance button styling and hover effects for improved UI feedback
+- fix(QueryTab): adjust button positioning and results tab layout for improved UI consistency
+- fix(QueryTab): adjust results tab container to ensure proper width handling
+- fix(QueryTab): remove unnecessary border from line number gutter for cleaner UI
+- feat: introduce QueryTab component for SQL query editing, execution, and result display with integrated editor features.
+- feat(QueryTab): add textarea width tracking for improved word wrap line number synchronization
+- feat(QueryTab): replace word wrap ToolBtn with a styled button for improved accessibility
+- fix(QueryTab): reduce maximum editor font size to improve usability
+- feat(QueryTab): implement adjustable editor font size with reset functionality
+- feat(QueryTab): add minimap functionality and enhance editor metrics tracking
+- feat(QueryTab): enhance SQL editor with line manipulation and improved selection handling
+- Update src/components/layout/EditorNode.tsx
+- Preserve SQL tab state and fix results table scrolling
+- chore: Add `.claude/*.local.json` to `.gitignore`.
+- feat(explorer): improve server management and explorer flow
+- update dependencies
+- fix(QueryTab): resolve bugs, security issue, and UX gaps
+- docs: add comprehensive CLAUDE.md for AI assistant onboarding
+- query tab updates
+- fix new query tab breaking when no database is connected
+- fix
+- implement version check
+- Implement versioning system
+- Add manual multi-platform build workflow with version bump
+- implement app icons
+- Update README.md
+- update branding
+- Add manual multi-platform GitHub Actions build workflow
+- implementing initial query feature
+- Implement Agents Guard-Rails for the Vide Coders (using antigravity)
+- Initial Create Table implementation
+- implement database's context menu
+- create database with collation support
+- implement create database
+- remove build as it is already on package json
+- removing test files + update build file
+- add database and table filter with regex support
+- expand tree logic with dblist, table list refresh
+- adding context menu
+- remove old server-db breadcrumb
+- swap server icon with db icon
+- implement icons for server management
+- Improve Server Manager UI
+- fix: welcome page not visible depending on orientation
+- Initial Layout Changes
+- init
+- Initial commit
 
 ## [0.1.8] - 2026-03-17
 - **Explorer & Database View:** Auto-loads tables for filtered databases, hides empty databases, and reorganizes database view tabs for a cleaner navigation flow.
