@@ -460,7 +460,7 @@ pub async fn db_connect(state: State<'_, DbState>, params: ConnectParams) -> App
                 );
             }
         }
-        let handle = establish_ssh_tunnel(&pid, &conn_params)?;
+        let handle = establish_ssh_tunnel(&pid, &conn_params).await?;
         log_info(
             &pid,
             &format!(

@@ -133,8 +133,14 @@ impl From<keyring::Error> for AppError {
     }
 }
 
-impl From<ssh2::Error> for AppError {
-    fn from(value: ssh2::Error) -> Self {
+impl From<russh::Error> for AppError {
+    fn from(value: russh::Error) -> Self {
+        Self::Ssh(value.to_string())
+    }
+}
+
+impl From<russh_keys::Error> for AppError {
+    fn from(value: russh_keys::Error) -> Self {
         Self::Ssh(value.to_string())
     }
 }
