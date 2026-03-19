@@ -93,7 +93,9 @@ function addCommits(fromRef, toRef) {
     .filter((l) => l.startsWith("- "))
     .filter((l) => !l.toLowerCase().includes("docs: update changelog"))
     .filter((l) => !l.toLowerCase().includes("merge branch"))
-    .filter((l) => !l.toLowerCase().includes("merge pull request"));
+    .filter((l) => !l.toLowerCase().includes("merge pull request"))
+    // if has [skip ci] in the commit message, remove it
+    .filter((l) => !l.toLowerCase().includes("[skip ci]"));
 
   const content = readChangelog();
   const parsed = splitChangelog(content);
