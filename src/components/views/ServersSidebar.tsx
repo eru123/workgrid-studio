@@ -172,6 +172,8 @@ export function ServersSidebar() {
         ssh_strict_key_checking: formData.sshStrictKeyChecking ?? false,
         ssh_keep_alive_interval: formData.sshKeepAliveInterval ?? 0,
         ssh_compression: formData.sshCompression ?? true,
+        use_docker: formData.useDocker ?? false,
+        docker_container: formData.dockerContainer || null,
         connection_verbose_logging: formData.connectionVerboseLogging ?? false,
       });
 
@@ -1011,6 +1013,46 @@ export function ServersSidebar() {
                             placeholder="••••••••"
                             className="w-full h-9 rounded-md border bg-secondary/50 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all"
                           />
+                        </div>
+
+                        {/* Docker Container */}
+                        <div className="pt-2 border-t border-border/50 mt-1">
+                          <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/70 block mb-2">
+                            Docker Container
+                          </label>
+                          <div className="space-y-2.5">
+                            <div className="flex items-center justify-between">
+                              <div className="space-y-0.5">
+                                <label className="text-xs font-medium">Use Docker Container</label>
+                                <p className="text-[10px] text-muted-foreground">
+                                  Connect to a container with unexposed ports
+                                </p>
+                              </div>
+                              <input
+                                type="checkbox"
+                                checked={formData.useDocker ?? false}
+                                onChange={(e) => updateField("useDocker", e.target.checked)}
+                                className="h-3.5 w-3.5 rounded border-gray-300 text-primary focus:ring-primary"
+                              />
+                            </div>
+                            {formData.useDocker && (
+                              <div>
+                                <label className="text-xs font-medium text-muted-foreground block mb-1.5">
+                                  Container Name
+                                </label>
+                                <input
+                                  type="text"
+                                  value={formData.dockerContainer ?? ""}
+                                  onChange={(e) => updateField("dockerContainer", e.target.value)}
+                                  placeholder="my-mysql-container"
+                                  className="w-full h-9 rounded-md border bg-secondary/50 px-3 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all"
+                                />
+                                <p className="text-[10px] text-muted-foreground mt-1">
+                                  The MySQL host field above is ignored when Docker is enabled — the container's internal port is used directly.
+                                </p>
+                              </div>
+                            )}
+                          </div>
                         </div>
 
                         <div className="pt-2 border-t border-border/50 mt-1">

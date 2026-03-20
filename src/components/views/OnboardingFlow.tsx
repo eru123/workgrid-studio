@@ -91,6 +91,8 @@ export function OnboardingFlow({ onClose }: Props) {
                 ssh_strict_key_checking: form.sshStrictKeyChecking ?? false,
                 ssh_keep_alive_interval: form.sshKeepAliveInterval ?? 0,
                 ssh_compression: form.sshCompression ?? true,
+                use_docker: form.useDocker ?? false,
+                docker_container: form.dockerContainer || null,
                 connection_verbose_logging: form.connectionVerboseLogging ?? false,
             });
             setConnectionStatus(profile.id, "connected");

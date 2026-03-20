@@ -26,6 +26,9 @@ export interface ConnectParams {
     ssh_strict_key_checking: boolean;
     ssh_keep_alive_interval: number;
     ssh_compression: boolean;
+    // Docker container tunneling (requires SSH)
+    use_docker: boolean;
+    docker_container: string | null;
     connection_verbose_logging: boolean;
 }
 

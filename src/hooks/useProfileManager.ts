@@ -83,6 +83,8 @@ export function useProfileManager() {
             sshStrictKeyChecking: profile.sshStrictKeyChecking ?? false,
             sshKeepAliveInterval: profile.sshKeepAliveInterval ?? 0,
             sshCompression: profile.sshCompression ?? true,
+            useDocker: profile.useDocker ?? false,
+            dockerContainer: profile.dockerContainer ?? "",
             connectionVerboseLogging: profile.connectionVerboseLogging ?? false,
         });
         setEditingId(profile.id);
@@ -255,6 +257,8 @@ export function useProfileManager() {
                     ssh_strict_key_checking: profile.sshStrictKeyChecking ?? false,
                     ssh_keep_alive_interval: profile.sshKeepAliveInterval ?? 0,
                     ssh_compression: profile.sshCompression ?? true,
+                    use_docker: profile.useDocker ?? false,
+                    docker_container: profile.dockerContainer || null,
                     connection_verbose_logging: profile.connectionVerboseLogging ?? false,
                 });
                 setConnectionStatus(id, "connected");

@@ -1,7 +1,6 @@
 use mysql_async::Pool;
 use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
-use std::sync::mpsc;
 use std::sync::Arc;
 use std::sync::Mutex;
 
@@ -18,13 +17,8 @@ pub use error::{AppError, AppResult};
 pub struct TunnelHandle {
     pub local_port: u16,
     pub shutdown: Arc<AtomicBool>,
-    /// Join handle for the forwarding thread. Taken (set to `None`) on disconnect
-    /// so the thread can be explicitly joined rather than leaked.
-    pub thread: Option<std::thread::JoinHandle<()>>,
-    /// Receives a single `()` message when the forwarding loop exits.
-    /// Used to implement a bounded join timeout: `recv_timeout(5 s)` blocks
-    /// only until the thread signals completion rather than indefinitely.
-    pub done_rx: mpsc::Receiver<()>,
+    /// Tokio task running the tunnel bridge loop. Aborted on disconnect.
+    pub task: Option<tokio::task::JoinHandle<()>>,
 }
 
 pub struct DbState {

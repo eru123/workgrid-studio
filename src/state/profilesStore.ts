@@ -84,6 +84,9 @@ export interface SavedProfile {
   sshStrictKeyChecking?: boolean;
   sshKeepAliveInterval?: number;
   sshCompression?: boolean;
+  // Docker container tunneling (requires SSH)
+  useDocker?: boolean;
+  dockerContainer?: string;
   connectionVerboseLogging?: boolean;
   lastConnectedAt: number | null;
   createdAt: number;
@@ -131,6 +134,8 @@ export function createDefaultFormData(type?: DatabaseType): ProfileFormData {
     sshStrictKeyChecking: false,
     sshKeepAliveInterval: 0,
     sshCompression: true,
+    useDocker: false,
+    dockerContainer: "",
     connectionVerboseLogging: false,
   };
 }

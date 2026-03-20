@@ -43,6 +43,10 @@ pub struct ConnectParams {
     pub ssh_keep_alive_interval: u32,
     #[serde(default = "default_true")]
     pub ssh_compression: bool,
+    // Docker container tunneling (requires SSH)
+    #[serde(default)]
+    pub use_docker: bool,
+    pub docker_container: Option<String>,
     #[serde(default)]
     pub connection_verbose_logging: bool,
 }
@@ -460,7 +464,7 @@ pub async fn db_connect(state: State<'_, DbState>, params: ConnectParams) -> App
                 );
             }
         }
-        let handle = establish_ssh_tunnel(&pid, &conn_params)?;
+        let handle = establish_ssh_tunnel(&pid, &conn_params).await?;
         log_info(
             &pid,
             &format!(

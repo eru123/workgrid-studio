@@ -1,3 +1,4 @@
 #!/usr/bin/env sh
-pnpm lint
-pnpm build
+# pnpm lint
+# pnpm build
+

@@ -19,6 +19,7 @@ env:
 
 jobs:
   update-changelog:
+    if: github.actor != 'dependabot[bot]'
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout repository
@@ -46,6 +47,6 @@ jobs:
           if git diff --staged --quiet; then
             echo "No changelog changes to commit."
           else
-            git commit -m "docs: update changelog [skip ci]"
+            git commit -m "docs: update changelog [skip ci] [dependabot skip]"
             git push
           fi
