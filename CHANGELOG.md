@@ -1,6 +1,7 @@
 # Changelog
 
 ## [Unreleased]
+- Update manual-multi-platform-build.yml
 
 ## [0.1.8] - 2026-03-17
 - **Explorer & Database View:** Auto-loads tables for filtered databases, hides empty databases, and reorganizes database view tabs for a cleaner navigation flow.
