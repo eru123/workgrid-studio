@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 - Replaced the libssh2-based SSH implementation with russh, a pure Rust SSH library. This change improves security, reduces dependencies, and provides better async support.
+- Added docker support for SSH connections, you can now pass container name with ssh to automatically get the host ip address for you.
 
 ## [0.1.8] - 2026-03-17
 - **Explorer & Database View:** Auto-loads tables for filtered databases, hides empty databases, and reorganizes database view tabs for a cleaner navigation flow.
