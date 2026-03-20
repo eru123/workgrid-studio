@@ -19,6 +19,7 @@ env:
 
 jobs:
   update-changelog:
+    if: github.actor != 'dependabot[bot]'
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout repository
