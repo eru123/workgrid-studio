@@ -151,6 +151,18 @@ impl client::Handler for SshClientHandler {
 
 // ─── Tunnel ─────────────────────────────────────────────────────────────────
 
+/// Build the shell command that proxies stdio ↔ MySQL inside the container.
+///
+/// Uses bash's built-in `/dev/tcp` device — no additional tools (nc, socat)
+/// required inside the container. MySQL and MariaDB official images always
+/// include bash.
+fn docker_proxy_cmd(container: &str, mysql_port: u16) -> String {
+    format!(
+        "docker exec -i {} bash -c 'exec 3<>/dev/tcp/127.0.0.1/{}; cat <&3 & cat >&3; wait'",
+        container, mysql_port
+    )
+}
+
 pub async fn establish_ssh_tunnel(pid: &str, params: &ConnectParams) -> AppResult<TunnelHandle> {
     let started = Instant::now();
     let verbose = params.connection_verbose_logging;
@@ -270,18 +282,42 @@ pub async fn establish_ssh_tunnel(pid: &str, params: &ConnectParams) -> AppResul
         .map_err(|e| AppError::ssh(format!("Failed to get local port: {}", e)))?
         .port();
 
+    let target_desc = if params.use_docker {
+        let c = params.docker_container.as_deref().unwrap_or("?");
+        format!("docker:{}:{}", c, target_port)
+    } else {
+        format!("{}:{}", target_host, target_port)
+    };
     log_ssh_info(
         pid,
         &format!(
-            "SSH local tunnel bound to 127.0.0.1:{} -> {}:{} (setup: {} ms)",
+            "SSH local tunnel bound to 127.0.0.1:{} -> {} (setup: {} ms)",
             local_port,
-            target_host,
-            target_port,
+            target_desc,
             started.elapsed().as_millis()
         ),
     );
 
     // ── Tunnel bridge task ───────────────────────────────────────────────────
+    let use_docker = params.use_docker;
+    let docker_cmd: Option<String> = if use_docker {
+        let container = params
+            .docker_container
+            .as_deref()
+            .and_then(|s| if s.trim().is_empty() { None } else { Some(s.trim()) })
+            .ok_or_else(|| AppError::ssh("Docker mode enabled but no container name provided"))?;
+        Some(docker_proxy_cmd(container, target_port))
+    } else {
+        None
+    };
+
+    if let Some(ref cmd) = docker_cmd {
+        log_ssh_info(
+            pid,
+            &format!("Docker tunnel mode: will exec `{}` per connection", cmd),
+        );
+    }
+
     let shutdown = Arc::new(AtomicBool::new(false));
     let shutdown_clone = shutdown.clone();
     let pid_clone = pid.to_string();
@@ -307,25 +343,49 @@ pub async fn establish_ssh_tunnel(pid: &str, params: &ConnectParams) -> AppResul
                 &format!("Accepted tunnel client from {}", peer),
             );
 
-            let channel = match session
-                .channel_open_direct_tcpip(
-                    target_host.as_str(),
-                    target_port as u32,
-                    "127.0.0.1",
-                    0u32,
-                )
-                .await
-            {
-                Ok(ch) => ch,
-                Err(e) => {
+            // Open an SSH channel appropriate for the tunnel mode.
+            // Docker mode: session channel + exec `docker exec -i CONTAINER bash -c '...'`
+            // Normal mode: direct-tcpip channel to the target host:port.
+            let channel = if let Some(ref cmd) = docker_cmd {
+                let mut ch = match session.channel_open_session().await {
+                    Ok(ch) => ch,
+                    Err(e) => {
+                        log_ssh_error(
+                            &pid_clone,
+                            &format!("Docker tunnel: failed to open session channel: {}", e),
+                        );
+                        continue;
+                    }
+                };
+                if let Err(e) = ch.exec(true, cmd.as_str()).await {
                     log_ssh_error(
                         &pid_clone,
-                        &format!(
-                            "SSH tunnel: failed to open remote channel to {}:{}: {}",
-                            target_host, target_port, e
-                        ),
+                        &format!("Docker tunnel: exec failed: {}", e),
                     );
                     continue;
+                }
+                ch
+            } else {
+                match session
+                    .channel_open_direct_tcpip(
+                        target_host.as_str(),
+                        target_port as u32,
+                        "127.0.0.1",
+                        0u32,
+                    )
+                    .await
+                {
+                    Ok(ch) => ch,
+                    Err(e) => {
+                        log_ssh_error(
+                            &pid_clone,
+                            &format!(
+                                "SSH tunnel: failed to open remote channel to {}:{}: {}",
+                                target_host, target_port, e
+                            ),
+                        );
+                        continue;
+                    }
                 }
             };
 
