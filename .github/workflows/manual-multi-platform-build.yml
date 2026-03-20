@@ -1,15 +1,17 @@
-name: Update Changelog
+name: Manual Multi-Platform Build
 
 on:
-  push:
-    branches:
-      - '**'
-      - '!main'
-    paths-ignore:
-      - CHANGELOG.md
-      - package.json
-      - src-tauri/tauri.conf.json
-      - src-tauri/Cargo.toml
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Semantic version bump level
+        required: true
+        default: patch
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
 
 permissions:
   contents: write
@@ -18,8 +20,12 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
-  update-changelog:
+  prepare-version:
     runs-on: ubuntu-22.04
+    outputs:
+      version: ${{ steps.read-version.outputs.version }}
+      tag: ${{ steps.read-version.outputs.tag }}
+      notes: ${{ steps.changelog.outputs.notes }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -31,21 +37,100 @@ jobs:
         with:
           node-version: 24
 
-      - name: Add commits to Unreleased section
-        run: |
-          node scripts/changelog.mjs add-commits \
-            "${{ github.event.before }}" \
-            "${{ github.event.after }}"
+      - name: Bump and sync version files
+        run: node scripts/versioning.mjs bump "${{ github.event.inputs.bump }}"
 
-      - name: Commit changelog update
+      - name: Verify synchronized version files
+        run: node scripts/versioning.mjs check
+
+      - name: Read version metadata
+        id: read-version
+        shell: bash
+        run: |
+          VERSION=$(node -p "JSON.parse(require('node:fs').readFileSync('package.json','utf8')).version")
+          TAG="app-v${VERSION}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Promote changelog Unreleased → versioned section
+        id: changelog
+        shell: bash
+        run: |
+          NOTES=$(node scripts/changelog.mjs promote "${{ steps.read-version.outputs.version }}")
+          echo "notes<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$NOTES" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Commit version update
         shell: bash
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add CHANGELOG.md
-          if git diff --staged --quiet; then
-            echo "No changelog changes to commit."
-          else
-            git commit -m "docs: update changelog [skip ci] [dependabot skip]"
-            git push
-          fi
+          git add package.json src-tauri/tauri.conf.json src-tauri/Cargo.toml CHANGELOG.md
+          git commit -m "chore: bump version to v${{ steps.read-version.outputs.version }}"
+
+      - name: Push version commit and tag
+        shell: bash
+        run: |
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+          git tag "${{ steps.read-version.outputs.tag }}"
+          git push origin "${{ steps.read-version.outputs.tag }}"
+
+  build:
+    needs: prepare-version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            platform: linux-x64
+          - os: macos-14
+            platform: macos-arm64
+          - os: windows-2022
+            platform: windows-x64
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout version tag
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare-version.outputs.tag }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux system dependencies
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build and bundle Tauri app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ needs.prepare-version.outputs.tag }}
+          releaseName: Workgrid Studio v${{ needs.prepare-version.outputs.version }}
+          releaseBody: "${{ needs.prepare-version.outputs.notes }}"
+          releaseDraft: true
+          prerelease: true
+          args: --verbose
