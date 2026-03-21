@@ -10,20 +10,24 @@ use tokio_util::compat::TokioAsyncWriteCompatExt;
 
 type MssqlClient = Client<tokio_util::compat::Compat<TcpStream>>;
 
-fn escape_sql_str(value: &str) -> String {
-    value.replace('\'', "''")
-}
-
 fn json_string(value: impl ToString) -> JsonValue {
     JsonValue::String(value.to_string())
 }
 
 fn column_data_to_json(value: ColumnData<'_>) -> JsonValue {
     match value {
-        ColumnData::U8(value) => value.map(|v| JsonValue::Number(v.into())).unwrap_or(JsonValue::Null),
-        ColumnData::I16(value) => value.map(|v| JsonValue::Number(v.into())).unwrap_or(JsonValue::Null),
-        ColumnData::I32(value) => value.map(|v| JsonValue::Number(v.into())).unwrap_or(JsonValue::Null),
-        ColumnData::I64(value) => value.map(|v| JsonValue::Number(v.into())).unwrap_or(JsonValue::Null),
+        ColumnData::U8(value) => value
+            .map(|v| JsonValue::Number(v.into()))
+            .unwrap_or(JsonValue::Null),
+        ColumnData::I16(value) => value
+            .map(|v| JsonValue::Number(v.into()))
+            .unwrap_or(JsonValue::Null),
+        ColumnData::I32(value) => value
+            .map(|v| JsonValue::Number(v.into()))
+            .unwrap_or(JsonValue::Null),
+        ColumnData::I64(value) => value
+            .map(|v| JsonValue::Number(v.into()))
+            .unwrap_or(JsonValue::Null),
         ColumnData::F32(value) => value
             .and_then(|v| serde_json::Number::from_f64(v as f64))
             .map(JsonValue::Number)
@@ -48,14 +52,18 @@ fn column_data_to_json(value: ColumnData<'_>) -> JsonValue {
         ColumnData::SmallDateTime(value) => value
             .map(|v| JsonValue::String(format!("{:?}", v)))
             .unwrap_or(JsonValue::Null),
-        _ => JsonValue::Null,
     }
 }
 
 fn row_to_result_set(rows: Vec<Row>) -> QueryResultSet {
     let columns = rows
         .first()
-        .map(|row| row.columns().iter().map(|column| column.name().to_string()).collect::<Vec<_>>())
+        .map(|row| {
+            row.columns()
+                .iter()
+                .map(|column| column.name().to_string())
+                .collect::<Vec<_>>()
+        })
         .unwrap_or_default();
     let converted_rows = rows
         .into_iter()
@@ -71,14 +79,18 @@ fn row_to_result_set(rows: Vec<Row>) -> QueryResultSet {
 }
 
 fn parse_connection_params(serialized: &str) -> AppResult<ConnectParams> {
-    serde_json::from_str(serialized)
-        .map_err(|e| AppError::serialization(format!("Invalid stored SQL Server connection data: {}", e)))
+    serde_json::from_str(serialized).map_err(|e| {
+        AppError::serialization(format!("Invalid stored SQL Server connection data: {}", e))
+    })
 }
 
 async fn get_params(state: &State<'_, DbState>, profile_id: &str) -> AppResult<ConnectParams> {
     let serialized = {
         let pools = state.mssql_pools.lock().map_err(|e| e.to_string())?;
-        pools.get(profile_id).cloned().ok_or_else(|| AppError::from("Not connected. Please connect first."))?
+        pools
+            .get(profile_id)
+            .cloned()
+            .ok_or_else(|| AppError::from("Not connected. Please connect first."))?
     };
     parse_connection_params(&serialized)
 }
@@ -88,7 +100,10 @@ async fn open_client(state: &State<'_, DbState>, profile_id: &str) -> AppResult<
     let mut config = Config::new();
     config.host(&params.host);
     config.port(params.port);
-    config.authentication(AuthMethod::sql_server(params.user.clone(), params.password.clone()));
+    config.authentication(AuthMethod::sql_server(
+        params.user.clone(),
+        params.password.clone(),
+    ));
     if let Some(database) = params.database.as_deref().filter(|value| !value.is_empty()) {
         config.database(database);
     }
@@ -104,8 +119,9 @@ async fn open_client(state: &State<'_, DbState>, profile_id: &str) -> AppResult<
     let tcp = TcpStream::connect(config.get_addr())
         .await
         .map_err(|e| AppError::database(format!("SQL Server connection failed: {}", e)))?;
-    tcp.set_nodelay(true)
-        .map_err(|e| AppError::database(format!("SQL Server socket configuration failed: {}", e)))?;
+    tcp.set_nodelay(true).map_err(|e| {
+        AppError::database(format!("SQL Server socket configuration failed: {}", e))
+    })?;
 
     Client::connect(config, tcp.compat_write())
         .await

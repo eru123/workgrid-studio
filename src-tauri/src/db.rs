@@ -1,5 +1,7 @@
 use crate::crypto::{decrypt_password, encrypt_password};
-use crate::logging::{log_error, log_info, log_mysql_verbose, log_query, log_query_result, LogState};
+use crate::logging::{
+    log_error, log_info, log_mysql_verbose, log_query, log_query_result, LogState,
+};
 use crate::ssh::{establish_ssh_tunnel, shutdown_tunnel};
 use crate::{AppError, AppResult, DbState};
 use mysql_async::prelude::*;
@@ -229,10 +231,14 @@ fn emit_import_progress(app: &AppHandle, event: &ImportProgressEvent) {
 // ─── Helpers ────────────────────────────────────────────────────────
 
 pub fn get_pool(state: &State<'_, DbState>, profile_id: &str) -> AppResult<Pool> {
-    let pools = state.pools.lock().map_err(|e| format!("Lock error: {}", e))?;
-    pools.get(profile_id).cloned().ok_or_else(|| {
-        AppError::from("Not connected. Please connect first.")
-    })
+    let pools = state
+        .pools
+        .lock()
+        .map_err(|e| format!("Lock error: {}", e))?;
+    pools
+        .get(profile_id)
+        .cloned()
+        .ok_or_else(|| AppError::from("Not connected. Please connect first."))
 }
 
 pub fn split_sql_statements(sql: &str) -> Vec<String> {
@@ -289,62 +295,6 @@ fn format_timeout_label(timeout_ms: u64) -> String {
     } else {
         format!("{:.1}s", timeout_ms as f64 / 1000.0)
     }
-}
-
-fn mysql_value_to_json(raw: &mysql_async::Value) -> serde_json::Value {
-    match raw {
-        mysql_async::Value::NULL => serde_json::Value::Null,
-        mysql_async::Value::Bytes(b) => match String::from_utf8(b.clone()) {
-            Ok(s) => serde_json::Value::String(s),
-            Err(_) => serde_json::Value::String(format!("[binary {} bytes]", b.len())),
-        },
-        mysql_async::Value::Int(n) => serde_json::Value::Number(serde_json::Number::from(*n)),
-        mysql_async::Value::UInt(n) => serde_json::Value::Number(serde_json::Number::from(*n)),
-        mysql_async::Value::Float(f) => serde_json::Number::from_f64(*f as f64)
-            .map(serde_json::Value::Number)
-            .unwrap_or_else(|| serde_json::Value::String(f.to_string())),
-        mysql_async::Value::Double(f) => serde_json::Number::from_f64(*f)
-            .map(serde_json::Value::Number)
-            .unwrap_or_else(|| serde_json::Value::String(f.to_string())),
-        mysql_async::Value::Date(y, m, d, h, mi, s, _us) => serde_json::Value::String(format!(
-            "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
-            y, m, d, h, mi, s
-        )),
-        mysql_async::Value::Time(neg, d, h, mi, s, _us) => {
-            let sign = if *neg { "-" } else { "" };
-            let total_hours = *d * 24 + u32::from(*h);
-            serde_json::Value::String(format!(
-                "{}{:02}:{:02}:{:02}",
-                sign, total_hours, mi, s
-            ))
-        }
-    }
-}
-
-async fn exec_use_database(
-    conn: &mut mysql_async::Conn,
-    database: &str,
-) -> AppResult<()> {
-    if database.trim().is_empty() {
-        return Ok(());
-    }
-    conn.query_drop(format!("USE {}", escape_ident(database)))
-        .await
-        .map_err(|e| AppError::database(format!("USE database error: {}", e)))
-}
-
-async fn fetch_show_create_value(
-    conn: &mut mysql_async::Conn,
-    query: String,
-    value_index: usize,
-) -> AppResult<String> {
-    let row = conn
-        .query_first::<mysql_async::Row, _>(query)
-        .await
-        .map_err(|e| AppError::database(e.to_string()))?
-        .ok_or_else(|| AppError::database("Object not found"))?;
-    row.get::<String, usize>(value_index)
-        .ok_or_else(|| AppError::database("DDL was unavailable"))
 }
 
 fn configured_label(value: bool) -> &'static str {
@@ -456,7 +406,12 @@ pub async fn db_cancel_connect(
     if let Ok(tokens) = state.cancel_tokens.lock() {
         if let Some(token) = tokens.get(&profile_id) {
             token.store(true, Ordering::Relaxed);
-            log_info(&log_state, "db", Some(&profile_id), "Connection cancellation requested.");
+            log_info(
+                &log_state,
+                "db",
+                Some(&profile_id),
+                "Connection cancellation requested.",
+            );
         }
     }
     Ok(())
@@ -589,7 +544,12 @@ pub async fn db_connect(
                 tunnels.remove(&pid)
             };
             if let Some(old) = old_tunnel {
-                log_info(&log_state, "db", Some(&pid), "Closing previous SSH tunnel before reconnecting.");
+                log_info(
+                    &log_state,
+                    "db",
+                    Some(&pid),
+                    "Closing previous SSH tunnel before reconnecting.",
+                );
                 shutdown_tunnel(old);
             }
             // Debug telemetry: log active tunnel count after cleanup.
@@ -718,7 +678,12 @@ pub async fn db_connect(
                     return Err(AppError::validation(msg));
                 }
                 ssl_opts = ssl_opts.with_root_certs(vec![path.into()]);
-                log_mysql_verbose(&log_state, &pid, verbose, "Validated MySQL CA certificate path.");
+                log_mysql_verbose(
+                    &log_state,
+                    &pid,
+                    verbose,
+                    "Validated MySQL CA certificate path.",
+                );
             }
         }
 
@@ -736,7 +701,12 @@ pub async fn db_connect(
                     return Err(AppError::validation(msg));
                 }
                 has_cert = true;
-                log_mysql_verbose(&log_state, &pid, verbose, "Validated MySQL client certificate path.");
+                log_mysql_verbose(
+                    &log_state,
+                    &pid,
+                    verbose,
+                    "Validated MySQL client certificate path.",
+                );
             }
         }
 
@@ -749,7 +719,12 @@ pub async fn db_connect(
                     return Err(AppError::validation(msg));
                 }
                 has_key = true;
-                log_mysql_verbose(&log_state, &pid, verbose, "Validated MySQL client key path.");
+                log_mysql_verbose(
+                    &log_state,
+                    &pid,
+                    verbose,
+                    "Validated MySQL client key path.",
+                );
             }
         }
 
@@ -771,7 +746,12 @@ pub async fn db_connect(
 
         builder = builder.ssl_opts(Some(ssl_opts));
     } else {
-        log_mysql_verbose(&log_state, &pid, verbose, "MySQL TLS disabled for this connection.");
+        log_mysql_verbose(
+            &log_state,
+            &pid,
+            verbose,
+            "MySQL TLS disabled for this connection.",
+        );
     }
 
     let pool_opts = PoolOpts::new().with_constraints(PoolConstraints::new(0, 5).unwrap());
@@ -834,7 +814,12 @@ pub async fn db_connect(
     })?;
 
     if let Some(old_pool) = pools.remove(&pid) {
-        log_mysql_verbose(&log_state, &pid, verbose, "Replacing existing MySQL pool for profile.");
+        log_mysql_verbose(
+            &log_state,
+            &pid,
+            verbose,
+            "Replacing existing MySQL pool for profile.",
+        );
         tauri::async_runtime::spawn(async move {
             let _ = old_pool.disconnect().await;
         });
@@ -892,7 +877,12 @@ pub async fn db_disconnect(
         tunnels.remove(&profile_id)
     };
     if let Some(handle) = tunnel {
-        log_info(&log_state, "db", Some(&profile_id), "Shutting down SSH tunnel.");
+        log_info(
+            &log_state,
+            "db",
+            Some(&profile_id),
+            "Shutting down SSH tunnel.",
+        );
         shutdown_tunnel(handle);
     }
     // Debug telemetry: log active tunnel count after disconnect.
@@ -1445,7 +1435,12 @@ pub async fn db_update_row(
             msg
         })?;
 
-    log_query_result(&log_state, &profile_id, &query, conn.affected_rows() as usize);
+    log_query_result(
+        &log_state,
+        &profile_id,
+        &query,
+        conn.affected_rows() as usize,
+    );
     Ok(())
 }
 
@@ -1482,7 +1477,14 @@ pub async fn db_get_foreign_keys(
         ORDER BY kcu.CONSTRAINT_NAME, kcu.ORDINAL_POSITION
     "#;
 
-    let rows: Vec<(String, String, String, String, Option<String>, Option<String>)> = conn
+    let rows: Vec<(
+        String,
+        String,
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+    )> = conn
         .exec(
             query,
             params! {
@@ -1492,7 +1494,10 @@ pub async fn db_get_foreign_keys(
         )
         .await
         .map_err(|e| {
-            let msg = format!("Failed to load foreign keys for {}.{}: {}", database, table, e);
+            let msg = format!(
+                "Failed to load foreign keys for {}.{}: {}",
+                database, table, e
+            );
             log_error(&log_state, "db", Some(&profile_id), &msg, None);
             msg
         })?;
@@ -1501,7 +1506,14 @@ pub async fn db_get_foreign_keys(
     Ok(rows
         .into_iter()
         .map(
-            |(constraint_name, column_name, referenced_table_name, referenced_column_name, update_rule, delete_rule)| {
+            |(
+                constraint_name,
+                column_name,
+                referenced_table_name,
+                referenced_column_name,
+                update_rule,
+                delete_rule,
+            )| {
                 ForeignKeyInfo {
                     constraint_name,
                     column_name,
@@ -1632,16 +1644,24 @@ pub async fn db_get_trigger_ddl(
     }
 
     let query = format!("SHOW CREATE TRIGGER {}", escape_ident(&trigger_name));
-    let row = conn.query_first::<mysql_async::Row, _>(&query).await.map_err(|e| {
-        let msg = format!("Failed to load trigger DDL for {}: {}", trigger_name, e);
-        log_error(&log_state, "db", Some(&profile_id), &msg, None);
-        msg
-    })?;
+    let row = conn
+        .query_first::<mysql_async::Row, _>(&query)
+        .await
+        .map_err(|e| {
+            let msg = format!("Failed to load trigger DDL for {}: {}", trigger_name, e);
+            log_error(&log_state, "db", Some(&profile_id), &msg, None);
+            msg
+        })?;
 
     let ddl = row
         .map(|row| first_available_string(&row, &[2, 1]))
         .unwrap_or_default();
-    log_query_result(&log_state, &profile_id, &query, usize::from(!ddl.is_empty()));
+    log_query_result(
+        &log_state,
+        &profile_id,
+        &query,
+        usize::from(!ddl.is_empty()),
+    );
     Ok(ddl)
 }
 
@@ -1797,16 +1817,24 @@ pub async fn db_get_routine_ddl(
         "PROCEDURE"
     };
     let query = format!("SHOW CREATE {} {}", routine_kind, escape_ident(&name));
-    let row = conn.query_first::<mysql_async::Row, _>(&query).await.map_err(|e| {
-        let msg = format!("Failed to load routine DDL for {}: {}", name, e);
-        log_error(&log_state, "db", Some(&profile_id), &msg, None);
-        msg
-    })?;
+    let row = conn
+        .query_first::<mysql_async::Row, _>(&query)
+        .await
+        .map_err(|e| {
+            let msg = format!("Failed to load routine DDL for {}: {}", name, e);
+            log_error(&log_state, "db", Some(&profile_id), &msg, None);
+            msg
+        })?;
 
     let ddl = row
         .map(|row| first_available_string(&row, &[2, 1]))
         .unwrap_or_default();
-    log_query_result(&log_state, &profile_id, &query, usize::from(!ddl.is_empty()));
+    log_query_result(
+        &log_state,
+        &profile_id,
+        &query,
+        usize::from(!ddl.is_empty()),
+    );
     Ok(ddl)
 }
 
@@ -1948,16 +1976,24 @@ pub async fn db_get_view_ddl(
     }
 
     let query = format!("SHOW CREATE VIEW {}", escape_ident(&view_name));
-    let row = conn.query_first::<mysql_async::Row, _>(&query).await.map_err(|e| {
-        let msg = format!("Failed to load view DDL for {}: {}", view_name, e);
-        log_error(&log_state, "db", Some(&profile_id), &msg, None);
-        msg
-    })?;
+    let row = conn
+        .query_first::<mysql_async::Row, _>(&query)
+        .await
+        .map_err(|e| {
+            let msg = format!("Failed to load view DDL for {}: {}", view_name, e);
+            log_error(&log_state, "db", Some(&profile_id), &msg, None);
+            msg
+        })?;
 
     let ddl = row
         .map(|row| first_available_string(&row, &[1, 0]))
         .unwrap_or_default();
-    log_query_result(&log_state, &profile_id, &query, usize::from(!ddl.is_empty()));
+    log_query_result(
+        &log_state,
+        &profile_id,
+        &query,
+        usize::from(!ddl.is_empty()),
+    );
     Ok(ddl)
 }
 
@@ -2098,16 +2134,24 @@ pub async fn db_get_event_ddl(
     }
 
     let query = format!("SHOW CREATE EVENT {}", escape_ident(&event_name));
-    let row = conn.query_first::<mysql_async::Row, _>(&query).await.map_err(|e| {
-        let msg = format!("Failed to load event DDL for {}: {}", event_name, e);
-        log_error(&log_state, "db", Some(&profile_id), &msg, None);
-        msg
-    })?;
+    let row = conn
+        .query_first::<mysql_async::Row, _>(&query)
+        .await
+        .map_err(|e| {
+            let msg = format!("Failed to load event DDL for {}: {}", event_name, e);
+            log_error(&log_state, "db", Some(&profile_id), &msg, None);
+            msg
+        })?;
 
     let ddl = row
         .map(|row| first_available_string(&row, &[3, 2, 1]))
         .unwrap_or_default();
-    log_query_result(&log_state, &profile_id, &query, usize::from(!ddl.is_empty()));
+    log_query_result(
+        &log_state,
+        &profile_id,
+        &query,
+        usize::from(!ddl.is_empty()),
+    );
     Ok(ddl)
 }
 
@@ -2194,11 +2238,12 @@ pub async fn db_list_users(
     })?;
 
     let query = "SELECT User, Host, plugin, account_locked FROM mysql.user ORDER BY User, Host";
-    let rows: Vec<(String, String, Option<String>, Option<String>)> = conn.query(query).await.map_err(|e| {
-        let msg = format!("Failed to load users: {}", e);
-        log_error(&log_state, "db", Some(&profile_id), &msg, None);
-        msg
-    })?;
+    let rows: Vec<(String, String, Option<String>, Option<String>)> =
+        conn.query(query).await.map_err(|e| {
+            let msg = format!("Failed to load users: {}", e);
+            log_error(&log_state, "db", Some(&profile_id), &msg, None);
+            msg
+        })?;
 
     log_query_result(&log_state, &profile_id, query, rows.len());
     Ok(rows
@@ -2227,7 +2272,11 @@ pub async fn db_get_user_grants(
         msg
     })?;
 
-    let query = format!("SHOW GRANTS FOR '{}'@'{}'", escape_sql_str(&user), escape_sql_str(&host));
+    let query = format!(
+        "SHOW GRANTS FOR '{}'@'{}'",
+        escape_sql_str(&user),
+        escape_sql_str(&host)
+    );
     let rows: Vec<String> = conn.query(&query).await.map_err(|e| {
         let msg = format!("Failed to load grants for {}@{}: {}", user, host, e);
         log_error(&log_state, "db", Some(&profile_id), &msg, None);
@@ -2407,7 +2456,14 @@ pub async fn db_execute_query(
     })?;
 
     log_query(&log_state, &profile_id, &query, None);
-    run_query_with_timeout(&log_state, &profile_id, &query, timeout_ms, conn.query_drop(&query)).await?;
+    run_query_with_timeout(
+        &log_state,
+        &profile_id,
+        &query,
+        timeout_ms,
+        conn.query_drop(&query),
+    )
+    .await?;
 
     Ok(())
 }
@@ -2576,7 +2632,6 @@ pub async fn db_query(
 
     Ok(results)
 }
-
 
 #[tauri::command]
 pub async fn db_get_schema_ddl(

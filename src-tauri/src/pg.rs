@@ -19,7 +19,8 @@ fn simple_value_to_json(value: Option<&str>) -> JsonValue {
                 JsonValue::Number(value.into())
             } else if let Ok(value) = text.parse::<f64>() {
                 JsonValue::Number(
-                    serde_json::Number::from_f64(value).unwrap_or_else(|| serde_json::Number::from(0)),
+                    serde_json::Number::from_f64(value)
+                        .unwrap_or_else(|| serde_json::Number::from(0)),
                 )
             } else if matches!(text, "t" | "true") {
                 JsonValue::Bool(true)
@@ -36,21 +37,30 @@ fn simple_query_to_result_sets(messages: Vec<SimpleQueryMessage>) -> Vec<QueryRe
     let mut results = Vec::new();
     let mut columns: Vec<String> = Vec::new();
     let mut rows: Vec<Vec<JsonValue>> = Vec::new();
-    let mut pending_count = 0u64;
 
     for message in messages {
         match message {
             SimpleQueryMessage::RowDescription(description) => {
-                columns = description.iter().map(|column| column.name().to_string()).collect();
+                columns = description
+                    .iter()
+                    .map(|column| column.name().to_string())
+                    .collect();
             }
             SimpleQueryMessage::Row(row) => {
                 if columns.is_empty() {
-                    columns = row.columns().iter().map(|column| column.name().to_string()).collect();
+                    columns = row
+                        .columns()
+                        .iter()
+                        .map(|column| column.name().to_string())
+                        .collect();
                 }
-                rows.push((0..row.len()).map(|idx| simple_value_to_json(row.get(idx))).collect());
+                rows.push(
+                    (0..row.len())
+                        .map(|idx| simple_value_to_json(row.get(idx)))
+                        .collect(),
+                );
             }
             SimpleQueryMessage::CommandComplete(count) => {
-                pending_count = count;
                 results.push(QueryResultSet {
                     columns: columns.clone(),
                     rows: rows.clone(),
@@ -63,22 +73,17 @@ fn simple_query_to_result_sets(messages: Vec<SimpleQueryMessage>) -> Vec<QueryRe
                 });
                 columns.clear();
                 rows.clear();
-                pending_count = 0;
             }
             _ => {}
         }
     }
 
-    if !columns.is_empty() || !rows.is_empty() || pending_count > 0 {
+    if !columns.is_empty() || !rows.is_empty() {
         results.push(QueryResultSet {
             columns,
             rows,
-            affected_rows: pending_count,
-            info: if pending_count > 0 {
-                format!("{} row(s) affected", pending_count)
-            } else {
-                "0 row(s) affected".to_string()
-            },
+            affected_rows: 0,
+            info: "0 row(s) affected".to_string(),
         });
     }
 
@@ -91,7 +96,10 @@ async fn get_client(
 ) -> AppResult<deadpool_postgres::Client> {
     let pool = {
         let pools = state.pg_pools.lock().map_err(|e| e.to_string())?;
-        pools.get(profile_id).cloned().ok_or_else(|| AppError::from("Not connected. Please connect first."))?
+        pools
+            .get(profile_id)
+            .cloned()
+            .ok_or_else(|| AppError::from("Not connected. Please connect first."))?
     };
 
     pool.get()
@@ -223,7 +231,10 @@ pub async fn pg_list_databases(
         .await
         .map_err(|e| AppError::database(format!("PostgreSQL query failed: {}", e)))?;
     log_query_result(&log_state, &profile_id, query, rows.len());
-    Ok(rows.into_iter().map(|row| row.get::<usize, String>(0)).collect())
+    Ok(rows
+        .into_iter()
+        .map(|row| row.get::<usize, String>(0))
+        .collect())
 }
 
 #[tauri::command]
@@ -243,7 +254,10 @@ pub async fn pg_list_tables(
         .await
         .map_err(|e| AppError::database(format!("PostgreSQL query failed: {}", e)))?;
     log_query_result(&log_state, &profile_id, &query, rows.len());
-    Ok(rows.into_iter().map(|row| row.get::<usize, String>(0)).collect())
+    Ok(rows
+        .into_iter()
+        .map(|row| row.get::<usize, String>(0))
+        .collect())
 }
 
 #[tauri::command]
@@ -270,13 +284,15 @@ pub async fn pg_list_columns(
         .map(|row| ColumnInfo {
             name: row.get::<usize, String>(0),
             col_type: row.get::<usize, String>(1),
-            nullable: row
-                .get::<usize, String>(2)
-                .eq_ignore_ascii_case("yes"),
+            nullable: row.get::<usize, String>(2).eq_ignore_ascii_case("yes"),
             key: String::new(),
             default_val: {
                 let value: String = row.get(3);
-                if value.is_empty() { None } else { Some(value) }
+                if value.is_empty() {
+                    None
+                } else {
+                    Some(value)
+                }
             },
             extra: row.get::<usize, String>(4),
         })
@@ -307,7 +323,10 @@ pub async fn pg_get_databases_info(
         .await
         .map_err(|e| AppError::database(format!("PostgreSQL query failed: {}", e)))?;
     log_query_result(&log_state, &profile_id, query, rows.len());
-    Ok(rows.into_iter().map(|row| split_database_info_row(&row)).collect())
+    Ok(rows
+        .into_iter()
+        .map(|row| split_database_info_row(&row))
+        .collect())
 }
 
 #[tauri::command]
@@ -327,7 +346,10 @@ pub async fn pg_get_tables_info(
         .await
         .map_err(|e| AppError::database(format!("PostgreSQL query failed: {}", e)))?;
     log_query_result(&log_state, &profile_id, &query, rows.len());
-    Ok(rows.into_iter().map(|row| split_table_info_row(&row)).collect())
+    Ok(rows
+        .into_iter()
+        .map(|row| split_table_info_row(&row))
+        .collect())
 }
 
 #[tauri::command]
@@ -387,7 +409,10 @@ pub async fn pg_get_processes(
         .await
         .map_err(|e| AppError::database(format!("PostgreSQL query failed: {}", e)))?;
     log_query_result(&log_state, &profile_id, query, rows.len());
-    Ok(rows.into_iter().map(|row| split_process_row(&row)).collect())
+    Ok(rows
+        .into_iter()
+        .map(|row| split_process_row(&row))
+        .collect())
 }
 
 #[tauri::command]

@@ -1,8 +1,8 @@
-use async_trait::async_trait;
 use crate::db::ConnectParams;
 use crate::files::app_data_dir;
 use crate::logging::{log_ssh_error, log_ssh_info, log_ssh_verbose, LogState};
 use crate::{AppError, AppResult, TunnelHandle};
+use async_trait::async_trait;
 use russh::client;
 use russh_keys::{HashAlg, PrivateKey};
 use std::collections::HashMap;
@@ -59,7 +59,11 @@ pub fn forget_host_key(
     let mut known = load_known_hosts();
     if known.remove(&host_id).is_some() {
         save_known_hosts(&known)?;
-        log_ssh_info(&log_state, &profile_id, &format!("Forgotten host key for {}", host_id));
+        log_ssh_info(
+            &log_state,
+            &profile_id,
+            &format!("Forgotten host key for {}", host_id),
+        );
     }
     Ok(())
 }
@@ -100,7 +104,11 @@ impl client::Handler for SshClientHandler {
 
         match known.get(&host_id) {
             Some(stored) if stored == &fingerprint => {
-                log_ssh_info(&self.log_state, &self.pid, &format!("SSH host key verified for {}", host_id));
+                log_ssh_info(
+                    &self.log_state,
+                    &self.pid,
+                    &format!("SSH host key verified for {}", host_id),
+                );
                 Ok(true)
             }
             Some(stored) if !stored.starts_with("SHA256:") => {
@@ -172,7 +180,11 @@ fn docker_proxy_cmd(container: &str, mysql_port: u16) -> String {
     )
 }
 
-pub async fn establish_ssh_tunnel(pid: &str, params: &ConnectParams, log_state: &LogState) -> AppResult<TunnelHandle> {
+pub async fn establish_ssh_tunnel(
+    pid: &str,
+    params: &ConnectParams,
+    log_state: &LogState,
+) -> AppResult<TunnelHandle> {
     let started = Instant::now();
     let verbose = params.connection_verbose_logging;
 
@@ -217,25 +229,32 @@ pub async fn establish_ssh_tunnel(pid: &str, params: &ConnectParams, log_state: 
             AppError::ssh(msg)
         })?;
 
-    log_ssh_info(log_state, pid, &format!("SSH handshake completed with {}:{}", ssh_host, ssh_port));
+    log_ssh_info(
+        log_state,
+        pid,
+        &format!("SSH handshake completed with {}:{}", ssh_host, ssh_port),
+    );
 
     // ── Authenticate ─────────────────────────────────────────────────────────
     let auth_started = Instant::now();
 
     if let Some(key_path) = trimmed_option(params.ssh_key_file.as_ref()) {
         let passphrase = trimmed_sensitive_option(params.ssh_passphrase.as_ref());
-        log_ssh_verbose(log_state, pid, verbose, &format!("Loading SSH key from {}", key_path));
+        log_ssh_verbose(
+            log_state,
+            pid,
+            verbose,
+            &format!("Loading SSH key from {}", key_path),
+        );
 
-        let key: PrivateKey = russh_keys::load_secret_key(key_path, passphrase)
-            .map_err(|e| {
-                let msg = format!("Failed to load SSH key '{}': {}", key_path, e);
-                log_ssh_error(log_state, pid, &msg);
-                AppError::ssh(msg)
-            })?;
+        let key: PrivateKey = russh_keys::load_secret_key(key_path, passphrase).map_err(|e| {
+            let msg = format!("Failed to load SSH key '{}': {}", key_path, e);
+            log_ssh_error(log_state, pid, &msg);
+            AppError::ssh(msg)
+        })?;
 
-        let key_with_hash =
-            russh_keys::key::PrivateKeyWithHashAlg::new(Arc::new(key), None)
-                .map_err(|e| AppError::ssh(format!("SSH key error: {}", e)))?;
+        let key_with_hash = russh_keys::key::PrivateKeyWithHashAlg::new(Arc::new(key), None)
+            .map_err(|e| AppError::ssh(format!("SSH key error: {}", e)))?;
 
         let authenticated = session
             .authenticate_publickey(&ssh_user, key_with_hash)
@@ -317,7 +336,13 @@ pub async fn establish_ssh_tunnel(pid: &str, params: &ConnectParams, log_state: 
         let container = params
             .docker_container
             .as_deref()
-            .and_then(|s| if s.trim().is_empty() { None } else { Some(s.trim()) })
+            .and_then(|s| {
+                if s.trim().is_empty() {
+                    None
+                } else {
+                    Some(s.trim())
+                }
+            })
             .ok_or_else(|| AppError::ssh("Docker mode enabled but no container name provided"))?;
         Some(docker_proxy_cmd(container, target_port))
     } else {
@@ -434,7 +459,12 @@ pub async fn establish_ssh_tunnel(pid: &str, params: &ConnectParams, log_state: 
             });
         }
 
-        log_ssh_verbose(&log_state_clone, &pid_clone, verbose, "SSH tunnel loop exiting.");
+        log_ssh_verbose(
+            &log_state_clone,
+            &pid_clone,
+            verbose,
+            "SSH tunnel loop exiting.",
+        );
     });
 
     Ok(TunnelHandle {

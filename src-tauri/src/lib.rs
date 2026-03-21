@@ -1,10 +1,10 @@
 use mysql_async::Pool;
 use rusqlite::Connection as SqliteConnection;
-use tauri::Manager;
 use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::sync::Mutex;
+use tauri::Manager;
 
 pub mod ai;
 pub mod crypto;
@@ -14,8 +14,8 @@ pub mod files;
 pub mod logging;
 pub mod mssql;
 pub mod pg;
-pub mod ssh;
 pub mod sqlite;
+pub mod ssh;
 
 pub use error::{AppError, AppResult};
 

@@ -22,11 +22,7 @@ fn value_ref_to_json(value: ValueRef<'_>) -> JsonValue {
     }
 }
 
-async fn with_connection<T, F>(
-    state: &State<'_, DbState>,
-    profile_id: &str,
-    f: F,
-) -> AppResult<T>
+async fn with_connection<T, F>(state: &State<'_, DbState>, profile_id: &str, f: F) -> AppResult<T>
 where
     T: Send + 'static,
     F: FnOnce(&SqliteConnection) -> AppResult<T> + Send + 'static,
@@ -63,16 +59,17 @@ pub async fn sqlite_connect(
         .to_string();
     let profile_id = params.profile_id.clone();
     let opened_path = file_path.clone();
-    let connection = tauri::async_runtime::spawn_blocking(move || -> AppResult<SqliteConnection> {
-        let connection = SqliteConnection::open(&opened_path)
-            .map_err(|e| AppError::database(format!("SQLite open failed: {}", e)))?;
-        connection
-            .query_row("SELECT 1", [], |_| Ok(()))
-            .map_err(|e| AppError::database(format!("SQLite test query failed: {}", e)))?;
-        Ok(connection)
-    })
-    .await
-    .map_err(|e| AppError::external(format!("SQLite task join error: {}", e)))??;
+    let connection =
+        tauri::async_runtime::spawn_blocking(move || -> AppResult<SqliteConnection> {
+            let connection = SqliteConnection::open(&opened_path)
+                .map_err(|e| AppError::database(format!("SQLite open failed: {}", e)))?;
+            connection
+                .query_row("SELECT 1", [], |_| Ok(()))
+                .map_err(|e| AppError::database(format!("SQLite test query failed: {}", e)))?;
+            Ok(connection)
+        })
+        .await
+        .map_err(|e| AppError::external(format!("SQLite task join error: {}", e)))??;
 
     let mut pools = state.sqlite_pools.lock().map_err(|e| e.to_string())?;
     pools.insert(profile_id.clone(), Arc::new(Mutex::new(connection)));
@@ -155,7 +152,9 @@ pub async fn sqlite_list_tables(
             .map_err(|e| AppError::database(format!("SQLite query failed: {}", e)))?;
         let mut values = Vec::new();
         for row in rows {
-            values.push(row.map_err(|e| AppError::database(format!("SQLite row read failed: {}", e)))?);
+            values.push(
+                row.map_err(|e| AppError::database(format!("SQLite row read failed: {}", e)))?,
+            );
         }
         Ok(values)
     })
@@ -187,15 +186,25 @@ pub async fn sqlite_list_columns(
                     name: row.get::<usize, String>(1)?,
                     col_type: row.get::<usize, String>(2)?,
                     nullable: notnull == 0,
-                    key: if pk > 0 { "PRI".to_string() } else { String::new() },
+                    key: if pk > 0 {
+                        "PRI".to_string()
+                    } else {
+                        String::new()
+                    },
                     default_val,
-                    extra: if pk > 0 { "pk".to_string() } else { String::new() },
+                    extra: if pk > 0 {
+                        "pk".to_string()
+                    } else {
+                        String::new()
+                    },
                 })
             })
             .map_err(|e| AppError::database(format!("SQLite query failed: {}", e)))?;
         let mut values = Vec::new();
         for row in rows {
-            values.push(row.map_err(|e| AppError::database(format!("SQLite row read failed: {}", e)))?);
+            values.push(
+                row.map_err(|e| AppError::database(format!("SQLite row read failed: {}", e)))?,
+            );
         }
         Ok(values)
     })
@@ -267,6 +276,11 @@ pub async fn sqlite_query(
     })
     .await?;
     log_query(&log_state, &profile_id, &query, None);
-    log_query_result(&log_state, &profile_id, &query, result.first().map(|set| set.rows.len()).unwrap_or(0));
+    log_query_result(
+        &log_state,
+        &profile_id,
+        &query,
+        result.first().map(|set| set.rows.len()).unwrap_or(0),
+    );
     Ok(result)
 }
