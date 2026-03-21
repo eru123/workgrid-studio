@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.2.0] - 2026-03-21
 - Introduced a keybindings engine with `when`-expression context guards, a token-bucket notification system (toast + output panel routing), a lazy-loaded SQL formatter, a theme token engine, a connection URL parser, and a viewport-aware popup positioning utility.
 - Added QueryBuilder tab (visual WHERE/JOIN/ORDER builder with generated SQL preview), Snippets panel with persistent snippet store, Triggers view, Stored Procedures/Routines view, View editor, Events view, and Users management view.
 - Implemented full PostgreSQL command suite (`pg_connect`, `pg_query`, `pg_get_databases_info`, `pg_get_tables_info`, `pg_list_columns`, `pg_get_processes`, `pg_kill_process`, and more). Added SQLite and MSSQL backend stubs.
