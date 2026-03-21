@@ -1,6 +1,7 @@
 # Changelog
 
 ## [Unreleased]
+- Re-write UI and Backend engine for better performance and UI/UX improvement.
 
 ## [0.1.10] - 2026-03-21
 - No changes recorded.
