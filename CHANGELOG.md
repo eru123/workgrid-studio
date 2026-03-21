@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+## [0.1.10] - 2026-03-21
+- No changes recorded.
+
 ## [0.1.9] - 2026-03-20
 - Replaced the libssh2-based SSH implementation with russh, a pure Rust SSH library. This change improves security, reduces dependencies, and provides better async support.
 - Added docker support for SSH connections, you can now pass container name with ssh to automatically get the host ip address for you.
