@@ -4,7 +4,7 @@
 - Re-write UI and Backend engine for better performance and UI/UX improvement.
 
 ## [0.1.10] - 2026-03-21
-- No changes recorded.
+- Fix errors on website deployment via cloudflare pages.
 
 ## [0.1.9] - 2026-03-20
 - Replaced the libssh2-based SSH implementation with russh, a pure Rust SSH library. This change improves security, reduces dependencies, and provides better async support.
