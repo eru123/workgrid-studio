@@ -3,19 +3,23 @@
 //  Produces ranked suggestions based on cursor context
 // ═══════════════════════════════════════════════════════════════════════
 
+import { useSnippetsStore } from "@/state/snippetsStore";
+
 export type SuggestionKind =
   | "keyword"
   | "function"
   | "type"
   | "database"
   | "table"
-  | "column";
+  | "column"
+  | "snippet";
 
 export interface Suggestion {
   label: string;
   kind: SuggestionKind;
   detail?: string;
   insertText?: string; // if different from label (e.g. backtick-wrapped)
+  snippetBody?: string;
 }
 
 // ── SQL vocabulary ───────────────────────────────────────────────────
@@ -413,6 +417,28 @@ function matchScore(label: string, prefix: string): number {
   return 0;
 }
 
+function getSnippetSuggestions(prefix: string): Array<Suggestion & { score: number }> {
+  const query = prefix.toLowerCase();
+  const snippets = useSnippetsStore.getState().snippets;
+  const results: Array<Suggestion & { score: number }> = [];
+
+  for (const snippet of snippets) {
+    const score = matchScore(snippet.name, prefix);
+    if (score <= 0) continue;
+    const detail = snippet.description || (snippet.profileId ? "Profile snippet" : "Snippet");
+    results.push({
+      label: snippet.name,
+      kind: "snippet",
+      detail,
+      insertText: snippet.body,
+      snippetBody: snippet.body,
+      score: score + (query && snippet.body.toLowerCase().includes(query) ? 1 : 0),
+    });
+  }
+
+  return results;
+}
+
 export function getSuggestions(
   contextInfo: ContextInfo,
   schema: SchemaInfo,
@@ -420,6 +446,10 @@ export function getSuggestions(
 ): Suggestion[] {
   const { context, prefix, dotPrefix } = contextInfo;
   const results: Array<Suggestion & { score: number }> = [];
+
+  for (const snippet of getSnippetSuggestions(prefix)) {
+    results.push(snippet);
+  }
 
   const addIfMatch = (
     label: string,
@@ -539,12 +569,13 @@ export function getSuggestions(
       // Sort by score descending, then by kind priority, then alphabetically
       if (b.score !== a.score) return b.score - a.score;
       const kindOrder: Record<SuggestionKind, number> = {
-        column: 0,
-        table: 1,
-        database: 2,
-        function: 3,
-        keyword: 4,
-        type: 5,
+        snippet: 0,
+        column: 1,
+        table: 2,
+        database: 3,
+        function: 4,
+        keyword: 5,
+        type: 6,
       };
       const ka = kindOrder[a.kind] ?? 99;
       const kb = kindOrder[b.kind] ?? 99;

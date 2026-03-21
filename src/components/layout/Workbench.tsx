@@ -1,4 +1,6 @@
-import { startTransition, useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { startTransition, useState, useEffect, useRef, useCallback, useMemo, lazy, Suspense } from "react";
+import { useCommand } from "@/hooks/useCommand";
+import { setContext, initKeybindings } from "@/lib/keybindings";
 import { useLayoutStore, ActivityView } from "@/state/layoutStore";
 import { useProfilesStore } from "@/state/profilesStore";
 import { useSchemaStore } from "@/state/schemaStore";
@@ -10,9 +12,11 @@ import { Sash } from "./Sash";
 import { EditorNode } from "./EditorNode";
 import { ExplorerTree } from "@/components/views/ExplorerTree";
 import { readProfileLog, clearProfileLog, getAiLogs, clearAiLogs, AiLogEntry, dbPing, dbQuery } from "@/lib/db";
+import { getLogBuffer, subscribeToLogStream, type LogEntry as StreamLogEntry } from "@/lib/log";
 import { cn } from "@/lib/utils/cn";
 import { useProfileManager } from "@/hooks/useProfileManager";
-import { useAppStore, StatusBarInfo } from "@/state/appStore";
+import { useAppStore } from "@/state/appStore";
+import { notifyError, notify } from "@/lib/notifications";
 import {
   appendConnectionOutput,
   formatConnectionTarget,
@@ -21,6 +25,7 @@ import {
 import {
   FolderTree,
   CheckSquare,
+  FileCode2,
   PanelBottom,
   Sidebar,
   Server,
@@ -38,8 +43,10 @@ import {
   Loader2,
 } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { MenuBar } from "./MenuBar";
 import { ServersSidebar } from "@/components/views/ServersSidebar";
 import { AiChatSidebar } from "@/components/views/AiChatSidebar";
+const SnippetsPanel = lazy(() => import("@/components/views/SnippetsPanel").then(m => ({ default: m.SnippetsPanel })));
 import { KeyboardShortcutsOverlay } from "@/components/views/KeyboardShortcutsOverlay";
 import { OnboardingFlow } from "@/components/views/OnboardingFlow";
 import { check as checkForUpdate } from "@tauri-apps/plugin-updater";
@@ -48,6 +55,7 @@ import { relaunch } from "@tauri-apps/plugin-process";
 const activityItems: { id: ActivityView; icon: any; label: string }[] = [
   { id: "explorer", icon: FolderTree, label: "Explorer" },
   { id: "servers", icon: Server, label: "Servers" },
+  { id: "snippets", icon: FileCode2, label: "Snippets" },
   { id: "models", icon: Bot, label: "AI Models" },
   { id: "tasks", icon: CheckSquare, label: "Tasks" },
 ];
@@ -247,7 +255,6 @@ export function Workbench() {
 
   // Startup background update check
   useEffect(() => {
-    const addToast = useAppStore.getState().addToast;
     const { allowUpdateChecks } = useProfilesStore.getState().globalPreferences;
     if (!allowUpdateChecks) return;
 
@@ -255,21 +262,23 @@ export function Workbench() {
       try {
         const update = await checkForUpdate();
         if (!update) return;
-        addToast({
+        notify({
+          severity: "info",
           title: `Update available — v${update.version}`,
-          description: update.body?.split("\n")[0] ?? "A new version of WorkGrid Studio is ready.",
+          detail: update.body?.split("\n")[0] ?? "A new version of WorkGrid Studio is ready.",
+          toast: true,
           persistent: true,
-          action: {
+          actions: [{
             label: "Download & restart",
             onClick: async () => {
               try {
                 await update.downloadAndInstall();
                 await relaunch();
               } catch {
-                addToast({ title: "Update failed", description: "Open Settings to retry.", variant: "destructive" });
+                notifyError("Update failed", "Open Settings to retry.");
               }
             },
-          },
+          }],
         });
       } catch {
         // Silently ignore startup update check failures
@@ -278,11 +287,14 @@ export function Workbench() {
    
   }, []);
 
+  // Derive a stable string key from profile IDs — only changes when the actual set of IDs changes
+  const profileIdKey = useMemo(() => profiles.map((p) => p.id).join(","), [profiles]);
+
   useEffect(() => {
-    const profileIds = profiles.map((profile) => profile.id);
-    if (profileIds.length === 0) return;
-    void loadAllSavedQueries(profileIds);
-  }, [loadAllSavedQueries, profiles]);
+    if (!profileIdKey) return;
+    void loadAllSavedQueries(profileIdKey.split(","));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profileIdKey]); // loadAllSavedQueries is a stable store action; key only changes when IDs change
 
   useEffect(() => {
     const clearScheduledInterval = (queryId: string) => {
@@ -464,34 +476,37 @@ export function Workbench() {
     };
   }, []);
 
+  // ── Bootstrap keybinding engine ────────────────────────────────────────────
+  useEffect(() => initKeybindings(), []);
+
+  // ── Keep when-context in sync with layout state ────────────────────────────
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.ctrlKey || e.metaKey) {
-        if (e.key === "`") {
-          e.preventDefault();
-          togglePanel();
-        } else if (e.key.toLowerCase() === "b") {
-          e.preventDefault();
-          toggleSidebar();
-        } else if (e.key.toLowerCase() === "n") {
-          e.preventDefault();
-          e.stopPropagation();
-          useLayoutStore.getState().openTab({ title: "New Query", type: "sql", meta: {} });
-        } else if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "t") {
-          e.preventDefault();
-          useLayoutStore.getState().restoreLastClosedTab();
-        } else if (e.ctrlKey && e.shiftKey && e.key === "?") {
-          e.preventDefault();
-          setShowShortcuts((v) => !v);
-        }
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown, true);
-    return () => window.removeEventListener("keydown", handleKeyDown, true);
-  }, [togglePanel, toggleSidebar]);
+    setContext({
+      sidebarVisible: isPrimarySidebarVisible,
+      panelVisible: isBottomPanelVisible,
+    });
+  }, [isPrimarySidebarVisible, isBottomPanelVisible]);
+
+  // ── Command registrations (replace all hardcoded onKeyDown handlers) ───────
+  useCommand("layout.toggleSidebar", toggleSidebar, [toggleSidebar]);
+  useCommand("layout.togglePanel",   togglePanel,   [togglePanel]);
+  useCommand("layout.toggleSecondarySidebar", toggleSecondarySidebar, [toggleSecondarySidebar]);
+  useCommand("tab.newSqlQuery", () => {
+    useLayoutStore.getState().openTab({ title: "New Query", type: "sql", meta: {} });
+  });
+  useCommand("tab.reopenClosed", () => {
+    useLayoutStore.getState().restoreLastClosedTab();
+  });
+  useCommand("app.showShortcuts", () => setShowShortcuts((v) => !v));
+  useCommand("app.commandPalette", () => {
+    useAppStore.getState().setCommandPaletteOpen(true);
+  });
+  useCommand("app.openSettings", () => {
+    useLayoutStore.getState().openTab({ title: "Settings", type: "settings", meta: {} });
+  });
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-background text-foreground">
+    <div className="flex flex-col h-screen w-screen overflow-hidden bg-background text-foreground">
       <a href="#main-content" className="skip-link">
         Skip to main content
       </a>
@@ -503,6 +518,12 @@ export function Workbench() {
       {showOnboarding && (
         <OnboardingFlow onClose={() => setShowOnboarding(false)} />
       )}
+
+      {/* Menu Bar — full width */}
+      <MenuBar onShowShortcuts={() => setShowShortcuts(true)} />
+
+      {/* Middle section: activity bar + sidebar + editor */}
+      <div className="flex flex-1 overflow-hidden min-h-0">
 
       {/* Activity Bar */}
       <div
@@ -630,6 +651,7 @@ export function Workbench() {
           <div className="flex-1 overflow-auto">
             {activeView === "explorer" && <ExplorerTree />}
             {activeView === "servers" && <ServersSidebar />}
+            {activeView === "snippets" && <Suspense fallback={null}><SnippetsPanel /></Suspense>}
             {activeView === "models" && (
               <div className="flex flex-col gap-2 p-2">
                 <p className="text-xs text-muted-foreground mb-1">
@@ -732,9 +754,11 @@ export function Workbench() {
           </div>
         )}
 
-        {/* Status Bar */}
-        <StatusBar appVersion={appVersion} />
       </main>
+      </div>{/* end middle section */}
+
+      {/* Status Bar — full width */}
+      <StatusBar appVersion={appVersion} />
     </div>
   );
 }
@@ -800,9 +824,37 @@ function parseProblems(
     });
 }
 
+// Module-level helper — reads store state directly, no React dependencies
+async function buildProblems(): Promise<ProblemItem[]> {
+  const stateProfiles = useProfilesStore.getState().profiles;
+  const currentConnected = stateProfiles.filter((p) => p.connectionStatus === "connected");
+  const allProblems: ProblemItem[] = [];
+  for (const p of currentConnected) {
+    try {
+      const raw = await readProfileLog(p.id, "error");
+      const parsed = parseProblems(p.id, p.name, p.color, raw);
+      allProblems.push(...parsed);
+    } catch {
+      // Skip profiles with read errors
+    }
+  }
+  for (const p of stateProfiles.filter((p) => p.connectionStatus === "error")) {
+    allProblems.push({
+      id: `status-${p.id}`,
+      severity: "error",
+      timestamp: p.lastConnectedAt
+        ? new Date(p.lastConnectedAt).toLocaleString()
+        : "Unknown",
+      profileName: p.name,
+      profileColor: p.color,
+      message: `Connection to ${p.host}:${p.port} is in error state`,
+    });
+  }
+  allProblems.reverse();
+  return allProblems;
+}
+
 function BottomPanel({ isSecondary }: { isSecondary?: boolean }) {
-  const LOG_ROW_HEIGHT = 20;
-  const LOG_OVERSCAN = 24;
   const profiles = useProfilesStore((s) => s.profiles);
   const outputEntries = useAppStore((s) => s.outputEntries);
   const clearOutputEntries = useAppStore((s) => s.clearOutputEntries);
@@ -816,101 +868,50 @@ function BottomPanel({ isSecondary }: { isSecondary?: boolean }) {
 
   const [activeTab, setActiveTab] = useState<PanelTab>(isSecondary ? "logs" : "output");
   const [logFilter, setLogFilter] = useState<LogFilter>("mysql");
-  const [selectedProfileId, setSelectedProfileId] = useState<string>("");
-  const [logContent, setLogContent] = useState<string>("");
+  // Stable user choice — only set explicitly by the dropdown
+  const [preferredProfileId, setPreferredProfileId] = useState<string>("");
+  // Derived: use preferred if still valid, else fall back to first available
+  const selectedProfileId = useMemo(() => {
+    if (logProfiles.find((p) => p.id === preferredProfileId)) return preferredProfileId;
+    return logProfiles[0]?.id ?? "";
+  }, [logProfiles, preferredProfileId]);
+  const [streamEntries, setStreamEntries] = useState<StreamLogEntry[]>([]);
   const [problems, setProblems] = useState<ProblemItem[]>([]);
   const [aiLogs, setAiLogs] = useState<AiLogEntry[]>([]);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [autoScroll, setAutoScroll] = useState(true);
-  const [logViewport, setLogViewport] = useState({ scrollTop: 0, clientHeight: 1 });
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Auto-select first available profile for log viewing
+  // ── Live log stream ─────────────────────────────────────────────
   useEffect(() => {
-    if (!selectedProfileId && logProfiles.length > 0) {
-      setSelectedProfileId(logProfiles[0].id);
-    }
-    if (
-      selectedProfileId &&
-      !logProfiles.find((p) => p.id === selectedProfileId)
-    ) {
-      setSelectedProfileId(logProfiles[0]?.id ?? "");
-    }
-  }, [logProfiles, selectedProfileId]);
-
-  // ── Logs fetching ───────────────────────────────────────────────
-  const fetchLogs = useCallback(async () => {
-    if (!selectedProfileId || activeTab !== "logs") return;
-    try {
-      const content = await readProfileLog(selectedProfileId, logFilter);
-      startTransition(() => {
-        setLogContent(content);
-      });
-    } catch (e) {
-      startTransition(() => {
-        setLogContent(`Error reading logs: ${e}`);
-      });
-    }
-  }, [selectedProfileId, logFilter, activeTab]);
-
-  useEffect(() => {
-    fetchLogs();
-    if (activeTab !== "logs") return;
-    const interval = setInterval(fetchLogs, 2000);
-    return () => clearInterval(interval);
-  }, [fetchLogs, activeTab]);
-
-  // ── Problems fetching ───────────────────────────────────────────
-  const fetchProblems = useCallback(async () => {
-    // Read directly from the store to avoid referential dependency issues
-    // that cause infinite re-render loops when the component updates
-    const stateProfiles = useProfilesStore.getState().profiles;
-    const currentConnected = stateProfiles.filter((p) => p.connectionStatus === "connected");
-
-    if (currentConnected.length === 0) {
-      setProblems([]);
-      return;
-    }
-    const allProblems: ProblemItem[] = [];
-    for (const p of currentConnected) {
-      try {
-        const raw = await readProfileLog(p.id, "error");
-        const parsed = parseProblems(p.id, p.name, p.color, raw);
-        allProblems.push(...parsed);
-      } catch {
-        // Skip profiles with read errors
-      }
-    }
-    // Also check profiles with error status that aren't connected
-    for (const p of stateProfiles.filter((p) => p.connectionStatus === "error")) {
-      allProblems.push({
-        id: `status-${p.id}`,
-        severity: "error",
-        timestamp: p.lastConnectedAt
-          ? new Date(p.lastConnectedAt).toLocaleString()
-          : "Unknown",
-        profileName: p.name,
-        profileColor: p.color,
-        message: `Connection to ${p.host}:${p.port} is in error state`,
-      });
-    }
-    // Sort newest first
-    allProblems.reverse();
-    startTransition(() => {
-      setProblems(allProblems);
+    void getLogBuffer().then((entries) => {
+      startTransition(() => setStreamEntries(entries));
     });
+    const unsub = subscribeToLogStream((entries) => {
+      startTransition(() =>
+        setStreamEntries((prev) => {
+          const next = [...prev, ...entries];
+          return next.length > 500 ? next.slice(next.length - 500) : next;
+        }),
+      );
+    });
+    return unsub;
   }, []);
 
+  // ── Problems fetching ───────────────────────────────────────────
   useEffect(() => {
-    fetchProblems();
-    // Refresh problems every 3 seconds when tab is active or in background
-    const interval = setInterval(fetchProblems, 3000);
+    async function run() {
+      const result = await buildProblems();
+      startTransition(() => setProblems(result));
+    }
+
+    void run();
+    const interval = setInterval(() => void run(), 3000);
     return () => clearInterval(interval);
-  }, [fetchProblems]);
+  }, []); // empty — all reads go through getState()
 
   // ── AI Logs fetching ────────────────────────────────────────────
   const fetchAiLogs = useCallback(async () => {
-    if (activeTab !== "ailogs") return;
     try {
       const logs = await getAiLogs();
       startTransition(() => {
@@ -919,68 +920,25 @@ function BottomPanel({ isSecondary }: { isSecondary?: boolean }) {
     } catch (e) {
       console.error("Failed to fetch AI logs", e);
     }
-  }, [activeTab]);
+  }, []); // no activeTab dependency — guard lives in the effect
 
   useEffect(() => {
-    if (activeTab !== "logs") return;
-    const scroller = scrollRef.current;
-    if (!scroller) return;
-
-    const syncViewport = () => {
-      setLogViewport({
-        scrollTop: scroller.scrollTop,
-        clientHeight: Math.max(1, scroller.clientHeight),
-      });
-    };
-
-    syncViewport();
-    scroller.addEventListener("scroll", syncViewport, { passive: true });
-    window.addEventListener("resize", syncViewport);
-
-    return () => {
-      scroller.removeEventListener("scroll", syncViewport);
-      window.removeEventListener("resize", syncViewport);
-    };
-  }, [activeTab]);
-
-  const logLines = useMemo(() => {
-    if (!logContent) return [];
-    return logContent.split("\n").slice(-500);
-  }, [logContent]);
-
-  const visibleLogRange = useMemo(() => {
-    if (activeTab !== "logs") {
-      return {
-        start: 0,
-        end: logLines.length,
-        topSpacer: 0,
-        bottomSpacer: 0,
-      };
-    }
-
-    const start = Math.max(
-      0,
-      Math.floor(logViewport.scrollTop / LOG_ROW_HEIGHT) - LOG_OVERSCAN,
-    );
-    const end = Math.min(
-      logLines.length,
-      Math.ceil((logViewport.scrollTop + logViewport.clientHeight) / LOG_ROW_HEIGHT) + LOG_OVERSCAN,
-    );
-
-    return {
-      start,
-      end,
-      topSpacer: start * LOG_ROW_HEIGHT,
-      bottomSpacer: Math.max(0, (logLines.length - end) * LOG_ROW_HEIGHT),
-    };
-  }, [LOG_OVERSCAN, LOG_ROW_HEIGHT, activeTab, logLines.length, logViewport.clientHeight, logViewport.scrollTop]);
-
-  useEffect(() => {
-    fetchAiLogs();
-    if (activeTab !== "ailogs") return;
-    const interval = setInterval(fetchAiLogs, 2000);
+    if (activeTab !== "ailogs") return; // guard here, not in callback
+    void fetchAiLogs();
+    const interval = setInterval(() => void fetchAiLogs(), 2000);
     return () => clearInterval(interval);
-  }, [fetchAiLogs, activeTab]);
+  }, [activeTab, fetchAiLogs]); // fetchAiLogs is now stable (empty deps), effect only restarts when activeTab changes
+
+  // Filter stream entries by profile and log type
+  const filteredStreamEntries = useMemo(() => {
+    return streamEntries.filter((e) => {
+      if (selectedProfileId && e.profileId !== selectedProfileId) return false;
+      if (logFilter === "mysql") return e.source === "query" || e.source === "connection";
+      if (logFilter === "ssh") return e.source === "ssh";
+      if (logFilter === "error") return e.level === "error";
+      return true;
+    });
+  }, [streamEntries, selectedProfileId, logFilter]);
 
   // Auto-scroll to bottom when log content changes
   useEffect(() => {
@@ -991,12 +949,18 @@ function BottomPanel({ isSecondary }: { isSecondary?: boolean }) {
     ) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [outputEntries, logContent, aiLogs, activeTab, autoScroll]);
+  }, [outputEntries, streamEntries, aiLogs, activeTab, autoScroll]);
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
-    if (activeTab === "logs") await fetchLogs();
-    if (activeTab === "problems") await fetchProblems();
+    if (activeTab === "logs") {
+      const entries = await getLogBuffer().catch(() => [] as StreamLogEntry[]);
+      startTransition(() => setStreamEntries(entries));
+    }
+    if (activeTab === "problems") {
+      const result = await buildProblems();
+      startTransition(() => setProblems(result));
+    }
     if (activeTab === "ailogs") await fetchAiLogs();
     setTimeout(() => setIsRefreshing(false), 300);
   };
@@ -1005,12 +969,13 @@ function BottomPanel({ isSecondary }: { isSecondary?: boolean }) {
     if (activeTab === "output") {
       clearOutputEntries();
     } else if (activeTab === "logs") {
-      if (!selectedProfileId) return;
-      try {
-        await clearProfileLog(selectedProfileId, logFilter);
-        setLogContent("");
-      } catch (e) {
-        console.error("Clear log error:", e);
+      startTransition(() => setStreamEntries([]));
+      if (selectedProfileId) {
+        try {
+          await clearProfileLog(selectedProfileId, logFilter);
+        } catch (e) {
+          console.error("Clear log error:", e);
+        }
       }
     } else if (activeTab === "problems") {
       // Clear all error logs for all connected profiles
@@ -1111,7 +1076,7 @@ function BottomPanel({ isSecondary }: { isSecondary?: boolean }) {
           {activeTab === "logs" && logProfiles.length > 0 && (
             <select
               value={selectedProfileId}
-              onChange={(e) => setSelectedProfileId(e.target.value)}
+              onChange={(e) => setPreferredProfileId(e.target.value)}
               className="h-6 text-[11px] rounded border bg-secondary/50 text-foreground px-1.5 outline-none"
               aria-label="Select log profile"
             >
@@ -1329,43 +1294,50 @@ function BottomPanel({ isSecondary }: { isSecondary?: boolean }) {
 
         {/* ── Logs ───────────────────────────────────────────── */}
         {activeTab === "logs" && (
-          <div className="p-3 font-mono text-xs leading-5">
-            {logProfiles.length === 0 ? (
-              <span className="text-muted-foreground">
-                Create a connection profile to view logs.
-              </span>
-            ) : logContent ? (
-              <pre className="whitespace-pre-wrap break-all text-muted-foreground">
-                {visibleLogRange.topSpacer > 0 && (
-                  <div aria-hidden="true" style={{ height: visibleLogRange.topSpacer }} />
-                )}
-                {logLines.slice(visibleLogRange.start, visibleLogRange.end).map((line, index) => (
+          <div className="font-mono text-xs leading-5">
+            {filteredStreamEntries.length === 0 ? (
+              <div className="p-3 text-muted-foreground">
+                {logProfiles.length === 0
+                  ? "Create a connection profile to view logs."
+                  : "No log entries yet. Run a connection attempt or query to capture diagnostics here."}
+              </div>
+            ) : (
+              <div className="divide-y divide-border/20">
+                {filteredStreamEntries.map((entry, i) => (
                   <div
-                    key={`${visibleLogRange.start + index}-${line}`}
+                    key={i}
                     className={cn(
-                      "min-h-5",
-                      line.includes("ERROR") && "text-red-400",
-                      line.includes("INFO") && "text-blue-400/70",
-                      line.includes("VERBOSE") && "text-amber-300/80",
-                      line.includes("SSH") &&
-                      !line.includes("ERROR") &&
-                      "text-cyan-300/80",
-                      line.includes("QUERY") &&
-                      !line.includes("ERROR") &&
-                      "text-foreground/80",
+                      "flex items-start gap-2 px-3 py-0.5 min-h-5 hover:bg-accent/20 transition-colors",
+                      entry.level === "error" && "text-red-400",
+                      entry.level === "warn" && "text-yellow-300",
+                      entry.source === "ssh" && entry.level !== "error" && entry.level !== "warn" && "text-cyan-300/80",
+                      entry.source === "query" && entry.level !== "error" && "text-foreground/80",
+                      entry.source === "connection" && entry.level !== "error" && "text-blue-400/70",
                     )}
                   >
-                    {line}
+                    <span className="shrink-0 whitespace-nowrap text-[10px] text-muted-foreground/50 mt-0.5">
+                      {entry.ts}
+                    </span>
+                    <span
+                      className={cn(
+                        "shrink-0 rounded px-1 text-[9px] font-bold uppercase mt-0.5",
+                        entry.level === "error" && "bg-red-500/15 text-red-400",
+                        entry.level === "warn" && "bg-yellow-500/15 text-yellow-400",
+                        entry.level === "info" && "bg-blue-500/15 text-blue-400",
+                        entry.level === "debug" && "bg-muted text-muted-foreground",
+                      )}
+                    >
+                      {entry.source}
+                    </span>
+                    <span className="flex-1 break-all">
+                      {entry.message}
+                      {entry.detail && (
+                        <span className="ml-1 text-muted-foreground/60">{entry.detail}</span>
+                      )}
+                    </span>
                   </div>
                 ))}
-                {visibleLogRange.bottomSpacer > 0 && (
-                  <div aria-hidden="true" style={{ height: visibleLogRange.bottomSpacer }} />
-                )}
-              </pre>
-            ) : (
-              <span className="text-muted-foreground">
-                No log entries yet. Run a connection attempt or query to capture diagnostics here.
-              </span>
+              </div>
             )}
           </div>
         )}
@@ -1449,65 +1421,60 @@ function BottomPanel({ isSecondary }: { isSecondary?: boolean }) {
 // ─── Status Bar ─────────────────────────────────────────────────────
 
 function StatusBar({ appVersion }: { appVersion: string }) {
-  const info = useAppStore((s) => s.statusBarInfo) as StatusBarInfo;
-  const setActiveView = useLayoutStore((s) => s.setActiveView);
-  const openTab = useLayoutStore((s) => s.openTab);
+  const entries = useAppStore((s) => s.statusBarEntries);
+  const openUrl_ = openUrl;
+
+  const leftEntries = [...entries.filter((e) => e.side === "left" && e.label)]
+    .sort((a, b) => b.priority - a.priority);
+  const rightEntries = [...entries.filter((e) => e.side === "right" && e.label)]
+    .sort((a, b) => a.priority - b.priority);
 
   return (
     <div className="h-6 bg-primary text-primary-foreground flex items-center px-4 text-xs gap-3 shrink-0 select-none">
+      {/* App name — always present */}
       <span className="font-medium">WorkGrid Studio</span>
 
-      {info.connectionName && (
-        <>
-          <span className="opacity-40">|</span>
+      {/* Dynamic left-side entries */}
+      {leftEntries.map((entry) =>
+        entry.onClick ? (
           <button
+            key={entry.id}
             type="button"
-            onClick={() => setActiveView("explorer")}
+            onClick={entry.onClick}
+            title={entry.title}
             className="opacity-80 transition-opacity hover:opacity-100 hover:underline"
-            title="Show the active connection in Explorer"
           >
-            {info.connectionName}
+            {entry.label}
           </button>
-        </>
-      )}
-
-      {info.database && info.profileId && (
-        <>
-          <span className="opacity-40">/</span>
-          <button
-            type="button"
-            onClick={() =>
-              openTab({
-                title: `Database: ${info.database}`,
-                type: "database-view",
-                meta: {
-                  profileId: info.profileId!,
-                  database: info.database!,
-                },
-              })
-            }
-            className="opacity-80 font-mono transition-opacity hover:opacity-100 hover:underline"
-            title="Open the active database"
-          >
-            {info.database}
-          </button>
-        </>
-      )}
-
-      <span className="ml-auto flex items-center gap-3">
-        {info.rowCount !== undefined && (
-          <span className="opacity-70">{info.rowCount.toLocaleString()} rows</span>
-        )}
-        {info.executionTimeMs !== undefined && (
-          <span className="opacity-70">
-            {info.executionTimeMs < 1000
-              ? `${Math.round(info.executionTimeMs)}ms`
-              : `${(info.executionTimeMs / 1000).toFixed(2)}s`}
+        ) : (
+          <span key={entry.id} title={entry.title} className="opacity-80">
+            {entry.label}
           </span>
+        ),
+      )}
+
+      {/* Dynamic right-side entries + version + heart */}
+      <span className="ml-auto flex items-center gap-3">
+        {rightEntries.map((entry) =>
+          entry.onClick ? (
+            <button
+              key={entry.id}
+              type="button"
+              onClick={entry.onClick}
+              title={entry.title}
+              className="opacity-70 transition-opacity hover:opacity-100"
+            >
+              {entry.label}
+            </button>
+          ) : (
+            <span key={entry.id} title={entry.title} className="opacity-70">
+              {entry.label}
+            </span>
+          ),
         )}
         <span className="opacity-60">v{appVersion}</span>
         <button
-          onClick={() => openUrl("https://paypal.me/ja1030")}
+          onClick={() => openUrl_("https://paypal.me/ja1030")}
           title="Support WorkGrid Studio"
           aria-label="Support WorkGrid Studio"
           className="opacity-50 hover:opacity-100 transition-opacity"

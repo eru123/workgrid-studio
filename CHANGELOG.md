@@ -1,9 +1,14 @@
 # Changelog
 
 ## [Unreleased]
+- Introduced a keybindings engine with `when`-expression context guards, a token-bucket notification system (toast + output panel routing), a lazy-loaded SQL formatter, a theme token engine, a connection URL parser, and a viewport-aware popup positioning utility.
+- Added QueryBuilder tab (visual WHERE/JOIN/ORDER builder with generated SQL preview), Snippets panel with persistent snippet store, Triggers view, Stored Procedures/Routines view, View editor, Events view, and Users management view.
+- Implemented full PostgreSQL command suite (`pg_connect`, `pg_query`, `pg_get_databases_info`, `pg_get_tables_info`, `pg_list_columns`, `pg_get_processes`, `pg_kill_process`, and more). Added SQLite and MSSQL backend stubs.
+- Added XML and Excel (`.xlsx`) export modules for query results and table data.
+- Resolved table header transparency, QueryBuilder infinite render loop, missing `ActivityView` type variant, `SnippetsPanel` double-import breaking code-splitting, and PostgreSQL boolean wire-value coercion.
 
 ## [0.1.10] - 2026-03-21
-- No changes recorded.
+- Fix errors on website deployment via cloudflare pages.
 
 ## [0.1.9] - 2026-03-20
 - Replaced the libssh2-based SSH implementation with russh, a pure Rust SSH library. This change improves security, reduces dependencies, and provides better async support.

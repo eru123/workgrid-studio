@@ -10,7 +10,7 @@ import {
 } from "@/state/profilesStore";
 import { useSchemaStore } from "@/state/schemaStore";
 import { useLayoutStore } from "@/state/layoutStore";
-import { useAppStore } from "@/state/appStore";
+import { notifyError } from "@/lib/notifications";
 import { dbCancelConnect, dbConnect, dbDisconnect } from "@/lib/db";
 import {
     appendConnectionOutput,
@@ -156,11 +156,7 @@ export function useProfileManager() {
                 `Stored password for ${target} could not be decrypted. Re-enter the password in the profile and save it again before connecting.`,
             );
             if (!silentFailureToast) {
-                useAppStore.getState().addToast({
-                    title: "Stored Password Unavailable",
-                    description: "This profile's saved password could not be decrypted. Re-enter it and save the profile again.",
-                    variant: "destructive",
-                });
+                notifyError("Stored Password Unavailable", "This profile's saved password could not be decrypted. Re-enter it and save the profile again.");
             }
             return;
         }
@@ -176,11 +172,7 @@ export function useProfileManager() {
                 `Stored SSH credentials for ${target} could not be decrypted. Re-enter the SSH secret in the profile and save it again before connecting.`,
             );
             if (!silentFailureToast) {
-                useAppStore.getState().addToast({
-                    title: "Stored SSH Secret Unavailable",
-                    description: "This profile's saved SSH credential could not be decrypted. Re-enter it and save the profile again.",
-                    variant: "destructive",
-                });
+                notifyError("Stored SSH Secret Unavailable", "This profile's saved SSH credential could not be decrypted. Re-enter it and save the profile again.");
             }
             return;
         }
@@ -193,11 +185,7 @@ export function useProfileManager() {
                 `Connection blocked for ${target}: only MySQL and MariaDB are supported in this version.`,
             );
             if (!silentFailureToast) {
-                useAppStore.getState().addToast({
-                    title: "Connection Failed",
-                    description: "Only MySQL and MariaDB are supported in this version.",
-                    variant: "destructive",
-                });
+                notifyError("Connection Failed", "Only MySQL and MariaDB are supported in this version.");
             }
             return;
         }
@@ -290,11 +278,7 @@ export function useProfileManager() {
                             : `Connection failed for ${target}: ${errorMsg}`,
                     );
                     if (!silentFailureToast) {
-                        useAppStore.getState().addToast({
-                            title: "Connection Failed",
-                            description: String(e),
-                            variant: "destructive",
-                        });
+                        notifyError("Connection Failed", String(e));
                     }
                 }
             }

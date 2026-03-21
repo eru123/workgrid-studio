@@ -21,6 +21,7 @@ import {
   measureDataGridColumnWidth,
 } from "@/lib/utils/dataGrid";
 import { useAppStore } from "@/state/appStore";
+import { notifyError, notifySuccess } from "@/lib/notifications";
 import { useSchemaStore } from "@/state/schemaStore";
 import { useProfilesStore } from "@/state/profilesStore";
 import { FindToolbar } from "@/components/ui/FindToolbar";
@@ -468,7 +469,7 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
 
       const result = dataRes[0] as QueryResultSet | undefined;
       setColumns(result?.columns ?? []);
-      setRows(result?.rows ?? []);
+      setRows((result?.rows ?? []) as (string | number | null)[][]);
 
       // Update status bar with connection context
       useAppStore.getState().setStatusBarInfo({
@@ -482,11 +483,7 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
       setRows([]);
       setColumns([]);
       setTotalRows(0);
-      useAppStore.getState().addToast({
-        title: "Query Error",
-        description: String(e),
-        variant: "destructive",
-      });
+      notifyError("Query Error", String(e));
     } finally {
       setLoading(false);
     }
@@ -906,16 +903,9 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
       a.click();
       URL.revokeObjectURL(url);
 
-      useAppStore.getState().addToast({
-        title: "Export Successful",
-        description: `Exported ${rows.length} rows to ${format.toUpperCase()}.`,
-      });
+      notifySuccess("Export Successful", `Exported ${rows.length} rows to ${format.toUpperCase()}.`);
     } catch (e) {
-      useAppStore.getState().addToast({
-        title: "Export Failed",
-        description: String(e),
-        variant: "destructive",
-      });
+      notifyError("Export Failed", String(e));
     }
   }, [rows, columns, tableName]);
 
@@ -993,20 +983,13 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
         }
       }
 
-      useAppStore.getState().addToast({
-        title: "Changes Applied",
-        description: `Successfully applied ${queries.length} change(s).`,
-      });
+      notifySuccess("Changes Applied", `Successfully applied ${queries.length} change(s).`);
 
       await fetchData();
 
     } catch (e) {
       setApplyError(String(e));
-      useAppStore.getState().addToast({
-        title: "Failed to apply changes",
-        description: String(e),
-        variant: "destructive",
-      });
+      notifyError("Failed to apply changes", String(e));
     } finally {
       setIsApplying(false);
     }
@@ -1340,9 +1323,9 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
           aria-colcount={visibleColumns.length + 2}
         >
           <thead className="sticky top-0 z-30">
-            <tr className="bg-muted/70 backdrop-blur-sm" role="row" aria-rowindex={1}>
+            <tr className="bg-muted" role="row" aria-rowindex={1}>
               <th
-                className="sticky left-0 z-30 text-center px-1.5 py-1.5 border-b border-r bg-muted/70 whitespace-nowrap"
+                className="sticky left-0 z-30 text-center px-1.5 py-1.5 border-b border-r bg-muted whitespace-nowrap"
                 style={{ width: 32, maxWidth: 32, minWidth: 32 }}
                 role="columnheader"
                 aria-colindex={1}
@@ -1358,7 +1341,7 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
               </th>
               {/* Row number column */}
               <th
-                className="sticky left-[32px] z-30 text-center px-1.5 py-1.5 text-[10px] font-medium text-muted-foreground/70 tracking-wider border-b border-r bg-muted/70 whitespace-nowrap"
+                className="sticky left-[32px] z-30 text-center px-1.5 py-1.5 text-[10px] font-medium text-muted-foreground/70 tracking-wider border-b border-r bg-muted whitespace-nowrap"
                 style={{ width: 40, maxWidth: 40, minWidth: 40 }}
                 role="columnheader"
                 aria-colindex={2}
@@ -1628,7 +1611,7 @@ const SortableHeader = memo(function SortableHeader({
             : "none"
       }
       className={cn(
-        "text-left px-1.5 py-1.5 text-[10px] font-medium tracking-wider border-b border-r bg-muted/70 whitespace-nowrap select-none group relative",
+        "text-left px-1.5 py-1.5 text-[10px] font-medium tracking-wider border-b border-r bg-muted whitespace-nowrap select-none group relative",
         sortDirection && "bg-primary/10",
         frozen && "sticky z-30 shadow-[2px_0_4px_rgba(0,0,0,0.08)]",
       )}

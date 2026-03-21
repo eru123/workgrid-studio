@@ -1,5 +1,5 @@
-import { useAppStore } from "@/state/appStore";
 import { useProfilesStore } from "@/state/profilesStore";
+import { notifyError } from "@/lib/notifications";
 
 interface EnsureAiUseAllowedOptions {
   providerName?: string;
@@ -11,15 +11,12 @@ export function ensureAiUseAllowed(
 ): boolean {
   const { providerName, includesSchemaContext = true } = options;
   const { globalPreferences, setGlobalPreferences } = useProfilesStore.getState();
-  const addToast = useAppStore.getState().addToast;
 
   if (globalPreferences.blockAiRequests) {
-    addToast({
-      title: "AI Requests Disabled",
-      description:
-        "AI features are disabled in Settings > Privacy. Turn off 'Do not send data to AI' to use them again.",
-      variant: "destructive",
-    });
+    notifyError(
+      "AI Requests Disabled",
+      "AI features are disabled in Settings > Privacy. Turn off 'Do not send data to AI' to use them again.",
+    );
     return false;
   }
 

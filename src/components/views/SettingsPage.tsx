@@ -1,7 +1,9 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { open } from "@tauri-apps/plugin-dialog";
+import { readTextFile } from "@tauri-apps/plugin-fs";
 import {
     Monitor,
     Moon,
@@ -19,14 +21,20 @@ import {
     HardDrive,
     Heart,
     ExternalLink,
+    Palette,
+    Search,
 } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 import { useProfilesStore } from "@/state/profilesStore";
+import type { GlobalPreferences } from "@/state/profilesStore";
 import { useAppStore } from "@/state/appStore";
+import { notifyError, notifySuccess, notify } from "@/lib/notifications";
 import { useAppVersion } from "@/hooks/useAppVersion";
 import { clearAllLogs, dbDisconnect, deleteAllAppData } from "@/lib/db";
 import { PrivacyPolicyPanel } from "@/components/views/PrivacyPolicyPanel";
 import { ConfirmModal } from "@/components/views/ConfirmModal";
+import { getAllBindings } from "@/lib/keybindings";
+import type { ThemeManifest } from "@/lib/theme";
 
 function clampLogSizeMb(value: number): number {
     return Math.max(1, Math.min(250, value));
@@ -48,7 +56,6 @@ export function SettingsPage() {
     const profiles = useProfilesStore((s) => s.profiles);
     const globalPrefs = useProfilesStore((s) => s.globalPreferences);
     const setGlobalPrefs = useProfilesStore((s) => s.setGlobalPreferences);
-    const addToast = useAppStore((s) => s.addToast);
     const clearOutputEntries = useAppStore((s) => s.clearOutputEntries);
     const appVersion = useAppVersion();
 
@@ -67,6 +74,50 @@ export function SettingsPage() {
     const [isClearingLogs, setIsClearingLogs] = useState(false);
     const [isDeletingData, setIsDeletingData] = useState(false);
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+    const [kbSearch, setKbSearch] = useState("");
+
+    const allBindings = useMemo(() => getAllBindings(), []);
+    const filteredBindings = useMemo(() => {
+        const q = kbSearch.trim().toLowerCase();
+        if (!q) return allBindings;
+        return allBindings.filter(
+            (b) =>
+                b.command.toLowerCase().includes(q) ||
+                b.key.toLowerCase().includes(q) ||
+                (b.when ?? "").toLowerCase().includes(q),
+        );
+    }, [allBindings, kbSearch]);
+
+    const customTheme = globalPrefs.customTheme as ThemeManifest | undefined;
+
+    const handleLoadCustomTheme = async () => {
+        const selected = await open({
+            title: "Select theme JSON file",
+            filters: [{ name: "JSON", extensions: ["json"] }],
+            multiple: false,
+            directory: false,
+        });
+        if (!selected) return;
+        const path = typeof selected === "string" ? selected : selected[0];
+        if (!path) return;
+        try {
+            const text = await readTextFile(path);
+            const manifest = JSON.parse(text) as ThemeManifest;
+            if (!manifest.type || !manifest.colors) {
+                notifyError("Invalid Theme File", "The selected file is not a valid WGS theme manifest.");
+                return;
+            }
+            const name = (manifest as ThemeManifest & { name?: string }).name;
+            setGlobalPrefs({ theme: "custom" as GlobalPreferences["theme"], customTheme: manifest as unknown as Record<string, unknown> });
+            notifySuccess("Theme Loaded", `"${name ?? path}" applied.`);
+        } catch (e) {
+            notifyError("Theme Load Failed", String(e));
+        }
+    };
+
+    const handleResetTheme = () => {
+        setGlobalPrefs({ theme: "system", customTheme: undefined });
+    };
 
     const allowUpdateChecks = globalPrefs.allowUpdateChecks ?? true;
     const blockAiRequests = globalPrefs.blockAiRequests ?? false;
@@ -77,12 +128,7 @@ export function SettingsPage() {
 
     const handleCheckForUpdates = async () => {
         if (!allowUpdateChecks) {
-            addToast({
-                title: "Update Checks Disabled",
-                description:
-                    "Enable update checks in Privacy settings if you want to contact the updater service.",
-                variant: "default",
-            });
+            notify({ severity: "info", title: "Update Checks Disabled", detail: "Enable update checks in Privacy settings if you want to contact the updater service.", toast: true });
             return;
         }
 
@@ -99,11 +145,7 @@ export function SettingsPage() {
             }
         } catch (e) {
             setUpdateState("error");
-            addToast({
-                title: "Update check failed",
-                description: String(e),
-                variant: "destructive",
-            });
+            notifyError("Update check failed", String(e));
         }
     };
 
@@ -115,11 +157,7 @@ export function SettingsPage() {
             await relaunch();
         } catch (e) {
             setUpdateState("error");
-            addToast({
-                title: "Update failed",
-                description: String(e),
-                variant: "destructive",
-            });
+            notifyError("Update failed", String(e));
         }
     };
 
@@ -128,17 +166,9 @@ export function SettingsPage() {
         try {
             await clearAllLogs();
             clearOutputEntries();
-            addToast({
-                title: "Logs Cleared",
-                description: "Profile logs, AI logs, and Output entries were cleared.",
-                variant: "default",
-            });
+            notifySuccess("Logs Cleared", "Profile logs, AI logs, and Output entries were cleared.");
         } catch (e) {
-            addToast({
-                title: "Failed to clear logs",
-                description: String(e),
-                variant: "destructive",
-            });
+            notifyError("Failed to clear logs", String(e));
         } finally {
             setIsClearingLogs(false);
         }
@@ -160,11 +190,7 @@ export function SettingsPage() {
             clearOutputEntries();
             window.location.reload();
         } catch (e) {
-            addToast({
-                title: "Delete all data failed",
-                description: String(e),
-                variant: "destructive",
-            });
+            notifyError("Delete all data failed", String(e));
             setIsDeletingData(false);
         }
     };
@@ -211,6 +237,40 @@ export function SettingsPage() {
                             </button>
                         ))}
                     </div>
+
+                    {/* Custom theme loader */}
+                    <div className="flex items-center justify-between rounded-lg border bg-muted/20 p-4">
+                        <div className="flex items-center gap-3">
+                            <Palette className="h-5 w-5 text-muted-foreground" />
+                            <div>
+                                <span className="font-medium">Custom Theme</span>
+                                <p className="mt-0.5 text-[11px] text-muted-foreground">
+                                    Load a JSON theme manifest file to override the built-in theme.{" "}
+                                    {customTheme && (
+                                        <span className="text-primary">
+                                            Active: {(customTheme as ThemeManifest & { name?: string }).name ?? "custom"}
+                                        </span>
+                                    )}
+                                </p>
+                            </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            {customTheme && (
+                                <button
+                                    onClick={handleResetTheme}
+                                    className="rounded border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+                                >
+                                    Reset
+                                </button>
+                            )}
+                            <button
+                                onClick={handleLoadCustomTheme}
+                                className="rounded border px-3 py-1.5 text-xs font-medium hover:bg-accent transition-colors"
+                            >
+                                Load theme…
+                            </button>
+                        </div>
+                    </div>
                 </section>
 
                 <section className="flex flex-col gap-4">
@@ -250,6 +310,63 @@ export function SettingsPage() {
                                 }
                             />
                         </div>
+                    </div>
+                </section>
+
+                {/* Keybindings viewer */}
+                <section className="flex flex-col gap-4">
+                    <div className="border-b pb-2">
+                        <h3 className="text-lg font-medium">Keyboard Shortcuts</h3>
+                        <p className="text-xs text-muted-foreground">
+                            All active keybindings. Override by editing{" "}
+                            <code className="rounded bg-muted px-1 py-0.5 text-[10px]">keybindings.json</code>.
+                        </p>
+                    </div>
+
+                    <div className="relative">
+                        <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                        <input
+                            type="text"
+                            placeholder="Search commands, keys…"
+                            value={kbSearch}
+                            onChange={(e) => setKbSearch(e.target.value)}
+                            className="w-full rounded-md border bg-background py-1.5 pl-8 pr-3 text-xs outline-none focus:ring-1 focus:ring-primary"
+                        />
+                    </div>
+
+                    <div className="rounded-md border overflow-hidden">
+                        <table className="w-full text-xs">
+                            <thead>
+                                <tr className="border-b bg-muted/40 text-left text-muted-foreground">
+                                    <th className="px-3 py-2 font-medium w-1/2">Command</th>
+                                    <th className="px-3 py-2 font-medium w-1/4">Key</th>
+                                    <th className="px-3 py-2 font-medium w-1/4">When</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {filteredBindings.length === 0 ? (
+                                    <tr>
+                                        <td colSpan={3} className="px-3 py-6 text-center text-muted-foreground">
+                                            No matching shortcuts.
+                                        </td>
+                                    </tr>
+                                ) : (
+                                    filteredBindings.map((b, i) => (
+                                        <tr key={i} className="border-b last:border-0 hover:bg-muted/20 transition-colors">
+                                            <td className="px-3 py-2 font-mono text-foreground/80">{b.command}</td>
+                                            <td className="px-3 py-2">
+                                                <kbd className="inline-flex items-center rounded border bg-muted px-1.5 py-0.5 font-mono text-[10px] text-foreground/70">
+                                                    {b.key}
+                                                </kbd>
+                                            </td>
+                                            <td className="px-3 py-2 text-muted-foreground font-mono text-[10px]">
+                                                {b.when ?? <span className="opacity-40">—</span>}
+                                            </td>
+                                        </tr>
+                                    ))
+                                )}
+                            </tbody>
+                        </table>
                     </div>
                 </section>
 

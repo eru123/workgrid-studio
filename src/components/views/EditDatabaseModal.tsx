@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from "react";
 import { X, Loader2, AlertTriangle } from "lucide-react";
 import { dbExecuteQuery, dbGetCollations, dbQuery } from "@/lib/db";
 import { useSchemaStore } from "@/state/schemaStore";
-import { useAppStore } from "@/state/appStore";
+import { notifyError } from "@/lib/notifications";
 
 interface Props {
     profileId: string;
@@ -194,11 +194,7 @@ export function EditDatabaseModal({ profileId, database, onClose, onCompleted }:
             onCompleted?.();
         } catch (e) {
             setError(String(e));
-            useAppStore.getState().addToast({
-                title: "Database modification failed",
-                description: String(e),
-                variant: "destructive",
-            });
+            notifyError("Database modification failed", String(e));
         } finally {
             setIsSubmitting(false);
         }

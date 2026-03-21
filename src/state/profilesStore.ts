@@ -54,6 +54,8 @@ export interface GlobalPreferences extends ProfilePreferences {
   maxLogAgeDays?: number;
   maxResultRows?: number;
   queryTimeoutMs?: number;
+  /** Custom theme manifest loaded via the Settings page theme picker */
+  customTheme?: Record<string, unknown>;
 }
 
 // What gets saved to disk (no runtime-only fields)

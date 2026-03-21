@@ -1,8 +1,8 @@
-use async_trait::async_trait;
 use crate::db::ConnectParams;
 use crate::files::app_data_dir;
-use crate::logging::{log_info, log_ssh_error, log_ssh_info, log_ssh_verbose};
+use crate::logging::{log_ssh_error, log_ssh_info, log_ssh_verbose, LogState};
 use crate::{AppError, AppResult, TunnelHandle};
+use async_trait::async_trait;
 use russh::client;
 use russh_keys::{HashAlg, PrivateKey};
 use std::collections::HashMap;
@@ -49,13 +49,21 @@ pub fn save_known_hosts(hosts: &HashMap<String, String>) -> AppResult<()> {
 /// Remove a stored host key from `known_hosts.json` so the next connection
 /// performs a fresh TOFU exchange.  A no-op if the host was never stored.
 #[tauri::command]
-pub fn forget_host_key(profile_id: String, ssh_host: String, ssh_port: u16) -> AppResult<()> {
+pub fn forget_host_key(
+    log_state: tauri::State<'_, LogState>,
+    profile_id: String,
+    ssh_host: String,
+    ssh_port: u16,
+) -> AppResult<()> {
     let host_id = format!("[{}]:{}", ssh_host, ssh_port);
     let mut known = load_known_hosts();
     if known.remove(&host_id).is_some() {
         save_known_hosts(&known)?;
-        log_info(&profile_id, &format!("Forgotten host key for {}", host_id));
-        log_ssh_info(&profile_id, &format!("Forgotten host key for {}", host_id));
+        log_ssh_info(
+            &log_state,
+            &profile_id,
+            &format!("Forgotten host key for {}", host_id),
+        );
     }
     Ok(())
 }
@@ -68,6 +76,7 @@ struct SshClientHandler {
     ssh_port: u16,
     strict: bool,
     verbose: bool,
+    log_state: LogState,
 }
 
 #[async_trait]
@@ -82,6 +91,7 @@ impl client::Handler for SshClientHandler {
         let host_id = format!("[{}]:{}", self.ssh_host, self.ssh_port);
 
         log_ssh_verbose(
+            &self.log_state,
             &self.pid,
             self.verbose,
             &format!(
@@ -94,13 +104,18 @@ impl client::Handler for SshClientHandler {
 
         match known.get(&host_id) {
             Some(stored) if stored == &fingerprint => {
-                log_ssh_info(&self.pid, &format!("SSH host key verified for {}", host_id));
+                log_ssh_info(
+                    &self.log_state,
+                    &self.pid,
+                    &format!("SSH host key verified for {}", host_id),
+                );
                 Ok(true)
             }
             Some(stored) if !stored.starts_with("SHA256:") => {
                 // Legacy entry from the old ssh2-based implementation used a hex
                 // format.  Treat as not-yet-seen and re-do TOFU automatically.
                 log_ssh_info(
+                    &self.log_state,
                     &self.pid,
                     &format!(
                         "SSH: Migrating legacy host key entry for {} to SHA256 format.",
@@ -121,11 +136,12 @@ impl client::Handler for SshClientHandler {
                     &stored[..std::cmp::min(23, stored.len())],
                     &fingerprint[..std::cmp::min(23, fingerprint.len())]
                 );
-                log_ssh_error(&self.pid, &msg);
+                log_ssh_error(&self.log_state, &self.pid, &msg);
                 if self.strict {
                     Err(AppError::ssh(msg))
                 } else {
                     log_ssh_info(
+                        &self.log_state,
                         &self.pid,
                         "Strict key checking is OFF — proceeding despite mismatch.",
                     );
@@ -134,6 +150,7 @@ impl client::Handler for SshClientHandler {
             }
             None => {
                 log_ssh_info(
+                    &self.log_state,
                     &self.pid,
                     &format!(
                         "SSH: Trusting new host key for {} ({}) and storing in known_hosts.",
@@ -163,7 +180,11 @@ fn docker_proxy_cmd(container: &str, mysql_port: u16) -> String {
     )
 }
 
-pub async fn establish_ssh_tunnel(pid: &str, params: &ConnectParams) -> AppResult<TunnelHandle> {
+pub async fn establish_ssh_tunnel(
+    pid: &str,
+    params: &ConnectParams,
+    log_state: &LogState,
+) -> AppResult<TunnelHandle> {
     let started = Instant::now();
     let verbose = params.connection_verbose_logging;
 
@@ -178,6 +199,7 @@ pub async fn establish_ssh_tunnel(pid: &str, params: &ConnectParams) -> AppResul
     let target_port = params.port;
 
     log_ssh_info(
+        log_state,
         pid,
         &format!(
             "Opening SSH tunnel: {}@{}:{} -> {}:{}",
@@ -196,52 +218,61 @@ pub async fn establish_ssh_tunnel(pid: &str, params: &ConnectParams) -> AppResul
         ssh_port,
         strict: params.ssh_strict_key_checking,
         verbose,
+        log_state: log_state.clone(),
     };
 
     let mut session = client::connect(config, (ssh_host.as_str(), ssh_port), handler)
         .await
         .map_err(|e| {
             let msg = format!("SSH connection failed to {}:{}: {}", ssh_host, ssh_port, e);
-            log_ssh_error(pid, &msg);
+            log_ssh_error(log_state, pid, &msg);
             AppError::ssh(msg)
         })?;
 
-    log_ssh_info(pid, &format!("SSH handshake completed with {}:{}", ssh_host, ssh_port));
+    log_ssh_info(
+        log_state,
+        pid,
+        &format!("SSH handshake completed with {}:{}", ssh_host, ssh_port),
+    );
 
     // ── Authenticate ─────────────────────────────────────────────────────────
     let auth_started = Instant::now();
 
     if let Some(key_path) = trimmed_option(params.ssh_key_file.as_ref()) {
         let passphrase = trimmed_sensitive_option(params.ssh_passphrase.as_ref());
-        log_ssh_verbose(pid, verbose, &format!("Loading SSH key from {}", key_path));
+        log_ssh_verbose(
+            log_state,
+            pid,
+            verbose,
+            &format!("Loading SSH key from {}", key_path),
+        );
 
-        let key: PrivateKey = russh_keys::load_secret_key(key_path, passphrase)
-            .map_err(|e| {
-                let msg = format!("Failed to load SSH key '{}': {}", key_path, e);
-                log_ssh_error(pid, &msg);
-                AppError::ssh(msg)
-            })?;
+        let key: PrivateKey = russh_keys::load_secret_key(key_path, passphrase).map_err(|e| {
+            let msg = format!("Failed to load SSH key '{}': {}", key_path, e);
+            log_ssh_error(log_state, pid, &msg);
+            AppError::ssh(msg)
+        })?;
 
-        let key_with_hash =
-            russh_keys::key::PrivateKeyWithHashAlg::new(Arc::new(key), None)
-                .map_err(|e| AppError::ssh(format!("SSH key error: {}", e)))?;
+        let key_with_hash = russh_keys::key::PrivateKeyWithHashAlg::new(Arc::new(key), None)
+            .map_err(|e| AppError::ssh(format!("SSH key error: {}", e)))?;
 
         let authenticated = session
             .authenticate_publickey(&ssh_user, key_with_hash)
             .await
             .map_err(|e| {
                 let msg = format!("SSH key authentication failed: {}", e);
-                log_ssh_error(pid, &msg);
+                log_ssh_error(log_state, pid, &msg);
                 AppError::ssh(msg)
             })?;
 
         if !authenticated {
             let msg = "SSH key authentication was rejected by the server".to_string();
-            log_ssh_error(pid, &msg);
+            log_ssh_error(log_state, pid, &msg);
             return Err(AppError::ssh(msg));
         }
 
         log_ssh_info(
+            log_state,
             pid,
             &format!(
                 "SSH key authentication succeeded in {} ms",
@@ -254,27 +285,27 @@ pub async fn establish_ssh_tunnel(pid: &str, params: &ConnectParams) -> AppResul
             .await
             .map_err(|e| {
                 let msg = format!("SSH password authentication failed: {}", e);
-                log_ssh_error(pid, &msg);
+                log_ssh_error(log_state, pid, &msg);
                 AppError::ssh(msg)
             })?;
 
         if !authenticated {
             let msg = "SSH password authentication was rejected by the server".to_string();
-            log_ssh_error(pid, &msg);
+            log_ssh_error(log_state, pid, &msg);
             return Err(AppError::ssh(msg));
         }
 
-        log_ssh_info(pid, "SSH password authentication succeeded.");
+        log_ssh_info(log_state, pid, "SSH password authentication succeeded.");
     } else {
         let msg = "No SSH authentication method provided (set a key file or password)".to_string();
-        log_ssh_error(pid, &msg);
+        log_ssh_error(log_state, pid, &msg);
         return Err(AppError::ssh(msg));
     }
 
     // ── Bind local listener ───────────────────────────────────────────────────
     let listener = TcpListener::bind("127.0.0.1:0").await.map_err(|e| {
         let msg = format!("Failed to bind local SSH tunnel port: {}", e);
-        log_ssh_error(pid, &msg);
+        log_ssh_error(log_state, pid, &msg);
         AppError::ssh(msg)
     })?;
     let local_port = listener
@@ -289,6 +320,7 @@ pub async fn establish_ssh_tunnel(pid: &str, params: &ConnectParams) -> AppResul
         format!("{}:{}", target_host, target_port)
     };
     log_ssh_info(
+        log_state,
         pid,
         &format!(
             "SSH local tunnel bound to 127.0.0.1:{} -> {} (setup: {} ms)",
@@ -304,7 +336,13 @@ pub async fn establish_ssh_tunnel(pid: &str, params: &ConnectParams) -> AppResul
         let container = params
             .docker_container
             .as_deref()
-            .and_then(|s| if s.trim().is_empty() { None } else { Some(s.trim()) })
+            .and_then(|s| {
+                if s.trim().is_empty() {
+                    None
+                } else {
+                    Some(s.trim())
+                }
+            })
             .ok_or_else(|| AppError::ssh("Docker mode enabled but no container name provided"))?;
         Some(docker_proxy_cmd(container, target_port))
     } else {
@@ -313,6 +351,7 @@ pub async fn establish_ssh_tunnel(pid: &str, params: &ConnectParams) -> AppResul
 
     if let Some(ref cmd) = docker_cmd {
         log_ssh_info(
+            log_state,
             pid,
             &format!("Docker tunnel mode: will exec `{}` per connection", cmd),
         );
@@ -321,6 +360,7 @@ pub async fn establish_ssh_tunnel(pid: &str, params: &ConnectParams) -> AppResul
     let shutdown = Arc::new(AtomicBool::new(false));
     let shutdown_clone = shutdown.clone();
     let pid_clone = pid.to_string();
+    let log_state_clone = log_state.clone();
 
     let task = tokio::spawn(async move {
         loop {
@@ -338,6 +378,7 @@ pub async fn establish_ssh_tunnel(pid: &str, params: &ConnectParams) -> AppResul
             }
 
             log_ssh_verbose(
+                &log_state_clone,
                 &pid_clone,
                 verbose,
                 &format!("Accepted tunnel client from {}", peer),
@@ -347,10 +388,11 @@ pub async fn establish_ssh_tunnel(pid: &str, params: &ConnectParams) -> AppResul
             // Docker mode: session channel + exec `docker exec -i CONTAINER bash -c '...'`
             // Normal mode: direct-tcpip channel to the target host:port.
             let channel = if let Some(ref cmd) = docker_cmd {
-                let mut ch = match session.channel_open_session().await {
+                let ch = match session.channel_open_session().await {
                     Ok(ch) => ch,
                     Err(e) => {
                         log_ssh_error(
+                            &log_state_clone,
                             &pid_clone,
                             &format!("Docker tunnel: failed to open session channel: {}", e),
                         );
@@ -359,6 +401,7 @@ pub async fn establish_ssh_tunnel(pid: &str, params: &ConnectParams) -> AppResul
                 };
                 if let Err(e) = ch.exec(true, cmd.as_str()).await {
                     log_ssh_error(
+                        &log_state_clone,
                         &pid_clone,
                         &format!("Docker tunnel: exec failed: {}", e),
                     );
@@ -378,6 +421,7 @@ pub async fn establish_ssh_tunnel(pid: &str, params: &ConnectParams) -> AppResul
                     Ok(ch) => ch,
                     Err(e) => {
                         log_ssh_error(
+                            &log_state_clone,
                             &pid_clone,
                             &format!(
                                 "SSH tunnel: failed to open remote channel to {}:{}: {}",
@@ -391,11 +435,13 @@ pub async fn establish_ssh_tunnel(pid: &str, params: &ConnectParams) -> AppResul
 
             let mut ssh_stream = channel.into_stream();
             let pid_inner = pid_clone.clone();
+            let log_state_inner = log_state_clone.clone();
 
             tokio::spawn(async move {
                 match tokio::io::copy_bidirectional(&mut local_stream, &mut ssh_stream).await {
                     Ok((a, b)) => {
                         log_ssh_verbose(
+                            &log_state_inner,
                             &pid_inner,
                             verbose,
                             &format!("Tunnel connection closed (→{} ←{} bytes)", a, b),
@@ -403,6 +449,7 @@ pub async fn establish_ssh_tunnel(pid: &str, params: &ConnectParams) -> AppResul
                     }
                     Err(e) => {
                         log_ssh_verbose(
+                            &log_state_inner,
                             &pid_inner,
                             verbose,
                             &format!("Tunnel connection ended: {}", e),
@@ -412,7 +459,12 @@ pub async fn establish_ssh_tunnel(pid: &str, params: &ConnectParams) -> AppResul
             });
         }
 
-        log_ssh_verbose(&pid_clone, verbose, "SSH tunnel loop exiting.");
+        log_ssh_verbose(
+            &log_state_clone,
+            &pid_clone,
+            verbose,
+            "SSH tunnel loop exiting.",
+        );
     });
 
     Ok(TunnelHandle {

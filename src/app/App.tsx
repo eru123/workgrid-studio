@@ -10,19 +10,16 @@ import { PrivacyDisclosureModal } from "@/components/views/PrivacyDisclosureModa
 import { useAppStore } from "@/state/appStore";
 
 export function App() {
-    const loadProfiles = useProfilesStore((s) => s.loadProfiles);
     const profilesLoaded = useProfilesStore((s) => s._loaded);
     const globalPreferences = useProfilesStore((s) => s.globalPreferences);
-    const loadTasks = useTasksStore((s) => s.loadTasks);
-    const loadHistory = useQueryHistoryStore((s) => s.loadHistory);
 
     const setCommandPaletteOpen = useAppStore((s) => s.setCommandPaletteOpen);
 
     useEffect(() => {
-        loadProfiles();
-        loadTasks();
-        loadHistory();
-    }, [loadProfiles, loadTasks, loadHistory]);
+        void useProfilesStore.getState().loadProfiles();
+        void useTasksStore.getState().loadTasks();
+        void useQueryHistoryStore.getState().loadHistory();
+    }, []); // intentionally empty — one-time initialization
 
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {

@@ -40,17 +40,38 @@ function formatOutputTimestamp(date: Date = new Date()): string {
     ].join("-") + ` ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 }
 
+// ─── Pluggable status bar entries ────────────────────────────────────────────
+
+export interface StatusBarEntry {
+  /** Unique identifier for this entry */
+  id: string;
+  /** Text label shown in the status bar */
+  label: string;
+  /** Tooltip shown on hover */
+  title?: string;
+  /** Which side to render on */
+  side: "left" | "right";
+  /** Higher priority items appear closer to the center (left: descending, right: ascending) */
+  priority: number;
+  /** Optional click handler */
+  onClick?: () => void;
+}
+
 interface AppState {
     toasts: Toast[];
     outputEntries: OutputEntry[];
     isCommandPaletteOpen: boolean;
     statusBarInfo: StatusBarInfo;
+    statusBarEntries: StatusBarEntry[];
     setCommandPaletteOpen: (open: boolean) => void;
     addToast: (toast: Omit<Toast, "id">) => void;
     dismissToast: (id: string) => void;
     addOutputEntry: (entry: Omit<OutputEntry, "id" | "timestamp"> & { timestamp?: string }) => void;
     clearOutputEntries: () => void;
     setStatusBarInfo: (info: StatusBarInfo) => void;
+    addStatusBarEntry: (entry: StatusBarEntry) => void;
+    removeStatusBarEntry: (id: string) => void;
+    updateStatusBarEntry: (id: string, updates: Partial<Omit<StatusBarEntry, "id">>) => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -58,6 +79,7 @@ export const useAppStore = create<AppState>((set) => ({
     outputEntries: [],
     isCommandPaletteOpen: false,
     statusBarInfo: {},
+    statusBarEntries: [],
     setCommandPaletteOpen: (open) => set({ isCommandPaletteOpen: open }),
     addToast: (toast) =>
         set((state) => ({
@@ -80,4 +102,20 @@ export const useAppStore = create<AppState>((set) => ({
         })),
     clearOutputEntries: () => set({ outputEntries: [] }),
     setStatusBarInfo: (info) => set({ statusBarInfo: info }),
+    addStatusBarEntry: (entry) =>
+        set((state) => ({
+            statusBarEntries: state.statusBarEntries.some((e) => e.id === entry.id)
+                ? state.statusBarEntries.map((e) => (e.id === entry.id ? entry : e))
+                : [...state.statusBarEntries, entry],
+        })),
+    removeStatusBarEntry: (id) =>
+        set((state) => ({
+            statusBarEntries: state.statusBarEntries.filter((e) => e.id !== id),
+        })),
+    updateStatusBarEntry: (id, updates) =>
+        set((state) => ({
+            statusBarEntries: state.statusBarEntries.map((e) =>
+                e.id === id ? { ...e, ...updates } : e,
+            ),
+        })),
 }));
