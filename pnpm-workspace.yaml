@@ -1,2 +1,7 @@
+packages:
+  - "wgs-website"
+  - "wgs-updater"
+  - "."
+
 onlyBuiltDependencies:
   - esbuild
