@@ -1,11 +1,12 @@
 export type { CommandId, CommandHandler, KeybindingEntry, WhenContext } from "./types";
-export { setContext, getContext, evaluateWhen } from "./context";
+export { setContext, getContext, evaluateWhen, compileWhen } from "./context";
 export {
   registerCommand,
   executeCommand,
   getRegisteredCommands,
   loadUserKeybindings,
   getAllBindings,
+  getBindingsForCommand,
   handleGlobalKeydown,
 } from "./registry";
 

@@ -147,6 +147,21 @@ export interface ThemeColors {
   [token: string]: string | undefined;
 }
 
+/**
+ * A derived color computed from a base token at theme-apply time.
+ * Avoids duplicating hover/active/disabled variants in the JSON.
+ */
+export interface ColorTransform {
+  /** The base color token key — must exist in `colors` */
+  base: string;
+  /** Transform to apply to the base color */
+  fn: "transparent" | "darken" | "lighten" | "mix";
+  /** Amount in range 0–1. For transparent/darken/lighten: blend strength. For mix: ratio toward mixWith. */
+  amount: number;
+  /** For fn="mix": the target color to blend toward (hex or CSS color string) */
+  mixWith?: string;
+}
+
 export interface ThemeManifest {
   /** Display name shown in the theme picker */
   name: string;
@@ -156,4 +171,10 @@ export interface ThemeManifest {
   colors: ThemeColors;
   /** Syntax highlighting rules for the code editor */
   tokenColors: ThemeTokenColor[];
+  /**
+   * Derived color tokens computed at apply time.
+   * Keys are token names (same namespace as `colors`); values are transforms.
+   * Applied after base colors so they can reference any base token.
+   */
+  transforms?: Record<string, ColorTransform>;
 }

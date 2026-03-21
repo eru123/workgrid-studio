@@ -9,6 +9,8 @@ import { useSavedQueriesStore } from "@/state/savedQueriesStore";
 import {
   dbListColumns,
   dbQuery,
+  dbListTriggers,
+  dbListEvents,
   dbDisconnect,
   dbExecuteQuery,
   dbImportCsv,
@@ -60,6 +62,8 @@ import {
   ScrollText,
   Braces,
   Search,
+  Zap,
+  Users,
 } from "lucide-react";
 import {
   MariadbIcon,
@@ -365,12 +369,17 @@ export function ExplorerTree() {
     } else if (id.startsWith("proc::") || id.startsWith("func::")) {
       const d = node.data as { profileId: string; database: string; name: string; kind: string } | undefined;
       if (d) {
-        const kw = d.kind === "FUNCTION" ? "FUNCTION" : "PROCEDURE";
-        openTab({ title: `SHOW CREATE ${d.name}`, type: "sql", meta: { profileId: d.profileId, database: d.database, initialSql: `SHOW CREATE ${kw} \`${d.name.replace(/`/g, "``")}\`;` } });
+        openTab({ title: `${d.kind}: ${d.name}`, type: "routine", meta: { profileId: d.profileId, database: d.database, routineName: d.name, routineType: d.kind } });
       }
     } else if (id.startsWith("view::")) {
       const d = node.data as { profileId: string; database: string; table: string } | undefined;
-      if (d) openTab({ title: `Data: ${d.table}`, type: "table-data", meta: { profileId: d.profileId, database: d.database, tableName: d.table } });
+      if (d) openTab({ title: `View: ${d.table}`, type: "view", meta: { profileId: d.profileId, database: d.database, viewName: d.table } });
+    } else if (id.startsWith("trigger::")) {
+      const d = node.data as { profileId: string; database: string; name: string } | undefined;
+      if (d) openTab({ title: `Trigger: ${d.name}`, type: "trigger", meta: { profileId: d.profileId, database: d.database, triggerName: d.name } });
+    } else if (id.startsWith("event::")) {
+      const d = node.data as { profileId: string; database: string; name: string } | undefined;
+      if (d) openTab({ title: `Event: ${d.name}`, type: "event", meta: { profileId: d.profileId, database: d.database, eventName: d.name } });
     }
   }, [openTab]);
 
@@ -662,6 +671,40 @@ export function ExplorerTree() {
             },
           };
 
+          const triggersNode: TreeNode = {
+            id: `triggers::${profileId}::${db}`,
+            label: "Triggers",
+            icon: <Zap className="w-3.5 h-3.5 text-amber-400/80" />,
+            expandable: true,
+            loadChildren: async () => {
+              const triggers = await dbListTriggers(profileId, db);
+              if (triggers.length === 0) return [{ id: `trigger-none::${profileId}::${db}`, label: "No triggers", icon: <Zap className="w-3 h-3 text-muted-foreground/40" />, disabled: true }];
+              return triggers.map((trigger): TreeNode => ({
+                id: `trigger::${profileId}::${db}::${trigger.name}`,
+                label: trigger.name,
+                icon: <Zap className="w-3.5 h-3.5 text-amber-400/80" />,
+                data: { profileId, database: db, name: trigger.name },
+              }));
+            },
+          };
+
+          const eventsNode: TreeNode = {
+            id: `events::${profileId}::${db}`,
+            label: "Events",
+            icon: <AlertCircle className="w-3.5 h-3.5 text-orange-400/80" />,
+            expandable: true,
+            loadChildren: async () => {
+              const events = await dbListEvents(profileId, db);
+              if (events.length === 0) return [{ id: `event-none::${profileId}::${db}`, label: "No events", icon: <AlertCircle className="w-3 h-3 text-muted-foreground/40" />, disabled: true }];
+              return events.map((event): TreeNode => ({
+                id: `event::${profileId}::${db}::${event.name}`,
+                label: event.name,
+                icon: <AlertCircle className="w-3.5 h-3.5 text-orange-400/80" />,
+                data: { profileId, database: db, name: event.name },
+              }));
+            },
+          };
+
           // ── Database context menu ──────────────────────────────────────
           const dbContextMenu: ContextMenuItem[] = [
             { label: "Show Tables", icon: <Table2 className="w-3.5 h-3.5" />, onClick: () => openTab({ title: `Database: ${db}`, type: "database-view", meta: { profileId, profileName: name, database: db } }) },
@@ -680,6 +723,7 @@ export function ExplorerTree() {
             }},
             { label: "---", onClick: () => {}, separator: true },
             { label: "Create Table", icon: <Table2 className="w-3.5 h-3.5" />, onClick: () => openTab({ title: "Design: New Table", type: "table-designer", meta: { profileId, database: db, tableName: "" } }) },
+            { label: "Open Query Builder", icon: <Braces className="w-3.5 h-3.5" />, onClick: () => openTab({ title: `Query Builder: ${db}`, type: "query-builder", meta: { profileId, database: db } }) },
             { label: "---", onClick: () => {}, separator: true },
             { label: "Drop Database", icon: <Trash className="w-3.5 h-3.5" />, danger: true, onClick: () => setDropDbState({ profileId, databases: [db] }) },
             { label: "---", onClick: () => {}, separator: true },
@@ -698,7 +742,7 @@ export function ExplorerTree() {
               setExpandedIds((prev) => {
                 const next = new Set(prev);
                 for (const id of [...next]) {
-                  if (id.startsWith(`tbl::${profileId}::${db}::`) || id.startsWith(`cols::${profileId}::${db}::`) || id.startsWith(`idxs::${profileId}::${db}::`) || id.startsWith(`cons::${profileId}::${db}::`) || id === `views::${profileId}::${db}` || id === `procs::${profileId}::${db}` || id === `funcs::${profileId}::${db}`) {
+                  if (id.startsWith(`tbl::${profileId}::${db}::`) || id.startsWith(`cols::${profileId}::${db}::`) || id.startsWith(`idxs::${profileId}::${db}::`) || id.startsWith(`cons::${profileId}::${db}::`) || id === `views::${profileId}::${db}` || id === `procs::${profileId}::${db}` || id === `funcs::${profileId}::${db}` || id === `triggers::${profileId}::${db}` || id === `events::${profileId}::${db}`) {
                     next.delete(id);
                   }
                 }
@@ -714,7 +758,7 @@ export function ExplorerTree() {
           } else if (tblError) {
             dbNodeChildren = [{ id: `tbl-err::${profileId}::${db}`, label: tblError, icon: <AlertCircle className="w-3 h-3 text-red-400" />, disabled: true }];
           } else {
-            dbNodeChildren = [...tableNodes, viewsNode, procsNode, funcsNode];
+            dbNodeChildren = [...tableNodes, viewsNode, procsNode, funcsNode, triggersNode, eventsNode];
           }
 
           return {
@@ -793,6 +837,7 @@ export function ExplorerTree() {
           useSchemaStore.getState().removeConnection(profileId);
         }},
         { label: "Refresh", icon: <RefreshCw className="w-3.5 h-3.5" />, onClick: () => { void useSchemaStore.getState().refreshDatabases(profileId); } },
+        { label: "Manage Users", icon: <Users className="w-3.5 h-3.5" />, onClick: () => openTab({ title: `Users: ${name}`, type: "users", meta: { profileId } }) },
         { label: "---", onClick: () => {}, separator: true },
         { label: "Create Database...", icon: <FolderPlus className="w-3.5 h-3.5" />, onClick: () => setCreateDbProfileId(profileId) },
         { label: "---", onClick: () => {}, separator: true },

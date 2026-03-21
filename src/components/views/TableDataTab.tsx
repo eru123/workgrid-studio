@@ -469,7 +469,7 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
 
       const result = dataRes[0] as QueryResultSet | undefined;
       setColumns(result?.columns ?? []);
-      setRows(result?.rows ?? []);
+      setRows((result?.rows ?? []) as (string | number | null)[][]);
 
       // Update status bar with connection context
       useAppStore.getState().setStatusBarInfo({
@@ -1323,9 +1323,9 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
           aria-colcount={visibleColumns.length + 2}
         >
           <thead className="sticky top-0 z-30">
-            <tr className="bg-muted/70 backdrop-blur-sm" role="row" aria-rowindex={1}>
+            <tr className="bg-muted" role="row" aria-rowindex={1}>
               <th
-                className="sticky left-0 z-30 text-center px-1.5 py-1.5 border-b border-r bg-muted/70 whitespace-nowrap"
+                className="sticky left-0 z-30 text-center px-1.5 py-1.5 border-b border-r bg-muted whitespace-nowrap"
                 style={{ width: 32, maxWidth: 32, minWidth: 32 }}
                 role="columnheader"
                 aria-colindex={1}
@@ -1341,7 +1341,7 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
               </th>
               {/* Row number column */}
               <th
-                className="sticky left-[32px] z-30 text-center px-1.5 py-1.5 text-[10px] font-medium text-muted-foreground/70 tracking-wider border-b border-r bg-muted/70 whitespace-nowrap"
+                className="sticky left-[32px] z-30 text-center px-1.5 py-1.5 text-[10px] font-medium text-muted-foreground/70 tracking-wider border-b border-r bg-muted whitespace-nowrap"
                 style={{ width: 40, maxWidth: 40, minWidth: 40 }}
                 role="columnheader"
                 aria-colindex={2}
@@ -1611,7 +1611,7 @@ const SortableHeader = memo(function SortableHeader({
             : "none"
       }
       className={cn(
-        "text-left px-1.5 py-1.5 text-[10px] font-medium tracking-wider border-b border-r bg-muted/70 whitespace-nowrap select-none group relative",
+        "text-left px-1.5 py-1.5 text-[10px] font-medium tracking-wider border-b border-r bg-muted whitespace-nowrap select-none group relative",
         sortDirection && "bg-primary/10",
         frozen && "sticky z-30 shadow-[2px_0_4px_rgba(0,0,0,0.08)]",
       )}

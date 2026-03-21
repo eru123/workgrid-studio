@@ -15,6 +15,8 @@ import {
   DB_TYPE_DEFAULT_PORTS,
 } from "@/state/profilesStore";
 import { useProfileManager } from "@/hooks/useProfileManager";
+import { parseConnectionUrl } from "@/lib/parseConnectionUrl";
+import { useStatusBarEntry } from "@/hooks/useStatusBarEntry";
 import { useProfilesStore } from "@/state/profilesStore";
 import { useSchemaStore } from "@/state/schemaStore";
 import { notifyError, notifySuccess } from "@/lib/notifications";
@@ -94,6 +96,40 @@ export function ServersSidebar() {
     updateField,
     duplicateProfile,
   } = useProfileManager();
+
+  const [pasteUrlValue, setPasteUrlValue] = useState("");
+  const [pasteUrlError, setPasteUrlError] = useState<string | null>(null);
+
+  // ── Status bar: active connections ───────────────────────
+  const connectedProfiles = profiles.filter((p) => p.connectionStatus === "connected");
+  const _connStatusLabel = connectedProfiles.length === 0
+    ? ""
+    : connectedProfiles.length === 1
+      ? `● ${DB_TYPE_LABELS[connectedProfiles[0].type] ?? connectedProfiles[0].type}: ${connectedProfiles[0].name}`
+      : `● ${connectedProfiles.length} connections`;
+  const _connStatusTitle = connectedProfiles.length > 0
+    ? connectedProfiles.map((p) => p.name).join(", ")
+    : undefined;
+  useStatusBarEntry({ id: "connection-status", label: _connStatusLabel, title: _connStatusTitle, side: "left", priority: 100 });
+
+  const handlePasteUrl = (raw: string) => {
+    setPasteUrlValue(raw);
+    setPasteUrlError(null);
+    if (!raw.trim()) return;
+    const parsed = parseConnectionUrl(raw.trim());
+    if (!parsed) {
+      setPasteUrlError("Unrecognized URL — use mysql://, postgres://, or sqlite://");
+      return;
+    }
+    if (parsed.type) handleTypeChange(parsed.type);
+    if (parsed.host) updateField("host", parsed.host);
+    if (parsed.port !== undefined) updateField("port", parsed.port);
+    if (parsed.user) updateField("user", parsed.user);
+    if (parsed.password) updateField("password", parsed.password);
+    if (parsed.database) updateField("database", parsed.database);
+    if (parsed.filePath) updateField("filePath", parsed.filePath);
+    setPasteUrlValue("");
+  };
 
   const [isTestingConnection, setIsTestingConnection] = useState(false);
   const [testConnectionResult, setTestConnectionResult] = useState<{
@@ -354,6 +390,23 @@ export function ServersSidebar() {
 
               {/* Modal Body */}
               <div className="flex-1 overflow-y-auto p-5 space-y-5">
+                {/* Paste URL — auto-populates form fields */}
+                <div>
+                  <label className="text-xs font-semibold block mb-1.5">
+                    Paste Connection URL <span className="text-muted-foreground font-normal">(optional)</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={pasteUrlValue}
+                    onChange={(e) => handlePasteUrl(e.target.value)}
+                    placeholder="mysql://user:pass@host:3306/dbname"
+                    className="w-full h-9 rounded-md border bg-secondary/50 px-3 text-sm font-mono text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary/50 transition-all"
+                  />
+                  {pasteUrlError && (
+                    <p className="mt-1 text-xs text-destructive">{pasteUrlError}</p>
+                  )}
+                </div>
+
                 {/* Connection Name */}
                 <div>
                   <label className="text-xs font-semibold block mb-1.5">

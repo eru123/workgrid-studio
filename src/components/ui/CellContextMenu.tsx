@@ -1,4 +1,6 @@
+import { createPortal } from "react-dom";
 import { Copy, Rows3, Columns3, Braces, FileText, Table2 } from "lucide-react";
+import { positionContextMenu } from "@/lib/utils/positionPopup";
 
 interface CellContextMenuProps {
     x: number;
@@ -23,9 +25,14 @@ export function CellContextMenu({
     onCopyColumn,
     onClose,
 }: CellContextMenuProps) {
-    return (
+    // Estimate menu size for initial viewport-safe positioning
+    const W = 220;
+    const H = 160 + (onCopyRowJson ? 28 : 0) + (onCopyRowCsv ? 28 : 0) + (onCopyRowSqlInsert ? 28 : 0);
+    const { top, left } = positionContextMenu(x, y, { w: W, h: H });
+
+    const menu = (
         <div
-            style={{ position: "fixed", top: y, left: x, zIndex: 200 }}
+            style={{ position: "fixed", top, left, zIndex: 200 }}
             className="min-w-[200px] bg-popover text-popover-foreground border rounded-md shadow-xl p-1 text-xs"
             onClick={(e) => e.stopPropagation()}
             onContextMenu={(e) => e.preventDefault()}
@@ -85,4 +92,6 @@ export function CellContextMenu({
             </button>
         </div>
     );
+
+    return createPortal(menu, document.body);
 }

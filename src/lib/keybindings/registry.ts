@@ -1,5 +1,5 @@
 import type { CommandId, CommandHandler, KeybindingEntry } from "./types";
-import { evaluateWhen, getContext } from "./context";
+import { evaluateWhen, compileWhen, getContext } from "./context";
 import defaultBindings from "./defaultKeybindings.json";
 
 // ─── Command Registry ─────────────────────────────────────────────────────────
@@ -25,13 +25,36 @@ export function getRegisteredCommands(): string[] {
   return Array.from(_handlers.keys());
 }
 
+// ─── Command Map (reverse lookup: commandId → bindings) ───────────────────────
+
+let _commandMap: Map<string, KeybindingEntry[]> = new Map();
+
+function rebuildCommandMap(): void {
+  _commandMap = new Map();
+  for (const binding of _bindings) {
+    const list = _commandMap.get(binding.command) ?? [];
+    list.push(binding);
+    _commandMap.set(binding.command, list);
+  }
+}
+
+/** Returns all bindings for a given command ID. */
+export function getBindingsForCommand(commandId: string): KeybindingEntry[] {
+  return _commandMap.get(commandId) ?? [];
+}
+
 // ─── Keybinding Registry ──────────────────────────────────────────────────────
 
 // Start with default bindings; user overrides are merged on top.
 let _bindings: KeybindingEntry[] = (defaultBindings as KeybindingEntry[]).map((b) => ({
   ...b,
   isDefault: true,
+  whenFn: b.when ? compileWhen(b.when) : undefined,
 }));
+
+rebuildCommandMap();
+
+// ─── Keybinding Registry ──────────────────────────────────────────────────────
 
 /** Merge user keybinding overrides on top of defaults. */
 export function loadUserKeybindings(overrides: KeybindingEntry[]): void {
@@ -39,8 +62,13 @@ export function loadUserKeybindings(overrides: KeybindingEntry[]): void {
   const overriddenCommands = new Set(overrides.map((o) => o.command));
   _bindings = [
     ..._bindings.filter((b) => b.isDefault && !overriddenCommands.has(b.command)),
-    ...overrides.map((o) => ({ ...o, isDefault: false })),
+    ...overrides.map((o) => ({
+      ...o,
+      isDefault: false,
+      whenFn: o.when ? compileWhen(o.when) : undefined,
+    })),
   ];
+  rebuildCommandMap();
 }
 
 /** Get all active bindings (for the settings Keybindings UI). */
@@ -110,7 +138,8 @@ export function handleGlobalKeydown(e: KeyboardEvent): void {
     clearPendingChord();
 
     for (const binding of _bindings) {
-      if (binding.key === fullChord && evaluateWhen(binding.when, ctx)) {
+      const passes = binding.whenFn ? binding.whenFn(ctx) : evaluateWhen(binding.when, ctx);
+      if (binding.key === fullChord && passes) {
         e.preventDefault();
         executeCommand(binding.command, e);
         return;
@@ -120,7 +149,8 @@ export function handleGlobalKeydown(e: KeyboardEvent): void {
   }
 
   for (const binding of _bindings) {
-    if (!evaluateWhen(binding.when, ctx)) continue;
+    const passes = binding.whenFn ? binding.whenFn(ctx) : evaluateWhen(binding.when, ctx);
+    if (!passes) continue;
 
     const chords = binding.key.split(" ");
 

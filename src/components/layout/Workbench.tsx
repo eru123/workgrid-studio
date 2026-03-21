@@ -1,4 +1,4 @@
-import { startTransition, useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { startTransition, useState, useEffect, useRef, useCallback, useMemo, lazy, Suspense } from "react";
 import { useCommand } from "@/hooks/useCommand";
 import { setContext, initKeybindings } from "@/lib/keybindings";
 import { useLayoutStore, ActivityView } from "@/state/layoutStore";
@@ -15,7 +15,7 @@ import { readProfileLog, clearProfileLog, getAiLogs, clearAiLogs, AiLogEntry, db
 import { getLogBuffer, subscribeToLogStream, type LogEntry as StreamLogEntry } from "@/lib/log";
 import { cn } from "@/lib/utils/cn";
 import { useProfileManager } from "@/hooks/useProfileManager";
-import { useAppStore, StatusBarInfo } from "@/state/appStore";
+import { useAppStore } from "@/state/appStore";
 import { notifyError, notify } from "@/lib/notifications";
 import {
   appendConnectionOutput,
@@ -25,6 +25,7 @@ import {
 import {
   FolderTree,
   CheckSquare,
+  FileCode2,
   PanelBottom,
   Sidebar,
   Server,
@@ -45,6 +46,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { MenuBar } from "./MenuBar";
 import { ServersSidebar } from "@/components/views/ServersSidebar";
 import { AiChatSidebar } from "@/components/views/AiChatSidebar";
+const SnippetsPanel = lazy(() => import("@/components/views/SnippetsPanel").then(m => ({ default: m.SnippetsPanel })));
 import { KeyboardShortcutsOverlay } from "@/components/views/KeyboardShortcutsOverlay";
 import { OnboardingFlow } from "@/components/views/OnboardingFlow";
 import { check as checkForUpdate } from "@tauri-apps/plugin-updater";
@@ -53,6 +55,7 @@ import { relaunch } from "@tauri-apps/plugin-process";
 const activityItems: { id: ActivityView; icon: any; label: string }[] = [
   { id: "explorer", icon: FolderTree, label: "Explorer" },
   { id: "servers", icon: Server, label: "Servers" },
+  { id: "snippets", icon: FileCode2, label: "Snippets" },
   { id: "models", icon: Bot, label: "AI Models" },
   { id: "tasks", icon: CheckSquare, label: "Tasks" },
 ];
@@ -648,6 +651,7 @@ export function Workbench() {
           <div className="flex-1 overflow-auto">
             {activeView === "explorer" && <ExplorerTree />}
             {activeView === "servers" && <ServersSidebar />}
+            {activeView === "snippets" && <Suspense fallback={null}><SnippetsPanel /></Suspense>}
             {activeView === "models" && (
               <div className="flex flex-col gap-2 p-2">
                 <p className="text-xs text-muted-foreground mb-1">
@@ -1417,65 +1421,60 @@ function BottomPanel({ isSecondary }: { isSecondary?: boolean }) {
 // ─── Status Bar ─────────────────────────────────────────────────────
 
 function StatusBar({ appVersion }: { appVersion: string }) {
-  const info = useAppStore((s) => s.statusBarInfo) as StatusBarInfo;
-  const setActiveView = useLayoutStore((s) => s.setActiveView);
-  const openTab = useLayoutStore((s) => s.openTab);
+  const entries = useAppStore((s) => s.statusBarEntries);
+  const openUrl_ = openUrl;
+
+  const leftEntries = [...entries.filter((e) => e.side === "left" && e.label)]
+    .sort((a, b) => b.priority - a.priority);
+  const rightEntries = [...entries.filter((e) => e.side === "right" && e.label)]
+    .sort((a, b) => a.priority - b.priority);
 
   return (
     <div className="h-6 bg-primary text-primary-foreground flex items-center px-4 text-xs gap-3 shrink-0 select-none">
+      {/* App name — always present */}
       <span className="font-medium">WorkGrid Studio</span>
 
-      {info.connectionName && (
-        <>
-          <span className="opacity-40">|</span>
+      {/* Dynamic left-side entries */}
+      {leftEntries.map((entry) =>
+        entry.onClick ? (
           <button
+            key={entry.id}
             type="button"
-            onClick={() => setActiveView("explorer")}
+            onClick={entry.onClick}
+            title={entry.title}
             className="opacity-80 transition-opacity hover:opacity-100 hover:underline"
-            title="Show the active connection in Explorer"
           >
-            {info.connectionName}
+            {entry.label}
           </button>
-        </>
-      )}
-
-      {info.database && info.profileId && (
-        <>
-          <span className="opacity-40">/</span>
-          <button
-            type="button"
-            onClick={() =>
-              openTab({
-                title: `Database: ${info.database}`,
-                type: "database-view",
-                meta: {
-                  profileId: info.profileId!,
-                  database: info.database!,
-                },
-              })
-            }
-            className="opacity-80 font-mono transition-opacity hover:opacity-100 hover:underline"
-            title="Open the active database"
-          >
-            {info.database}
-          </button>
-        </>
-      )}
-
-      <span className="ml-auto flex items-center gap-3">
-        {info.rowCount !== undefined && (
-          <span className="opacity-70">{info.rowCount.toLocaleString()} rows</span>
-        )}
-        {info.executionTimeMs !== undefined && (
-          <span className="opacity-70">
-            {info.executionTimeMs < 1000
-              ? `${Math.round(info.executionTimeMs)}ms`
-              : `${(info.executionTimeMs / 1000).toFixed(2)}s`}
+        ) : (
+          <span key={entry.id} title={entry.title} className="opacity-80">
+            {entry.label}
           </span>
+        ),
+      )}
+
+      {/* Dynamic right-side entries + version + heart */}
+      <span className="ml-auto flex items-center gap-3">
+        {rightEntries.map((entry) =>
+          entry.onClick ? (
+            <button
+              key={entry.id}
+              type="button"
+              onClick={entry.onClick}
+              title={entry.title}
+              className="opacity-70 transition-opacity hover:opacity-100"
+            >
+              {entry.label}
+            </button>
+          ) : (
+            <span key={entry.id} title={entry.title} className="opacity-70">
+              {entry.label}
+            </span>
+          ),
         )}
         <span className="opacity-60">v{appVersion}</span>
         <button
-          onClick={() => openUrl("https://paypal.me/ja1030")}
+          onClick={() => openUrl_("https://paypal.me/ja1030")}
           title="Support WorkGrid Studio"
           aria-label="Support WorkGrid Studio"
           className="opacity-50 hover:opacity-100 transition-opacity"

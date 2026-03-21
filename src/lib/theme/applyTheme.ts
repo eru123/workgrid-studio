@@ -1,5 +1,65 @@
-import type { ThemeManifest, ThemeTokenColor } from "./types";
+import type { ThemeManifest, ThemeTokenColor, ColorTransform } from "./types";
 import { TOKEN_TO_CSS_VAR } from "./tokens";
+
+// ─── Color transform helpers ──────────────────────────────────────────────────
+
+function parseHex(hex: string): { r: number; g: number; b: number } | null {
+  const clean = hex.trim().replace(/^#/, "");
+  if (clean.length === 3) {
+    return {
+      r: parseInt(clean[0] + clean[0], 16),
+      g: parseInt(clean[1] + clean[1], 16),
+      b: parseInt(clean[2] + clean[2], 16),
+    };
+  }
+  if (clean.length === 6) {
+    return {
+      r: parseInt(clean.slice(0, 2), 16),
+      g: parseInt(clean.slice(2, 4), 16),
+      b: parseInt(clean.slice(4, 6), 16),
+    };
+  }
+  return null;
+}
+
+function toHex(r: number, g: number, b: number): string {
+  const clamp = (v: number) => Math.max(0, Math.min(255, Math.round(v)));
+  return `#${clamp(r).toString(16).padStart(2, "0")}${clamp(g).toString(16).padStart(2, "0")}${clamp(b).toString(16).padStart(2, "0")}`;
+}
+
+function resolveColorTransform(baseHex: string, transform: ColorTransform): string | null {
+  const base = parseHex(baseHex);
+  if (!base) return null;
+  const { fn, amount } = transform;
+
+  if (fn === "transparent") {
+    const opacity = Math.max(0, Math.min(1, 1 - amount));
+    return `rgba(${base.r}, ${base.g}, ${base.b}, ${opacity.toFixed(3)})`;
+  }
+
+  if (fn === "darken") {
+    const f = 1 - Math.max(0, Math.min(1, amount));
+    return toHex(base.r * f, base.g * f, base.b * f);
+  }
+
+  if (fn === "lighten") {
+    const f = Math.max(0, Math.min(1, amount));
+    return toHex(base.r + (255 - base.r) * f, base.g + (255 - base.g) * f, base.b + (255 - base.b) * f);
+  }
+
+  if (fn === "mix" && transform.mixWith) {
+    const target = parseHex(transform.mixWith);
+    if (!target) return null;
+    const t = Math.max(0, Math.min(1, amount));
+    return toHex(
+      base.r + (target.r - base.r) * t,
+      base.g + (target.g - base.g) * t,
+      base.b + (target.b - base.b) * t,
+    );
+  }
+
+  return null;
+}
 
 // ─── Apply Theme to DOM ───────────────────────────────────────────────────────
 
@@ -32,6 +92,18 @@ export function applyTheme(manifest: ThemeManifest): void {
     if (value && !(token in TOKEN_TO_CSS_VAR)) {
       const cssVar = "--wgs-" + token.replace(/\./g, "-").replace(/[^a-zA-Z0-9-]/g, "");
       root.style.setProperty(cssVar, value);
+    }
+  }
+
+  // Resolve and apply transforms (derived colors) defined in the theme manifest.
+  if (manifest.transforms) {
+    for (const [tokenKey, transform] of Object.entries(manifest.transforms)) {
+      const baseValue = manifest.colors[transform.base];
+      if (!baseValue) continue;
+      const derived = resolveColorTransform(baseValue, transform);
+      if (!derived) continue;
+      const cssVar = TOKEN_TO_CSS_VAR[tokenKey] ?? `--wgs-${tokenKey.replace(/\./g, "-").replace(/[^a-zA-Z0-9-]/g, "")}`;
+      root.style.setProperty(cssVar, derived);
     }
   }
 }

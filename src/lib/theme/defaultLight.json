@@ -133,5 +133,10 @@
     { "scope": "tag",                      "settings": { "foreground": "#800000" } },
     { "scope": "attribute.name",           "settings": { "foreground": "#ff0000" } },
     { "scope": "attribute.value",          "settings": { "foreground": "#0000ff" } }
-  ]
+  ],
+  "transforms": {
+    "button.hoverBackground":   { "base": "button.background",   "fn": "darken", "amount": 0.1  },
+    "list.hoverBackground":     { "base": "editor.background",   "fn": "darken", "amount": 0.05 },
+    "statusBar.hoverBackground":{ "base": "statusBar.background","fn": "darken", "amount": 0.08 }
+  }
 }

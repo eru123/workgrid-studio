@@ -1,6 +1,27 @@
 import type { NotifyOptions, NotificationSeverity } from "./types";
 import { useAppStore } from "@/state/appStore";
 
+// ─── Token-bucket spam guard ──────────────────────────────────────────────────
+// Max 3 toasts per 800ms window. Overflow goes to output panel only.
+
+let _bucketTokens = 3;
+let _bucketLastRefill = Date.now();
+const BUCKET_MAX = 3;
+const BUCKET_WINDOW_MS = 800;
+
+function consumeToastToken(): boolean {
+  const now = Date.now();
+  if (now - _bucketLastRefill >= BUCKET_WINDOW_MS) {
+    _bucketTokens = BUCKET_MAX;
+    _bucketLastRefill = now;
+  }
+  if (_bucketTokens > 0) {
+    _bucketTokens--;
+    return true;
+  }
+  return false;
+}
+
 // ─── Severity → Toast variant mapping ────────────────────────────────────────
 
 function toastVariant(severity: NotificationSeverity): "default" | "destructive" {
@@ -52,7 +73,7 @@ export function notify(options: NotifyOptions): void {
   }
 
   // ── Toast ──────────────────────────────────────────────────────────────────
-  if (shouldShowToast(severity, toastOverride)) {
+  if (shouldShowToast(severity, toastOverride) && consumeToastToken()) {
     store.addToast({
       title,
       description: detail,
@@ -65,16 +86,20 @@ export function notify(options: NotifyOptions): void {
               label: "Show Output",
               onClick: () => {
                 // Open bottom panel — dispatched via the keybinding engine if available
-                import("@/lib/keybindings").then(({ executeCommand }) => {
-                  const opened = executeCommand("layout.togglePanel");
-                  if (!opened) {
-                    // Fallback: directly open via store
-                    import("@/state/layoutStore").then(({ useLayoutStore }) => {
-                      const s = useLayoutStore.getState();
-                      if (!s.isBottomPanelVisible) s.togglePanel();
-                    });
-                  }
-                });
+                import("@/lib/keybindings")
+                  .then(({ executeCommand }) => {
+                    const opened = executeCommand("layout.togglePanel");
+                    if (!opened) {
+                      // Fallback: directly open via store
+                      import("@/state/layoutStore")
+                        .then(({ useLayoutStore }) => {
+                          const s = useLayoutStore.getState();
+                          if (!s.isBottomPanelVisible) s.togglePanel();
+                        })
+                        .catch(() => {/* store unavailable — ignore */});
+                    }
+                  })
+                  .catch(() => {/* keybinding engine unavailable — ignore */});
               },
             }
           : undefined,

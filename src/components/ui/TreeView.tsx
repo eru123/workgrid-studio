@@ -7,8 +7,11 @@ import {
   createContext,
   useContext,
 } from "react";
+import { createPortal } from "react-dom";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { cn } from "@/lib/utils/cn";
 import { ChevronRight, Loader2 } from "lucide-react";
+import { positionContextMenu } from "@/lib/utils/positionPopup";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -30,8 +33,8 @@ export interface TreeNode {
   icon?: React.ReactNode;
   /** Static children. Provide either this or loadChildren, not both. */
   children?: TreeNode[];
-  /** Async children loader — called on first expand */
-  loadChildren?: () => Promise<TreeNode[]>;
+  /** Async children loader — called on first expand. Signal is passed for abort on collapse. */
+  loadChildren?: (signal?: AbortSignal) => Promise<TreeNode[]>;
   /** Whether this node can be expanded (shows chevron even if children not loaded yet) */
   expandable?: boolean;
   /** Visual decorations: badge, status dot, label color */
@@ -75,7 +78,7 @@ export interface TreeViewProps {
 interface TreeCtx {
   selectedId: string | null;
   expandedIds: Set<string>;
-  loadingIds: Set<string>;
+  loadingIds: Map<string, boolean>;
   cachedChildren: Map<string, TreeNode[]>;
   indent: number;
   onSelect?: (node: TreeNode) => void;
@@ -115,10 +118,11 @@ export function TreeView({
 }: TreeViewProps) {
   const [internalExpanded, setInternalExpanded] = useState<Set<string>>(new Set());
   const [internalSelected, setInternalSelected] = useState<string | null>(null);
-  const [loadingIds, setLoadingIds] = useState<Set<string>>(new Set());
+  const [loadingIds, setLoadingIds] = useState<Map<string, boolean>>(new Map());
   const [cachedChildren, setCachedChildren] = useState<Map<string, TreeNode[]>>(new Map());
   const [contextMenuState, setContextMenuState] = useState<ContextMenuState | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const abortControllersRef = useRef<Map<string, AbortController>>(new Map());
 
   const expandedIds = controlledExpandedIds ?? internalExpanded;
   const selectedId = controlledSelectedId !== undefined ? controlledSelectedId : internalSelected;
@@ -139,25 +143,27 @@ export function TreeView({
 
     const next = new Set(expandedIds);
     if (next.has(node.id)) {
+      // Collapse: abort any in-progress load
+      const controller = abortControllersRef.current.get(node.id);
+      if (controller) {
+        controller.abort();
+        abortControllersRef.current.delete(node.id);
+      }
       next.delete(node.id);
     } else {
       next.add(node.id);
       // Load async children on first expand
       if (node.loadChildren && !cachedChildren.has(node.id)) {
-        setLoadingIds((prev) => new Set(prev).add(node.id));
-        node.loadChildren().then((children) => {
+        const controller = new AbortController();
+        abortControllersRef.current.set(node.id, controller);
+        setLoadingIds((prev) => { const m = new Map(prev); m.set(node.id, true); return m; });
+        node.loadChildren(controller.signal).then((children) => {
           setCachedChildren((prev) => new Map(prev).set(node.id, children));
-          setLoadingIds((prev) => {
-            const next = new Set(prev);
-            next.delete(node.id);
-            return next;
-          });
+          setLoadingIds((prev) => { const m = new Map(prev); m.delete(node.id); return m; });
+          abortControllersRef.current.delete(node.id);
         }).catch(() => {
-          setLoadingIds((prev) => {
-            const next = new Set(prev);
-            next.delete(node.id);
-            return next;
-          });
+          setLoadingIds((prev) => { const m = new Map(prev); m.delete(node.id); return m; });
+          abortControllersRef.current.delete(node.id);
         });
       }
     }
@@ -170,40 +176,50 @@ export function TreeView({
     onSelect?.(node);
   }, [controlledSelectedId, onSelect]);
 
-  // ── Keyboard navigation ───────────────────────────────────────────────────
-  // Build a flat list of visible nodes for arrow key navigation
-  const flatNodes = useMemo(() => flattenVisible(nodes, expandedIds, cachedChildren), [nodes, expandedIds, cachedChildren]);
+  // ── Flat visible list for keyboard nav + virtualization ───────────────────
+  const flatItems = useMemo(
+    () => flattenVisible(nodes, expandedIds, cachedChildren),
+    [nodes, expandedIds, cachedChildren],
+  );
+
+  // ── Virtualizer ───────────────────────────────────────────────────────────
+  const virtualizer = useVirtualizer({
+    count: flatItems.length,
+    getScrollElement: () => containerRef.current,
+    estimateSize: () => 22,
+    overscan: 10,
+  });
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
-    const currentIdx = flatNodes.findIndex((n) => n.id === selectedId);
+    const currentIdx = flatItems.findIndex((item) => item.node.id === selectedId);
 
     if (e.key === "ArrowDown") {
       e.preventDefault();
-      const next = flatNodes[currentIdx + 1];
-      if (next) handleSelect(next);
+      const next = flatItems[currentIdx + 1];
+      if (next) handleSelect(next.node);
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
-      const prev = flatNodes[currentIdx - 1];
-      if (prev) handleSelect(prev);
+      const prev = flatItems[currentIdx - 1];
+      if (prev) handleSelect(prev.node);
     } else if (e.key === "ArrowRight") {
       e.preventDefault();
-      const node = flatNodes[currentIdx];
-      if (node) toggleExpand(node);
+      const item = flatItems[currentIdx];
+      if (item) toggleExpand(item.node);
     } else if (e.key === "ArrowLeft") {
       e.preventDefault();
-      const node = flatNodes[currentIdx];
-      if (node && expandedIds.has(node.id)) {
-        toggleExpand(node);
+      const item = flatItems[currentIdx];
+      if (item && expandedIds.has(item.node.id)) {
+        toggleExpand(item.node);
       }
     } else if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
-      const node = flatNodes[currentIdx];
-      if (node) {
-        if (e.key === " ") toggleExpand(node);
-        else onActivate?.(node);
+      const item = flatItems[currentIdx];
+      if (item) {
+        if (e.key === " ") toggleExpand(item.node);
+        else onActivate?.(item.node);
       }
     }
-  }, [flatNodes, selectedId, handleSelect, toggleExpand, expandedIds, onActivate]);
+  }, [flatItems, selectedId, handleSelect, toggleExpand, expandedIds, onActivate]);
 
   // Dismiss context menu on outside click
   useEffect(() => {
@@ -232,10 +248,27 @@ export function TreeView({
         tabIndex={0}
         onKeyDown={handleKeyDown}
         className={cn("outline-none select-none text-xs", className)}
+        style={{ height: "100%", overflowY: "auto", position: "relative" }}
       >
-        {nodes.map((node) => (
-          <TreeNodeRow key={node.id} node={node} depth={0} />
-        ))}
+        <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
+          {virtualizer.getVirtualItems().map((vItem) => {
+            const { node, depth } = flatItems[vItem.index];
+            return (
+              <div
+                key={vItem.key}
+                style={{
+                  position: "absolute",
+                  top: vItem.start,
+                  left: 0,
+                  right: 0,
+                  height: vItem.size,
+                }}
+              >
+                <TreeNodeRow node={node} depth={depth} />
+              </div>
+            );
+          })}
+        </div>
       </div>
 
       {/* Context menu */}
@@ -268,7 +301,7 @@ function TreeNodeRow({ node, depth }: { node: TreeNode; depth: number }) {
 
   const isSelected = node.id === selectedId;
   const isExpanded = expandedIds.has(node.id);
-  const isLoading = loadingIds.has(node.id);
+  const isLoading = loadingIds.get(node.id) === true;
 
   const resolvedChildren = node.children ?? cachedChildren.get(node.id);
   const hasChildren = !!(resolvedChildren?.length || node.loadChildren || node.expandable);
@@ -292,88 +325,81 @@ function TreeNodeRow({ node, depth }: { node: TreeNode; depth: number }) {
   const { decorations } = node;
 
   return (
-    <>
-      <div
-        role="treeitem"
-        aria-selected={isSelected}
-        aria-expanded={hasChildren ? isExpanded : undefined}
-        onClick={handleClick}
-        onDoubleClick={handleDoubleClick}
-        onContextMenu={handleContextMenu}
-        style={{ paddingLeft: depth * indent + 4 }}
-        className={cn(
-          "group flex items-center gap-1 h-[22px] pr-2 rounded cursor-pointer transition-colors",
-          isSelected
-            ? "bg-[var(--color-list-active-selection,var(--color-primary))] text-[var(--color-list-active-selection-foreground,var(--color-primary-foreground))]"
-            : "hover:bg-[var(--color-list-hover,var(--color-accent))] text-[var(--color-foreground)]",
-          node.disabled && "opacity-50 cursor-default",
-        )}
+    <div
+      role="treeitem"
+      aria-selected={isSelected}
+      aria-expanded={hasChildren ? isExpanded : undefined}
+      onClick={handleClick}
+      onDoubleClick={handleDoubleClick}
+      onContextMenu={handleContextMenu}
+      style={{ paddingLeft: depth * indent + 4 }}
+      className={cn(
+        "group flex items-center gap-1 h-[22px] pr-2 rounded cursor-pointer transition-colors",
+        isSelected
+          ? "bg-[var(--color-list-active-selection,var(--color-primary))] text-[var(--color-list-active-selection-foreground,var(--color-primary-foreground))]"
+          : "hover:bg-[var(--color-list-hover,var(--color-accent))] text-[var(--color-foreground)]",
+        node.disabled && "opacity-50 cursor-default",
+      )}
+    >
+      {/* Chevron / spinner */}
+      <span className="shrink-0 w-4 h-4 flex items-center justify-center">
+        {isLoading ? (
+          <Loader2 className="w-3 h-3 animate-spin opacity-60" />
+        ) : hasChildren ? (
+          <ChevronRight
+            className={cn(
+              "w-3 h-3 transition-transform opacity-60",
+              isExpanded && "rotate-90",
+            )}
+          />
+        ) : null}
+      </span>
+
+      {/* Status dot */}
+      {decorations?.statusDot && (
+        <span className={cn(
+          "shrink-0 w-1.5 h-1.5 rounded-full",
+          decorations.statusDot === "connected" && "bg-green-500",
+          decorations.statusDot === "error"     && "bg-red-500",
+          decorations.statusDot === "warning"   && "bg-yellow-500",
+          decorations.statusDot === "idle"      && "bg-muted-foreground",
+        )} />
+      )}
+
+      {/* Icon */}
+      {node.icon && (
+        <span className="shrink-0 flex items-center opacity-80">{node.icon}</span>
+      )}
+
+      {/* Label */}
+      <span
+        className="flex-1 truncate leading-none"
+        style={decorations?.labelColor ? { color: decorations.labelColor } : undefined}
       >
-        {/* Chevron / spinner */}
-        <span className="shrink-0 w-4 h-4 flex items-center justify-center">
-          {isLoading ? (
-            <Loader2 className="w-3 h-3 animate-spin opacity-60" />
-          ) : hasChildren ? (
-            <ChevronRight
-              className={cn(
-                "w-3 h-3 transition-transform opacity-60",
-                isExpanded && "rotate-90",
-              )}
-            />
-          ) : null}
+        {node.label}
+      </span>
+
+      {/* Badge */}
+      {decorations?.badge !== undefined && (typeof decorations.badge === "number" ? decorations.badge > 0 : !!decorations.badge) && (
+        <span className={cn(
+          "shrink-0 text-[10px] font-medium px-1 rounded-full min-w-[16px] text-center leading-4",
+          decorations.badgeColor === "red"    ? "bg-red-500 text-white"    :
+          decorations.badgeColor === "green"  ? "bg-green-600 text-white"  :
+          decorations.badgeColor === "yellow" ? "bg-yellow-500 text-black" :
+          decorations.badgeColor === "muted"  ? "bg-muted text-muted-foreground" :
+          "bg-primary text-primary-foreground",
+        )}>
+          {typeof decorations.badge === "number"
+            ? (decorations.badge > 99 ? "99+" : decorations.badge)
+            : decorations.badge}
         </span>
+      )}
 
-        {/* Status dot */}
-        {decorations?.statusDot && (
-          <span className={cn(
-            "shrink-0 w-1.5 h-1.5 rounded-full",
-            decorations.statusDot === "connected" && "bg-green-500",
-            decorations.statusDot === "error"     && "bg-red-500",
-            decorations.statusDot === "warning"   && "bg-yellow-500",
-            decorations.statusDot === "idle"      && "bg-muted-foreground",
-          )} />
-        )}
-
-        {/* Icon */}
-        {node.icon && (
-          <span className="shrink-0 flex items-center opacity-80">{node.icon}</span>
-        )}
-
-        {/* Label */}
-        <span
-          className="flex-1 truncate leading-none"
-          style={decorations?.labelColor ? { color: decorations.labelColor } : undefined}
-        >
-          {node.label}
-        </span>
-
-        {/* Badge */}
-        {decorations?.badge !== undefined && (typeof decorations.badge === "number" ? decorations.badge > 0 : !!decorations.badge) && (
-          <span className={cn(
-            "shrink-0 text-[10px] font-medium px-1 rounded-full min-w-[16px] text-center leading-4",
-            decorations.badgeColor === "red"    ? "bg-red-500 text-white"    :
-            decorations.badgeColor === "green"  ? "bg-green-600 text-white"  :
-            decorations.badgeColor === "yellow" ? "bg-yellow-500 text-black" :
-            decorations.badgeColor === "muted"  ? "bg-muted text-muted-foreground" :
-            "bg-primary text-primary-foreground",
-          )}>
-            {typeof decorations.badge === "number"
-              ? (decorations.badge > 99 ? "99+" : decorations.badge)
-              : decorations.badge}
-          </span>
-        )}
-
-        {/* Suffix */}
-        {node.suffix && (
-          <span className="shrink-0 flex items-center">{node.suffix}</span>
-        )}
-      </div>
-
-      {/* Children */}
-      {isExpanded && resolvedChildren && resolvedChildren.map((child) => (
-        <TreeNodeRow key={child.id} node={child} depth={depth + 1} />
-      ))}
-    </>
+      {/* Suffix */}
+      {node.suffix && (
+        <span className="shrink-0 flex items-center">{node.suffix}</span>
+      )}
+    </div>
   );
 }
 
@@ -391,24 +417,23 @@ function TreeContextMenu({
   onDismiss: () => void;
 }) {
   const menuRef = useRef<HTMLDivElement>(null);
-  const [pos, setPos] = useState({ x, y });
+  const [pos, setPos] = useState({ top: y, left: x });
 
+  // Adjust position after the menu has been measured, using positionContextMenu
   useEffect(() => {
     const el = menuRef.current;
     if (!el) return;
     const rect = el.getBoundingClientRect();
-    setPos({
-      x: Math.min(x, window.innerWidth  - rect.width  - 8),
-      y: Math.min(y, window.innerHeight - rect.height - 8),
-    });
+    const adjusted = positionContextMenu(x, y, { w: rect.width, h: rect.height });
+    setPos(adjusted);
   }, [x, y]);
 
   if (!node.contextMenu?.length) return null;
 
-  return (
+  const menu = (
     <div
       ref={menuRef}
-      style={{ position: "fixed", left: pos.x, top: pos.y, zIndex: 200 }}
+      style={{ position: "fixed", left: pos.left, top: pos.top, zIndex: 200 }}
       className="min-w-[160px] rounded-md border border-border bg-popover text-popover-foreground shadow-lg py-1 text-xs"
       onMouseDown={(e) => e.stopPropagation()}
     >
@@ -431,6 +456,8 @@ function TreeContextMenu({
       )}
     </div>
   );
+
+  return createPortal(menu, document.body);
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -439,17 +466,17 @@ function flattenVisible(
   nodes: TreeNode[],
   expandedIds: Set<string>,
   cachedChildren: Map<string, TreeNode[]>,
-): TreeNode[] {
-  const result: TreeNode[] = [];
-  function walk(list: TreeNode[]) {
+): Array<{ node: TreeNode; depth: number }> {
+  const result: Array<{ node: TreeNode; depth: number }> = [];
+  function walk(list: TreeNode[], depth: number) {
     for (const node of list) {
-      result.push(node);
+      result.push({ node, depth });
       if (expandedIds.has(node.id)) {
         const children = node.children ?? cachedChildren.get(node.id) ?? [];
-        walk(children);
+        walk(children, depth + 1);
       }
     }
   }
-  walk(nodes);
+  walk(nodes, 0);
   return result;
 }

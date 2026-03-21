@@ -133,5 +133,10 @@
     { "scope": "tag",                      "settings": { "foreground": "#569cd6" } },
     { "scope": "attribute.name",           "settings": { "foreground": "#9cdcfe" } },
     { "scope": "attribute.value",          "settings": { "foreground": "#ce9178" } }
-  ]
+  ],
+  "transforms": {
+    "button.hoverBackground":   { "base": "button.background",   "fn": "lighten", "amount": 0.15 },
+    "list.hoverBackground":     { "base": "editor.background",   "fn": "lighten", "amount": 0.08 },
+    "statusBar.hoverBackground":{ "base": "statusBar.background","fn": "lighten", "amount": 0.12 }
+  }
 }

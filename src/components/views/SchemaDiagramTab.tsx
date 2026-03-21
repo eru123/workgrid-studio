@@ -116,30 +116,31 @@ export function SchemaDiagramTab({ profileId, database }: Props) {
 
         if (cancelled) return;
 
+        type RowVal = string | number | null;
         setTables(
           (tableRes[0]?.rows ?? []).map((row) => ({
-            name: asString(row[0]),
-            engine: asString(row[1]),
-            rows: asNumber(row[2]),
-            comment: asString(row[3]),
+            name: asString(row[0] as RowVal),
+            engine: asString(row[1] as RowVal),
+            rows: asNumber(row[2] as RowVal),
+            comment: asString(row[3] as RowVal),
           })),
         );
         setColumns(
           (columnRes[0]?.rows ?? []).map((row) => ({
-            tableName: asString(row[0]),
-            columnName: asString(row[1]),
-            columnType: asString(row[2]),
-            key: asString(row[3]),
-            nullable: asString(row[4]).toUpperCase() === "YES",
+            tableName: asString(row[0] as RowVal),
+            columnName: asString(row[1] as RowVal),
+            columnType: asString(row[2] as RowVal),
+            key: asString(row[3] as RowVal),
+            nullable: asString(row[4] as RowVal).toUpperCase() === "YES",
           })),
         );
         setRelations(
           (relationRes[0]?.rows ?? []).map((row) => ({
-            constraintName: asString(row[0]),
-            tableName: asString(row[1]),
-            columnName: asString(row[2]),
-            referencedTableName: asString(row[3]),
-            referencedColumnName: asString(row[4]),
+            constraintName: asString(row[0] as RowVal),
+            tableName: asString(row[1] as RowVal),
+            columnName: asString(row[2] as RowVal),
+            referencedTableName: asString(row[3] as RowVal),
+            referencedColumnName: asString(row[4] as RowVal),
           })),
         );
       } catch (err) {

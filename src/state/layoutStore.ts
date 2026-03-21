@@ -57,7 +57,14 @@ export type EditorTabType =
   | "database-view"
   | "table-designer"
   | "table-data"
-  | "settings";
+  | "settings"
+  | "trigger"
+  | "routine"
+  | "view"
+  | "event"
+  | "users"
+  | "query-builder"
+  | "snippet";
 
 export interface EditorTab {
   id: string;
@@ -87,7 +94,7 @@ export interface SplitNode {
 
 export type SplitTree = SplitLeaf | SplitNode;
 
-export type ActivityView = "explorer" | "servers" | "models" | "tasks";
+export type ActivityView = "explorer" | "servers" | "snippets" | "models" | "tasks";
 
 interface LayoutState {
   activityBarWidth: number;
@@ -122,6 +129,9 @@ interface LayoutState {
 
   closedTabsStack: { tab: EditorTab; leafId: string }[];
   restoreLastClosedTab: () => void;
+
+  // Tab dirty state
+  markTabDirty: (tabId: string, dirty: boolean) => void;
 
   // Tab operations
   openTab: (tab: Omit<EditorTab, "id"> & { id?: string }, leafId?: string) => void;
@@ -305,6 +315,11 @@ export const useLayoutStore = create<LayoutState>((set) => ({
       debouncedSavePrefs({ ...stateToPrefs(state), secondarySidebarWidth: w });
       return { secondarySidebarWidth: w };
     }),
+
+  markTabDirty: (tabId, dirty) =>
+    set((state) => ({
+      editorTree: updateTabInTree(state.editorTree, tabId, { dirty }),
+    })),
 
   openTab: (tabData, leafId) =>
     set((state) => {

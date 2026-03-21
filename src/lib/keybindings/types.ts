@@ -63,6 +63,8 @@ export interface KeybindingEntry {
    *   "activeTabType == 'sql'"
    */
   when?: string;
+  /** Pre-compiled evaluator for `when`. Built at load time from `when` string. */
+  whenFn?: (ctx: WhenContext) => boolean;
   /** If true this is a default binding that can be overridden by the user file */
   isDefault?: boolean;
 }

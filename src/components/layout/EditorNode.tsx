@@ -55,6 +55,41 @@ const TableDataTab = lazy(() =>
     default: m.TableDataTab,
   })),
 );
+const TriggersView = lazy(() =>
+  import("@/components/views/TriggersView").then((m) => ({
+    default: m.TriggersView,
+  })),
+);
+const RoutineView = lazy(() =>
+  import("@/components/views/RoutineView").then((m) => ({
+    default: m.RoutineView,
+  })),
+);
+const ViewEditor = lazy(() =>
+  import("@/components/views/ViewEditor").then((m) => ({
+    default: m.ViewEditor,
+  })),
+);
+const EventsView = lazy(() =>
+  import("@/components/views/EventsView").then((m) => ({
+    default: m.EventsView,
+  })),
+);
+const UsersView = lazy(() =>
+  import("@/components/views/UsersView").then((m) => ({
+    default: m.UsersView,
+  })),
+);
+const QueryBuilderTab = lazy(() =>
+  import("@/components/views/QueryBuilderTab").then((m) => ({
+    default: m.QueryBuilderTab,
+  })),
+);
+const SnippetsPanel = lazy(() =>
+  import("@/components/views/SnippetsPanel").then((m) => ({
+    default: m.SnippetsPanel,
+  })),
+);
 const SettingsPage = lazy(() =>
   import("@/components/views/SettingsPage").then((m) => ({
     default: m.SettingsPage,
@@ -129,6 +164,20 @@ const TabContent = memo(function TabContent({ tab, leafId }: { tab: EditorTab; l
             database={tab.meta?.database ?? ""}
           />
         );
+      case "trigger":
+        return <TriggersView profileId={tab.meta?.profileId ?? ""} database={tab.meta?.database ?? ""} />;
+      case "routine":
+        return <RoutineView profileId={tab.meta?.profileId ?? ""} database={tab.meta?.database ?? ""} />;
+      case "view":
+        return <ViewEditor profileId={tab.meta?.profileId ?? ""} database={tab.meta?.database ?? ""} viewName={tab.meta?.viewName} />;
+      case "event":
+        return <EventsView profileId={tab.meta?.profileId ?? ""} database={tab.meta?.database ?? ""} />;
+      case "users":
+        return <UsersView profileId={tab.meta?.profileId ?? ""} />;
+      case "query-builder":
+        return <QueryBuilderTab profileId={tab.meta?.profileId ?? ""} database={tab.meta?.database} />;
+      case "snippet":
+        return <SnippetsPanel activeProfileId={tab.meta?.profileId} />;
       default:
         return (
           <div className="w-full h-full flex items-center justify-center text-muted-foreground text-sm">
@@ -147,6 +196,13 @@ const TAB_TYPE_LABELS: Record<EditorTab["type"], string> = {
   "database-view": "Database View",
   "table-designer": "Table Designer",
   "table-data": "Table Data",
+  trigger: "Trigger",
+  routine: "Routine",
+  view: "View",
+  event: "Event",
+  users: "Users",
+  "query-builder": "Query Builder",
+  snippet: "Snippets",
   models: "AI Models",
   tasks: "Tasks",
   settings: "Settings",
@@ -163,6 +219,13 @@ function tabIcon(type: EditorTab["type"], isActive: boolean): React.ReactNode {
     case "database-view":  return <Database className={cls} />;
     case "table-designer": return <Table2 className={cls} />;
     case "table-data":     return <Rows3 className={cls} />;
+    case "trigger":        return <Database className={cls} />;
+    case "routine":        return <Terminal className={cls} />;
+    case "view":           return <Database className={cls} />;
+    case "event":          return <Database className={cls} />;
+    case "users":          return <Database className={cls} />;
+    case "query-builder":  return <Database className={cls} />;
+    case "snippet":        return <FileText className={cls} />;
     case "models":         return <Boxes className={cls} />;
     case "tasks":          return <ListChecks className={cls} />;
     default:               return <FileText className={cls} />;

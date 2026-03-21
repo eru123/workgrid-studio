@@ -35,6 +35,15 @@ export function getContext(): Readonly<WhenContext> {
 //
 // Operator precedence: ! > && > ||  (same as JS)
 
+/**
+ * Parse a `when` expression once and return a reusable evaluator function.
+ * Call at registration time; store the result on the binding entry.
+ */
+export function compileWhen(expr: string): (ctx: Readonly<WhenContext>) => boolean {
+  const trimmed = expr.trim();
+  return (ctx) => evaluateWhen(trimmed, ctx);
+}
+
 export function evaluateWhen(expr: string | undefined, ctx: Readonly<WhenContext>): boolean {
   if (!expr) return true;
   return parseOr(expr.trim(), ctx);

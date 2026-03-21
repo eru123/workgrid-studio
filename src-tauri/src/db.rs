@@ -5,6 +5,7 @@ use crate::{AppError, AppResult, DbState};
 use mysql_async::prelude::*;
 use mysql_async::{Opts, OptsBuilder, Pool, PoolConstraints, PoolOpts, TxOpts};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -20,6 +21,7 @@ pub struct ConnectParams {
     pub user: String,
     pub password: String,
     pub database: Option<String>,
+    pub file_path: Option<String>,
     pub ssl: bool,
     pub ssl_ca_file: Option<String>,
     pub ssl_cert_file: Option<String>,
@@ -111,6 +113,66 @@ pub struct ProcessInfo {
     pub time: Option<i64>,
     pub state: Option<String>,
     pub info: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct ForeignKeyInfo {
+    pub constraint_name: String,
+    pub column_name: String,
+    pub referenced_table_name: String,
+    pub referenced_column_name: String,
+    pub update_rule: Option<String>,
+    pub delete_rule: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct IndexInfo {
+    pub name: String,
+    pub column_name: Option<String>,
+    pub seq_in_index: u64,
+    pub non_unique: u64,
+    pub index_type: String,
+    pub nullable: Option<String>,
+    pub comment: Option<String>,
+    pub index_comment: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct TriggerInfo {
+    pub name: String,
+    pub table_name: String,
+    pub timing: String,
+    pub event: String,
+    pub statement: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct RoutineInfo {
+    pub name: String,
+    pub routine_type: String,
+    pub data_type: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct ViewInfo {
+    pub name: String,
+    pub definition: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct EventInfo {
+    pub name: String,
+    pub status: Option<String>,
+    pub schedule: Option<String>,
+    pub event_definition: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct UserInfo {
+    pub user: String,
+    pub host: String,
+    pub plugin: Option<String>,
+    pub account_locked: Option<String>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -229,6 +291,62 @@ fn format_timeout_label(timeout_ms: u64) -> String {
     }
 }
 
+fn mysql_value_to_json(raw: &mysql_async::Value) -> serde_json::Value {
+    match raw {
+        mysql_async::Value::NULL => serde_json::Value::Null,
+        mysql_async::Value::Bytes(b) => match String::from_utf8(b.clone()) {
+            Ok(s) => serde_json::Value::String(s),
+            Err(_) => serde_json::Value::String(format!("[binary {} bytes]", b.len())),
+        },
+        mysql_async::Value::Int(n) => serde_json::Value::Number(serde_json::Number::from(*n)),
+        mysql_async::Value::UInt(n) => serde_json::Value::Number(serde_json::Number::from(*n)),
+        mysql_async::Value::Float(f) => serde_json::Number::from_f64(*f as f64)
+            .map(serde_json::Value::Number)
+            .unwrap_or_else(|| serde_json::Value::String(f.to_string())),
+        mysql_async::Value::Double(f) => serde_json::Number::from_f64(*f)
+            .map(serde_json::Value::Number)
+            .unwrap_or_else(|| serde_json::Value::String(f.to_string())),
+        mysql_async::Value::Date(y, m, d, h, mi, s, _us) => serde_json::Value::String(format!(
+            "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
+            y, m, d, h, mi, s
+        )),
+        mysql_async::Value::Time(neg, d, h, mi, s, _us) => {
+            let sign = if *neg { "-" } else { "" };
+            let total_hours = *d * 24 + u32::from(*h);
+            serde_json::Value::String(format!(
+                "{}{:02}:{:02}:{:02}",
+                sign, total_hours, mi, s
+            ))
+        }
+    }
+}
+
+async fn exec_use_database(
+    conn: &mut mysql_async::Conn,
+    database: &str,
+) -> AppResult<()> {
+    if database.trim().is_empty() {
+        return Ok(());
+    }
+    conn.query_drop(format!("USE {}", escape_ident(database)))
+        .await
+        .map_err(|e| AppError::database(format!("USE database error: {}", e)))
+}
+
+async fn fetch_show_create_value(
+    conn: &mut mysql_async::Conn,
+    query: String,
+    value_index: usize,
+) -> AppResult<String> {
+    let row = conn
+        .query_first::<mysql_async::Row, _>(query)
+        .await
+        .map_err(|e| AppError::database(e.to_string()))?
+        .ok_or_else(|| AppError::database("Object not found"))?;
+    row.get::<String, usize>(value_index)
+        .ok_or_else(|| AppError::database("DDL was unavailable"))
+}
+
 fn configured_label(value: bool) -> &'static str {
     if value {
         "enabled"
@@ -270,6 +388,29 @@ fn db_driver_label(db_type: &str) -> &str {
     } else {
         db_type
     }
+}
+
+fn row_string(row: &mysql_async::Row, idx: usize) -> String {
+    row.get::<String, usize>(idx).unwrap_or_default()
+}
+
+fn row_opt_string(row: &mysql_async::Row, idx: usize) -> Option<String> {
+    row.get::<Option<String>, usize>(idx).flatten()
+}
+
+fn row_u64(row: &mysql_async::Row, idx: usize) -> u64 {
+    row.get::<u64, usize>(idx).unwrap_or_default()
+}
+
+fn first_available_string(row: &mysql_async::Row, indexes: &[usize]) -> String {
+    for idx in indexes {
+        if let Some(value) = row.get::<String, usize>(*idx) {
+            if !value.is_empty() {
+                return value;
+            }
+        }
+    }
+    String::new()
 }
 
 async fn run_query_with_timeout<T, F>(
@@ -1243,6 +1384,1014 @@ pub async fn db_kill_process(
 }
 
 #[tauri::command]
+pub async fn db_update_row(
+    state: State<'_, DbState>,
+    log_state: tauri::State<'_, LogState>,
+    profile_id: String,
+    database: String,
+    table: String,
+    pk_columns: HashMap<String, String>,
+    changes: HashMap<String, String>,
+) -> AppResult<()> {
+    let pool = get_pool(&state, &profile_id)?;
+    let mut conn = pool.get_conn().await.map_err(|e| {
+        let msg = format!("Connection error: {}", e);
+        log_error(&log_state, "db", Some(&profile_id), &msg, None);
+        msg
+    })?;
+
+    if pk_columns.is_empty() || changes.is_empty() {
+        let msg = "Primary key columns and changes are required for row updates.".to_string();
+        log_error(&log_state, "db", Some(&profile_id), &msg, None);
+        return Err(AppError::validation(msg));
+    }
+
+    let mut set_entries: Vec<(String, String)> = changes.into_iter().collect();
+    set_entries.sort_by(|a, b| a.0.cmp(&b.0));
+    let mut where_entries: Vec<(String, String)> = pk_columns.into_iter().collect();
+    where_entries.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let mut params = Vec::with_capacity(set_entries.len() + where_entries.len());
+    let set_clause = set_entries
+        .into_iter()
+        .map(|(column, value)| {
+            params.push(mysql_async::Value::Bytes(value.into_bytes()));
+            format!("{} = ?", escape_ident(&column))
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let where_clause = where_entries
+        .into_iter()
+        .map(|(column, value)| {
+            params.push(mysql_async::Value::Bytes(value.into_bytes()));
+            format!("{} = ?", escape_ident(&column))
+        })
+        .collect::<Vec<_>>()
+        .join(" AND ");
+
+    let query = format!(
+        "UPDATE {}.{} SET {} WHERE {}",
+        escape_ident(&database),
+        escape_ident(&table),
+        set_clause,
+        where_clause
+    );
+
+    conn.exec_drop(&query, mysql_async::Params::Positional(params))
+        .await
+        .map_err(|e| {
+            let msg = format!("Failed to update row in {}.{}: {}", database, table, e);
+            log_error(&log_state, "db", Some(&profile_id), &msg, None);
+            msg
+        })?;
+
+    log_query_result(&log_state, &profile_id, &query, conn.affected_rows() as usize);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn db_get_foreign_keys(
+    state: State<'_, DbState>,
+    log_state: tauri::State<'_, LogState>,
+    profile_id: String,
+    database: String,
+    table: String,
+) -> AppResult<Vec<ForeignKeyInfo>> {
+    let pool = get_pool(&state, &profile_id)?;
+    let mut conn = pool.get_conn().await.map_err(|e| {
+        let msg = format!("Connection error: {}", e);
+        log_error(&log_state, "db", Some(&profile_id), &msg, None);
+        msg
+    })?;
+
+    let query = r#"
+        SELECT
+            kcu.CONSTRAINT_NAME,
+            kcu.COLUMN_NAME,
+            kcu.REFERENCED_TABLE_NAME,
+            kcu.REFERENCED_COLUMN_NAME,
+            rc.UPDATE_RULE,
+            rc.DELETE_RULE
+        FROM information_schema.KEY_COLUMN_USAGE kcu
+        LEFT JOIN information_schema.REFERENTIAL_CONSTRAINTS rc
+          ON rc.CONSTRAINT_SCHEMA = kcu.CONSTRAINT_SCHEMA
+         AND rc.CONSTRAINT_NAME = kcu.CONSTRAINT_NAME
+        WHERE kcu.TABLE_SCHEMA = :db
+          AND kcu.TABLE_NAME = :table
+          AND kcu.REFERENCED_TABLE_NAME IS NOT NULL
+        ORDER BY kcu.CONSTRAINT_NAME, kcu.ORDINAL_POSITION
+    "#;
+
+    let rows: Vec<(String, String, String, String, Option<String>, Option<String>)> = conn
+        .exec(
+            query,
+            params! {
+                "db" => database.clone(),
+                "table" => table.clone(),
+            },
+        )
+        .await
+        .map_err(|e| {
+            let msg = format!("Failed to load foreign keys for {}.{}: {}", database, table, e);
+            log_error(&log_state, "db", Some(&profile_id), &msg, None);
+            msg
+        })?;
+
+    log_query_result(&log_state, &profile_id, query, rows.len());
+    Ok(rows
+        .into_iter()
+        .map(
+            |(constraint_name, column_name, referenced_table_name, referenced_column_name, update_rule, delete_rule)| {
+                ForeignKeyInfo {
+                    constraint_name,
+                    column_name,
+                    referenced_table_name,
+                    referenced_column_name,
+                    update_rule,
+                    delete_rule,
+                }
+            },
+        )
+        .collect())
+}
+
+#[tauri::command]
+pub async fn db_get_indexes(
+    state: State<'_, DbState>,
+    log_state: tauri::State<'_, LogState>,
+    profile_id: String,
+    database: String,
+    table: String,
+) -> AppResult<Vec<IndexInfo>> {
+    let pool = get_pool(&state, &profile_id)?;
+    let mut conn = pool.get_conn().await.map_err(|e| {
+        let msg = format!("Connection error: {}", e);
+        log_error(&log_state, "db", Some(&profile_id), &msg, None);
+        msg
+    })?;
+
+    let query = format!(
+        "SHOW INDEX FROM {}.{}",
+        escape_ident(&database),
+        escape_ident(&table)
+    );
+
+    let rows: Vec<mysql_async::Row> = conn.query(&query).await.map_err(|e| {
+        let msg = format!("Failed to load indexes for {}.{}: {}", database, table, e);
+        log_error(&log_state, "db", Some(&profile_id), &msg, None);
+        msg
+    })?;
+
+    log_query_result(&log_state, &profile_id, &query, rows.len());
+    Ok(rows
+        .into_iter()
+        .map(|row| IndexInfo {
+            name: row_string(&row, 2),
+            column_name: row_opt_string(&row, 4),
+            seq_in_index: row_u64(&row, 3),
+            non_unique: row_u64(&row, 1),
+            index_type: row_string(&row, 10),
+            nullable: row_opt_string(&row, 9),
+            comment: row_opt_string(&row, 11),
+            index_comment: row_opt_string(&row, 12),
+        })
+        .collect())
+}
+
+#[tauri::command]
+pub async fn db_list_triggers(
+    state: State<'_, DbState>,
+    log_state: tauri::State<'_, LogState>,
+    profile_id: String,
+    database: String,
+) -> AppResult<Vec<TriggerInfo>> {
+    let pool = get_pool(&state, &profile_id)?;
+    let mut conn = pool.get_conn().await.map_err(|e| {
+        let msg = format!("Connection error: {}", e);
+        log_error(&log_state, "db", Some(&profile_id), &msg, None);
+        msg
+    })?;
+
+    let query = r#"
+        SELECT
+            TRIGGER_NAME,
+            EVENT_OBJECT_TABLE,
+            ACTION_TIMING,
+            EVENT_MANIPULATION,
+            ACTION_STATEMENT
+        FROM information_schema.TRIGGERS
+        WHERE TRIGGER_SCHEMA = :db
+        ORDER BY TRIGGER_NAME
+    "#;
+
+    let rows: Vec<(String, String, String, String, String)> = conn
+        .exec(query, params! { "db" => database.clone() })
+        .await
+        .map_err(|e| {
+            let msg = format!("Failed to load triggers for {}: {}", database, e);
+            log_error(&log_state, "db", Some(&profile_id), &msg, None);
+            msg
+        })?;
+
+    log_query_result(&log_state, &profile_id, query, rows.len());
+    Ok(rows
+        .into_iter()
+        .map(|(name, table_name, timing, event, statement)| TriggerInfo {
+            name,
+            table_name,
+            timing,
+            event,
+            statement,
+        })
+        .collect())
+}
+
+#[tauri::command]
+pub async fn db_get_trigger_ddl(
+    state: State<'_, DbState>,
+    log_state: tauri::State<'_, LogState>,
+    profile_id: String,
+    database: String,
+    trigger_name: String,
+) -> AppResult<String> {
+    let pool = get_pool(&state, &profile_id)?;
+    let mut conn = pool.get_conn().await.map_err(|e| {
+        let msg = format!("Connection error: {}", e);
+        log_error(&log_state, "db", Some(&profile_id), &msg, None);
+        msg
+    })?;
+
+    if !database.is_empty() {
+        conn.query_drop(format!("USE {}", escape_ident(&database)))
+            .await
+            .map_err(|e| {
+                let msg = format!("Failed to select database {}: {}", database, e);
+                log_error(&log_state, "db", Some(&profile_id), &msg, None);
+                msg
+            })?;
+    }
+
+    let query = format!("SHOW CREATE TRIGGER {}", escape_ident(&trigger_name));
+    let row = conn.query_first::<mysql_async::Row, _>(&query).await.map_err(|e| {
+        let msg = format!("Failed to load trigger DDL for {}: {}", trigger_name, e);
+        log_error(&log_state, "db", Some(&profile_id), &msg, None);
+        msg
+    })?;
+
+    let ddl = row
+        .map(|row| first_available_string(&row, &[2, 1]))
+        .unwrap_or_default();
+    log_query_result(&log_state, &profile_id, &query, usize::from(!ddl.is_empty()));
+    Ok(ddl)
+}
+
+#[tauri::command]
+pub async fn db_drop_trigger(
+    state: State<'_, DbState>,
+    log_state: tauri::State<'_, LogState>,
+    profile_id: String,
+    database: String,
+    trigger_name: String,
+) -> AppResult<()> {
+    let pool = get_pool(&state, &profile_id)?;
+    let mut conn = pool.get_conn().await.map_err(|e| {
+        let msg = format!("Connection error: {}", e);
+        log_error(&log_state, "db", Some(&profile_id), &msg, None);
+        msg
+    })?;
+
+    if !database.is_empty() {
+        conn.query_drop(format!("USE {}", escape_ident(&database)))
+            .await
+            .map_err(|e| {
+                let msg = format!("Failed to select database {}: {}", database, e);
+                log_error(&log_state, "db", Some(&profile_id), &msg, None);
+                msg
+            })?;
+    }
+
+    let query = format!("DROP TRIGGER IF EXISTS {}", escape_ident(&trigger_name));
+    conn.query_drop(&query).await.map_err(|e| {
+        let msg = format!("Failed to drop trigger {}: {}", trigger_name, e);
+        log_error(&log_state, "db", Some(&profile_id), &msg, None);
+        msg
+    })?;
+    log_query_result(&log_state, &profile_id, &query, 0);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn db_create_trigger(
+    state: State<'_, DbState>,
+    log_state: tauri::State<'_, LogState>,
+    profile_id: String,
+    database: String,
+    sql: String,
+) -> AppResult<()> {
+    let pool = get_pool(&state, &profile_id)?;
+    let mut conn = pool.get_conn().await.map_err(|e| {
+        let msg = format!("Connection error: {}", e);
+        log_error(&log_state, "db", Some(&profile_id), &msg, None);
+        msg
+    })?;
+
+    if !database.is_empty() {
+        conn.query_drop(format!("USE {}", escape_ident(&database)))
+            .await
+            .map_err(|e| {
+                let msg = format!("Failed to select database {}: {}", database, e);
+                log_error(&log_state, "db", Some(&profile_id), &msg, None);
+                msg
+            })?;
+    }
+
+    conn.query_drop(&sql).await.map_err(|e| {
+        let msg = format!("Failed to create trigger: {}", e);
+        log_error(&log_state, "db", Some(&profile_id), &msg, None);
+        msg
+    })?;
+    log_query(&log_state, &profile_id, &sql, None);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn db_list_routines(
+    state: State<'_, DbState>,
+    log_state: tauri::State<'_, LogState>,
+    profile_id: String,
+    database: String,
+    routine_type: String,
+) -> AppResult<Vec<RoutineInfo>> {
+    let pool = get_pool(&state, &profile_id)?;
+    let mut conn = pool.get_conn().await.map_err(|e| {
+        let msg = format!("Connection error: {}", e);
+        log_error(&log_state, "db", Some(&profile_id), &msg, None);
+        msg
+    })?;
+
+    let query = r#"
+        SELECT ROUTINE_NAME, ROUTINE_TYPE, DATA_TYPE
+        FROM information_schema.ROUTINES
+        WHERE ROUTINE_SCHEMA = :db AND ROUTINE_TYPE = :routine_type
+        ORDER BY ROUTINE_NAME
+    "#;
+
+    let rows: Vec<(String, String, Option<String>)> = conn
+        .exec(
+            query,
+            params! {
+                "db" => database.clone(),
+                "routine_type" => routine_type.clone(),
+            },
+        )
+        .await
+        .map_err(|e| {
+            let msg = format!(
+                "Failed to load routines for {} ({}): {}",
+                database, routine_type, e
+            );
+            log_error(&log_state, "db", Some(&profile_id), &msg, None);
+            msg
+        })?;
+
+    log_query_result(&log_state, &profile_id, query, rows.len());
+    Ok(rows
+        .into_iter()
+        .map(|(name, routine_type, data_type)| RoutineInfo {
+            name,
+            routine_type,
+            data_type,
+        })
+        .collect())
+}
+
+#[tauri::command]
+pub async fn db_get_routine_ddl(
+    state: State<'_, DbState>,
+    log_state: tauri::State<'_, LogState>,
+    profile_id: String,
+    database: String,
+    name: String,
+    routine_type: String,
+) -> AppResult<String> {
+    let pool = get_pool(&state, &profile_id)?;
+    let mut conn = pool.get_conn().await.map_err(|e| {
+        let msg = format!("Connection error: {}", e);
+        log_error(&log_state, "db", Some(&profile_id), &msg, None);
+        msg
+    })?;
+
+    if !database.is_empty() {
+        conn.query_drop(format!("USE {}", escape_ident(&database)))
+            .await
+            .map_err(|e| {
+                let msg = format!("Failed to select database {}: {}", database, e);
+                log_error(&log_state, "db", Some(&profile_id), &msg, None);
+                msg
+            })?;
+    }
+
+    let routine_kind = if routine_type.eq_ignore_ascii_case("FUNCTION") {
+        "FUNCTION"
+    } else {
+        "PROCEDURE"
+    };
+    let query = format!("SHOW CREATE {} {}", routine_kind, escape_ident(&name));
+    let row = conn.query_first::<mysql_async::Row, _>(&query).await.map_err(|e| {
+        let msg = format!("Failed to load routine DDL for {}: {}", name, e);
+        log_error(&log_state, "db", Some(&profile_id), &msg, None);
+        msg
+    })?;
+
+    let ddl = row
+        .map(|row| first_available_string(&row, &[2, 1]))
+        .unwrap_or_default();
+    log_query_result(&log_state, &profile_id, &query, usize::from(!ddl.is_empty()));
+    Ok(ddl)
+}
+
+#[tauri::command]
+pub async fn db_drop_routine(
+    state: State<'_, DbState>,
+    log_state: tauri::State<'_, LogState>,
+    profile_id: String,
+    database: String,
+    name: String,
+    routine_type: String,
+) -> AppResult<()> {
+    let pool = get_pool(&state, &profile_id)?;
+    let mut conn = pool.get_conn().await.map_err(|e| {
+        let msg = format!("Connection error: {}", e);
+        log_error(&log_state, "db", Some(&profile_id), &msg, None);
+        msg
+    })?;
+
+    if !database.is_empty() {
+        conn.query_drop(format!("USE {}", escape_ident(&database)))
+            .await
+            .map_err(|e| {
+                let msg = format!("Failed to select database {}: {}", database, e);
+                log_error(&log_state, "db", Some(&profile_id), &msg, None);
+                msg
+            })?;
+    }
+
+    let routine_kind = if routine_type.eq_ignore_ascii_case("FUNCTION") {
+        "FUNCTION"
+    } else {
+        "PROCEDURE"
+    };
+    let query = format!("DROP {} IF EXISTS {}", routine_kind, escape_ident(&name));
+    conn.query_drop(&query).await.map_err(|e| {
+        let msg = format!("Failed to drop routine {}: {}", name, e);
+        log_error(&log_state, "db", Some(&profile_id), &msg, None);
+        msg
+    })?;
+    log_query_result(&log_state, &profile_id, &query, 0);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn db_create_or_replace_routine(
+    state: State<'_, DbState>,
+    log_state: tauri::State<'_, LogState>,
+    profile_id: String,
+    database: String,
+    sql: String,
+) -> AppResult<()> {
+    let pool = get_pool(&state, &profile_id)?;
+    let mut conn = pool.get_conn().await.map_err(|e| {
+        let msg = format!("Connection error: {}", e);
+        log_error(&log_state, "db", Some(&profile_id), &msg, None);
+        msg
+    })?;
+
+    if !database.is_empty() {
+        conn.query_drop(format!("USE {}", escape_ident(&database)))
+            .await
+            .map_err(|e| {
+                let msg = format!("Failed to select database {}: {}", database, e);
+                log_error(&log_state, "db", Some(&profile_id), &msg, None);
+                msg
+            })?;
+    }
+
+    conn.query_drop(&sql).await.map_err(|e| {
+        let msg = format!("Failed to create or replace routine: {}", e);
+        log_error(&log_state, "db", Some(&profile_id), &msg, None);
+        msg
+    })?;
+    log_query(&log_state, &profile_id, &sql, None);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn db_list_views(
+    state: State<'_, DbState>,
+    log_state: tauri::State<'_, LogState>,
+    profile_id: String,
+    database: String,
+) -> AppResult<Vec<ViewInfo>> {
+    let pool = get_pool(&state, &profile_id)?;
+    let mut conn = pool.get_conn().await.map_err(|e| {
+        let msg = format!("Connection error: {}", e);
+        log_error(&log_state, "db", Some(&profile_id), &msg, None);
+        msg
+    })?;
+
+    let query = r#"
+        SELECT TABLE_NAME, VIEW_DEFINITION
+        FROM information_schema.VIEWS
+        WHERE TABLE_SCHEMA = :db
+        ORDER BY TABLE_NAME
+    "#;
+
+    let rows: Vec<(String, Option<String>)> = conn
+        .exec(query, params! { "db" => database.clone() })
+        .await
+        .map_err(|e| {
+            let msg = format!("Failed to load views for {}: {}", database, e);
+            log_error(&log_state, "db", Some(&profile_id), &msg, None);
+            msg
+        })?;
+
+    log_query_result(&log_state, &profile_id, query, rows.len());
+    Ok(rows
+        .into_iter()
+        .map(|(name, definition)| ViewInfo { name, definition })
+        .collect())
+}
+
+#[tauri::command]
+pub async fn db_get_view_ddl(
+    state: State<'_, DbState>,
+    log_state: tauri::State<'_, LogState>,
+    profile_id: String,
+    database: String,
+    view_name: String,
+) -> AppResult<String> {
+    let pool = get_pool(&state, &profile_id)?;
+    let mut conn = pool.get_conn().await.map_err(|e| {
+        let msg = format!("Connection error: {}", e);
+        log_error(&log_state, "db", Some(&profile_id), &msg, None);
+        msg
+    })?;
+
+    if !database.is_empty() {
+        conn.query_drop(format!("USE {}", escape_ident(&database)))
+            .await
+            .map_err(|e| {
+                let msg = format!("Failed to select database {}: {}", database, e);
+                log_error(&log_state, "db", Some(&profile_id), &msg, None);
+                msg
+            })?;
+    }
+
+    let query = format!("SHOW CREATE VIEW {}", escape_ident(&view_name));
+    let row = conn.query_first::<mysql_async::Row, _>(&query).await.map_err(|e| {
+        let msg = format!("Failed to load view DDL for {}: {}", view_name, e);
+        log_error(&log_state, "db", Some(&profile_id), &msg, None);
+        msg
+    })?;
+
+    let ddl = row
+        .map(|row| first_available_string(&row, &[1, 0]))
+        .unwrap_or_default();
+    log_query_result(&log_state, &profile_id, &query, usize::from(!ddl.is_empty()));
+    Ok(ddl)
+}
+
+#[tauri::command]
+pub async fn db_drop_view(
+    state: State<'_, DbState>,
+    log_state: tauri::State<'_, LogState>,
+    profile_id: String,
+    database: String,
+    view_name: String,
+) -> AppResult<()> {
+    let pool = get_pool(&state, &profile_id)?;
+    let mut conn = pool.get_conn().await.map_err(|e| {
+        let msg = format!("Connection error: {}", e);
+        log_error(&log_state, "db", Some(&profile_id), &msg, None);
+        msg
+    })?;
+
+    if !database.is_empty() {
+        conn.query_drop(format!("USE {}", escape_ident(&database)))
+            .await
+            .map_err(|e| {
+                let msg = format!("Failed to select database {}: {}", database, e);
+                log_error(&log_state, "db", Some(&profile_id), &msg, None);
+                msg
+            })?;
+    }
+
+    let query = format!("DROP VIEW IF EXISTS {}", escape_ident(&view_name));
+    conn.query_drop(&query).await.map_err(|e| {
+        let msg = format!("Failed to drop view {}: {}", view_name, e);
+        log_error(&log_state, "db", Some(&profile_id), &msg, None);
+        msg
+    })?;
+    log_query_result(&log_state, &profile_id, &query, 0);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn db_create_or_replace_view(
+    state: State<'_, DbState>,
+    log_state: tauri::State<'_, LogState>,
+    profile_id: String,
+    database: String,
+    sql: String,
+) -> AppResult<()> {
+    let pool = get_pool(&state, &profile_id)?;
+    let mut conn = pool.get_conn().await.map_err(|e| {
+        let msg = format!("Connection error: {}", e);
+        log_error(&log_state, "db", Some(&profile_id), &msg, None);
+        msg
+    })?;
+
+    if !database.is_empty() {
+        conn.query_drop(format!("USE {}", escape_ident(&database)))
+            .await
+            .map_err(|e| {
+                let msg = format!("Failed to select database {}: {}", database, e);
+                log_error(&log_state, "db", Some(&profile_id), &msg, None);
+                msg
+            })?;
+    }
+
+    conn.query_drop(&sql).await.map_err(|e| {
+        let msg = format!("Failed to create or replace view: {}", e);
+        log_error(&log_state, "db", Some(&profile_id), &msg, None);
+        msg
+    })?;
+    log_query(&log_state, &profile_id, &sql, None);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn db_list_events(
+    state: State<'_, DbState>,
+    log_state: tauri::State<'_, LogState>,
+    profile_id: String,
+    database: String,
+) -> AppResult<Vec<EventInfo>> {
+    let pool = get_pool(&state, &profile_id)?;
+    let mut conn = pool.get_conn().await.map_err(|e| {
+        let msg = format!("Connection error: {}", e);
+        log_error(&log_state, "db", Some(&profile_id), &msg, None);
+        msg
+    })?;
+
+    let query = r#"
+        SELECT EVENT_NAME, STATUS, CONCAT(INTERVAL_VALUE, ' ', INTERVAL_FIELD), EVENT_DEFINITION
+        FROM information_schema.EVENTS
+        WHERE EVENT_SCHEMA = :db
+        ORDER BY EVENT_NAME
+    "#;
+
+    let rows: Vec<(String, Option<String>, Option<String>, Option<String>)> = conn
+        .exec(query, params! { "db" => database.clone() })
+        .await
+        .map_err(|e| {
+            let msg = format!("Failed to load events for {}: {}", database, e);
+            log_error(&log_state, "db", Some(&profile_id), &msg, None);
+            msg
+        })?;
+
+    log_query_result(&log_state, &profile_id, query, rows.len());
+    Ok(rows
+        .into_iter()
+        .map(|(name, status, schedule, event_definition)| EventInfo {
+            name,
+            status,
+            schedule,
+            event_definition,
+        })
+        .collect())
+}
+
+#[tauri::command]
+pub async fn db_get_event_ddl(
+    state: State<'_, DbState>,
+    log_state: tauri::State<'_, LogState>,
+    profile_id: String,
+    database: String,
+    event_name: String,
+) -> AppResult<String> {
+    let pool = get_pool(&state, &profile_id)?;
+    let mut conn = pool.get_conn().await.map_err(|e| {
+        let msg = format!("Connection error: {}", e);
+        log_error(&log_state, "db", Some(&profile_id), &msg, None);
+        msg
+    })?;
+
+    if !database.is_empty() {
+        conn.query_drop(format!("USE {}", escape_ident(&database)))
+            .await
+            .map_err(|e| {
+                let msg = format!("Failed to select database {}: {}", database, e);
+                log_error(&log_state, "db", Some(&profile_id), &msg, None);
+                msg
+            })?;
+    }
+
+    let query = format!("SHOW CREATE EVENT {}", escape_ident(&event_name));
+    let row = conn.query_first::<mysql_async::Row, _>(&query).await.map_err(|e| {
+        let msg = format!("Failed to load event DDL for {}: {}", event_name, e);
+        log_error(&log_state, "db", Some(&profile_id), &msg, None);
+        msg
+    })?;
+
+    let ddl = row
+        .map(|row| first_available_string(&row, &[3, 2, 1]))
+        .unwrap_or_default();
+    log_query_result(&log_state, &profile_id, &query, usize::from(!ddl.is_empty()));
+    Ok(ddl)
+}
+
+#[tauri::command]
+pub async fn db_drop_event(
+    state: State<'_, DbState>,
+    log_state: tauri::State<'_, LogState>,
+    profile_id: String,
+    database: String,
+    event_name: String,
+) -> AppResult<()> {
+    let pool = get_pool(&state, &profile_id)?;
+    let mut conn = pool.get_conn().await.map_err(|e| {
+        let msg = format!("Connection error: {}", e);
+        log_error(&log_state, "db", Some(&profile_id), &msg, None);
+        msg
+    })?;
+
+    if !database.is_empty() {
+        conn.query_drop(format!("USE {}", escape_ident(&database)))
+            .await
+            .map_err(|e| {
+                let msg = format!("Failed to select database {}: {}", database, e);
+                log_error(&log_state, "db", Some(&profile_id), &msg, None);
+                msg
+            })?;
+    }
+
+    let query = format!("DROP EVENT IF EXISTS {}", escape_ident(&event_name));
+    conn.query_drop(&query).await.map_err(|e| {
+        let msg = format!("Failed to drop event {}: {}", event_name, e);
+        log_error(&log_state, "db", Some(&profile_id), &msg, None);
+        msg
+    })?;
+    log_query_result(&log_state, &profile_id, &query, 0);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn db_create_event(
+    state: State<'_, DbState>,
+    log_state: tauri::State<'_, LogState>,
+    profile_id: String,
+    database: String,
+    sql: String,
+) -> AppResult<()> {
+    let pool = get_pool(&state, &profile_id)?;
+    let mut conn = pool.get_conn().await.map_err(|e| {
+        let msg = format!("Connection error: {}", e);
+        log_error(&log_state, "db", Some(&profile_id), &msg, None);
+        msg
+    })?;
+
+    if !database.is_empty() {
+        conn.query_drop(format!("USE {}", escape_ident(&database)))
+            .await
+            .map_err(|e| {
+                let msg = format!("Failed to select database {}: {}", database, e);
+                log_error(&log_state, "db", Some(&profile_id), &msg, None);
+                msg
+            })?;
+    }
+
+    conn.query_drop(&sql).await.map_err(|e| {
+        let msg = format!("Failed to create event: {}", e);
+        log_error(&log_state, "db", Some(&profile_id), &msg, None);
+        msg
+    })?;
+    log_query(&log_state, &profile_id, &sql, None);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn db_list_users(
+    state: State<'_, DbState>,
+    log_state: tauri::State<'_, LogState>,
+    profile_id: String,
+) -> AppResult<Vec<UserInfo>> {
+    let pool = get_pool(&state, &profile_id)?;
+    let mut conn = pool.get_conn().await.map_err(|e| {
+        let msg = format!("Connection error: {}", e);
+        log_error(&log_state, "db", Some(&profile_id), &msg, None);
+        msg
+    })?;
+
+    let query = "SELECT User, Host, plugin, account_locked FROM mysql.user ORDER BY User, Host";
+    let rows: Vec<(String, String, Option<String>, Option<String>)> = conn.query(query).await.map_err(|e| {
+        let msg = format!("Failed to load users: {}", e);
+        log_error(&log_state, "db", Some(&profile_id), &msg, None);
+        msg
+    })?;
+
+    log_query_result(&log_state, &profile_id, query, rows.len());
+    Ok(rows
+        .into_iter()
+        .map(|(user, host, plugin, account_locked)| UserInfo {
+            user,
+            host,
+            plugin,
+            account_locked,
+        })
+        .collect())
+}
+
+#[tauri::command]
+pub async fn db_get_user_grants(
+    state: State<'_, DbState>,
+    log_state: tauri::State<'_, LogState>,
+    profile_id: String,
+    user: String,
+    host: String,
+) -> AppResult<Vec<String>> {
+    let pool = get_pool(&state, &profile_id)?;
+    let mut conn = pool.get_conn().await.map_err(|e| {
+        let msg = format!("Connection error: {}", e);
+        log_error(&log_state, "db", Some(&profile_id), &msg, None);
+        msg
+    })?;
+
+    let query = format!("SHOW GRANTS FOR '{}'@'{}'", escape_sql_str(&user), escape_sql_str(&host));
+    let rows: Vec<String> = conn.query(&query).await.map_err(|e| {
+        let msg = format!("Failed to load grants for {}@{}: {}", user, host, e);
+        log_error(&log_state, "db", Some(&profile_id), &msg, None);
+        msg
+    })?;
+
+    log_query_result(&log_state, &profile_id, &query, rows.len());
+    Ok(rows)
+}
+
+#[tauri::command]
+pub async fn db_create_user(
+    state: State<'_, DbState>,
+    log_state: tauri::State<'_, LogState>,
+    profile_id: String,
+    user: String,
+    host: String,
+    password: String,
+) -> AppResult<()> {
+    let pool = get_pool(&state, &profile_id)?;
+    let mut conn = pool.get_conn().await.map_err(|e| {
+        let msg = format!("Connection error: {}", e);
+        log_error(&log_state, "db", Some(&profile_id), &msg, None);
+        msg
+    })?;
+
+    let query = format!(
+        "CREATE USER IF NOT EXISTS '{}'@'{}' IDENTIFIED BY ?",
+        escape_sql_str(&user),
+        escape_sql_str(&host)
+    );
+    conn.exec_drop(&query, (password,)).await.map_err(|e| {
+        let msg = format!("Failed to create user {}@{}: {}", user, host, e);
+        log_error(&log_state, "db", Some(&profile_id), &msg, None);
+        msg
+    })?;
+
+    log_query(&log_state, &profile_id, &query, None);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn db_drop_user(
+    state: State<'_, DbState>,
+    log_state: tauri::State<'_, LogState>,
+    profile_id: String,
+    user: String,
+    host: String,
+) -> AppResult<()> {
+    let pool = get_pool(&state, &profile_id)?;
+    let mut conn = pool.get_conn().await.map_err(|e| {
+        let msg = format!("Connection error: {}", e);
+        log_error(&log_state, "db", Some(&profile_id), &msg, None);
+        msg
+    })?;
+
+    let query = format!(
+        "DROP USER IF EXISTS '{}'@'{}'",
+        escape_sql_str(&user),
+        escape_sql_str(&host)
+    );
+    conn.query_drop(&query).await.map_err(|e| {
+        let msg = format!("Failed to drop user {}@{}: {}", user, host, e);
+        log_error(&log_state, "db", Some(&profile_id), &msg, None);
+        msg
+    })?;
+
+    log_query(&log_state, &profile_id, &query, None);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn db_grant(
+    state: State<'_, DbState>,
+    log_state: tauri::State<'_, LogState>,
+    profile_id: String,
+    privileges: String,
+    on_what: String,
+    user: String,
+    host: String,
+) -> AppResult<()> {
+    let pool = get_pool(&state, &profile_id)?;
+    let mut conn = pool.get_conn().await.map_err(|e| {
+        let msg = format!("Connection error: {}", e);
+        log_error(&log_state, "db", Some(&profile_id), &msg, None);
+        msg
+    })?;
+
+    let query = format!(
+        "GRANT {} ON {} TO '{}'@'{}'",
+        privileges,
+        on_what,
+        escape_sql_str(&user),
+        escape_sql_str(&host)
+    );
+    conn.query_drop(&query).await.map_err(|e| {
+        let msg = format!("Failed to grant privileges to {}@{}: {}", user, host, e);
+        log_error(&log_state, "db", Some(&profile_id), &msg, None);
+        msg
+    })?;
+
+    log_query(&log_state, &profile_id, &query, None);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn db_revoke(
+    state: State<'_, DbState>,
+    log_state: tauri::State<'_, LogState>,
+    profile_id: String,
+    privileges: String,
+    on_what: String,
+    user: String,
+    host: String,
+) -> AppResult<()> {
+    let pool = get_pool(&state, &profile_id)?;
+    let mut conn = pool.get_conn().await.map_err(|e| {
+        let msg = format!("Connection error: {}", e);
+        log_error(&log_state, "db", Some(&profile_id), &msg, None);
+        msg
+    })?;
+
+    let query = format!(
+        "REVOKE {} ON {} FROM '{}'@'{}'",
+        privileges,
+        on_what,
+        escape_sql_str(&user),
+        escape_sql_str(&host)
+    );
+    conn.query_drop(&query).await.map_err(|e| {
+        let msg = format!("Failed to revoke privileges from {}@{}: {}", user, host, e);
+        log_error(&log_state, "db", Some(&profile_id), &msg, None);
+        msg
+    })?;
+
+    log_query(&log_state, &profile_id, &query, None);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn db_flush_privileges(
+    state: State<'_, DbState>,
+    log_state: tauri::State<'_, LogState>,
+    profile_id: String,
+) -> AppResult<()> {
+    let pool = get_pool(&state, &profile_id)?;
+    let mut conn = pool.get_conn().await.map_err(|e| {
+        let msg = format!("Connection error: {}", e);
+        log_error(&log_state, "db", Some(&profile_id), &msg, None);
+        msg
+    })?;
+
+    let query = "FLUSH PRIVILEGES";
+    conn.query_drop(query).await.map_err(|e| {
+        let msg = format!("Failed to flush privileges: {}", e);
+        log_error(&log_state, "db", Some(&profile_id), &msg, None);
+        msg
+    })?;
+
+    log_query(&log_state, &profile_id, query, None);
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn db_execute_query(
     state: State<'_, DbState>,
     log_state: tauri::State<'_, LogState>,
@@ -1428,7 +2577,6 @@ pub async fn db_query(
     Ok(results)
 }
 
-// ─── Schema DDL for AI context ───────────────────────────────────────
 
 #[tauri::command]
 pub async fn db_get_schema_ddl(
