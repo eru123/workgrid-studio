@@ -175,11 +175,9 @@ export const useSchemaStore = create<SchemaState>((set) => ({
         }),
 
     setLoading: (key, kind, loading) =>
-        startTransition(() => {
-            set((state) => {
-                const loadingKey = kind === "databases" ? "loadingDatabases" : kind === "tables" ? "loadingTables" : "loadingColumns";
-                return { [loadingKey]: { ...state[loadingKey], [key]: loading } };
-            });
+        set((state) => {
+            const loadingKey = kind === "databases" ? "loadingDatabases" : kind === "tables" ? "loadingTables" : "loadingColumns";
+            return { [loadingKey]: { ...state[loadingKey], [key]: loading } };
         }),
 
     setLatency: (profileId, ms) =>

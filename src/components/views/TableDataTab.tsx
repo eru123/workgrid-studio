@@ -21,6 +21,7 @@ import {
   measureDataGridColumnWidth,
 } from "@/lib/utils/dataGrid";
 import { useAppStore } from "@/state/appStore";
+import { notifyError, notifySuccess } from "@/lib/notifications";
 import { useSchemaStore } from "@/state/schemaStore";
 import { useProfilesStore } from "@/state/profilesStore";
 import { FindToolbar } from "@/components/ui/FindToolbar";
@@ -482,11 +483,7 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
       setRows([]);
       setColumns([]);
       setTotalRows(0);
-      useAppStore.getState().addToast({
-        title: "Query Error",
-        description: String(e),
-        variant: "destructive",
-      });
+      notifyError("Query Error", String(e));
     } finally {
       setLoading(false);
     }
@@ -906,16 +903,9 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
       a.click();
       URL.revokeObjectURL(url);
 
-      useAppStore.getState().addToast({
-        title: "Export Successful",
-        description: `Exported ${rows.length} rows to ${format.toUpperCase()}.`,
-      });
+      notifySuccess("Export Successful", `Exported ${rows.length} rows to ${format.toUpperCase()}.`);
     } catch (e) {
-      useAppStore.getState().addToast({
-        title: "Export Failed",
-        description: String(e),
-        variant: "destructive",
-      });
+      notifyError("Export Failed", String(e));
     }
   }, [rows, columns, tableName]);
 
@@ -993,20 +983,13 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
         }
       }
 
-      useAppStore.getState().addToast({
-        title: "Changes Applied",
-        description: `Successfully applied ${queries.length} change(s).`,
-      });
+      notifySuccess("Changes Applied", `Successfully applied ${queries.length} change(s).`);
 
       await fetchData();
 
     } catch (e) {
       setApplyError(String(e));
-      useAppStore.getState().addToast({
-        title: "Failed to apply changes",
-        description: String(e),
-        variant: "destructive",
-      });
+      notifyError("Failed to apply changes", String(e));
     } finally {
       setIsApplying(false);
     }

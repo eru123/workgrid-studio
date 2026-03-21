@@ -5,6 +5,7 @@ import {
   useMemo,
   useEffect,
   useDeferredValue,
+  memo,
 } from "react";
 import { dbQuery, QueryResultSet } from "@/lib/db";
 import {
@@ -16,13 +17,13 @@ import {
 import {
   detectContext,
   getSuggestions,
-  measureCursorPosition,
 } from "@/lib/sqlSuggestions";
 import type { Suggestion } from "@/lib/sqlSuggestions";
 import { SqlAutocomplete } from "@/components/ui/SqlAutocomplete";
 import { useSchemaStore } from "@/state/schemaStore";
 import { useLayoutStore } from "@/state/layoutStore";
 import { useAppStore } from "@/state/appStore";
+import { notifyError, notifySuccess } from "@/lib/notifications";
 import { useModelsStore } from "@/state/modelsStore";
 import { useProfilesStore } from "@/state/profilesStore";
 
@@ -525,6 +526,113 @@ function sortQueryGridRows(
 }
 
 // ═══════════════════════════════════════════════════════════════════════
+//  ResultRow — memoized table row for the query result grid
+//  Passing primitive/stable props lets React.memo skip re-renders for
+//  rows that are unaffected by the current cell selection change.
+// ═══════════════════════════════════════════════════════════════════════
+
+interface ResultRowProps {
+  row: (string | number | null)[];
+  ri: number;
+  originalRowIdx: number;
+  isSelectedRow: boolean;
+  selectedColIdx: number | null;
+  isCurrentMatchRow: boolean;
+  currentMatchColIdx: number | undefined;
+  noSelection: boolean;
+  lowerFindQuery: string;
+  activeNumericColumns: Set<number>;
+  activeResultIdx: number;
+  getResultColWidth: (resultIdx: number, colIdx: number) => number | undefined;
+  setSelectedCell: (cell: { rowIdx: number; colIdx: number }) => void;
+  setCellContextMenu: (menu: { x: number; y: number; rowIdx: number; colIdx: number; value: string | number | null } | null) => void;
+  wordWrap: boolean;
+}
+
+const ResultRow = memo(function ResultRow({
+  row,
+  ri,
+  isSelectedRow,
+  selectedColIdx,
+  isCurrentMatchRow,
+  currentMatchColIdx,
+  noSelection,
+  lowerFindQuery,
+  activeNumericColumns,
+  activeResultIdx,
+  getResultColWidth,
+  setSelectedCell,
+  setCellContextMenu,
+  wordWrap,
+}: ResultRowProps) {
+  return (
+    <tr
+      className="group border-b hover:bg-accent/20 transition-colors"
+      role="row"
+      aria-rowindex={ri + 2}
+    >
+      <td
+        className="sticky left-0 z-10 bg-background px-2 py-1 border-r text-muted-foreground/40 select-none group-hover:bg-accent/20"
+        role="rowheader"
+        aria-colindex={1}
+      >
+        {ri + 1}
+      </td>
+      {row.map((val, ci) => {
+        const isMatch = lowerFindQuery && val !== null && String(val).toLowerCase().includes(lowerFindQuery);
+        const isCurrent = isCurrentMatchRow && currentMatchColIdx === ci;
+        const isSelected = isSelectedRow && selectedColIdx === ci;
+        const isNumeric = activeNumericColumns.has(ci);
+        const colWidth = getResultColWidth(activeResultIdx, ci);
+        const cellText = getDataGridCellText(val);
+        return (
+          <td
+            key={ci}
+            id={`qcell-${ri}-${ci}`}
+            role="gridcell"
+            aria-colindex={ci + 2}
+            aria-selected={isSelected}
+            tabIndex={isSelected || (noSelection && ri === 0 && ci === 0) ? 0 : -1}
+            className={cn(
+              "px-2 py-1 border-r font-mono transition-all cursor-default align-top bg-background",
+              isNumeric && "text-right tabular-nums",
+              val === null ? "text-muted-foreground/40 italic" : "",
+              isCurrent && "ring-2 ring-primary ring-inset z-10 bg-primary/20",
+              !isCurrent && isMatch && "bg-yellow-500/30",
+              isSelected && !isCurrent && "ring-1 ring-primary/60 bg-primary/8",
+            )}
+            style={colWidth ? { width: colWidth, minWidth: colWidth, maxWidth: colWidth } : undefined}
+            title={cellText}
+            onClick={() => setSelectedCell({ rowIdx: ri, colIdx: ci })}
+            onFocus={() => setSelectedCell({ rowIdx: ri, colIdx: ci })}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              setSelectedCell({ rowIdx: ri, colIdx: ci });
+              setCellContextMenu({ x: e.clientX, y: e.clientY, rowIdx: ri, colIdx: ci, value: val });
+            }}
+          >
+            {val === null ? (
+              <span className="text-muted-foreground/40 italic">NULL</span>
+            ) : (
+              <div
+                className={cn(
+                  "min-w-0",
+                  wordWrap ? "whitespace-pre-wrap break-all" : "overflow-hidden text-ellipsis whitespace-nowrap",
+                  isNumeric && "text-right",
+                )}
+                style={!wordWrap ? { maxWidth: colWidth ? Math.max(colWidth - 16, 64) : 280 } : undefined}
+              >
+                {String(val)}
+              </div>
+            )}
+          </td>
+        );
+      })}
+    </tr>
+  );
+});
+
+// ═══════════════════════════════════════════════════════════════════════
 //  Component
 // ═══════════════════════════════════════════════════════════════════════
 
@@ -598,6 +706,8 @@ export function QueryTab({
   const [isFindOpen, setIsFindOpen] = useState(false);
   const [findQuery, setFindQuery] = useState("");
   const [findMatches, setFindMatches] = useState<{ rowIdx: number; colIdx: number }[]>([]);
+  const findMatchesRef = useRef(findMatches);
+  findMatchesRef.current = findMatches;
   const [currentMatchIdx, setCurrentMatchIdx] = useState(0);
 
   // ── Column widths (resizing) ─────────────────────────────
@@ -900,11 +1010,7 @@ export function QueryTab({
         setLastSavedSql(contents);
       })
       .catch((err) => {
-        useAppStore.getState().addToast({
-          title: "Saved Query Load Failed",
-          description: String(err),
-          variant: "destructive",
-        });
+        notifyError("Saved Query Load Failed", String(err));
       });
   }, [readSavedQueryText, savedQueryPath]);
 
@@ -969,16 +1075,9 @@ export function QueryTab({
       const filename = path.split(/[/\\]/).pop() || "Query";
       updateTab(tabId, { title: filename });
 
-      useAppStore.getState().addToast({
-        title: "File Saved",
-        description: `Successfully saved to ${path}`,
-      });
+      notifySuccess("File Saved", `Successfully saved to ${path}`);
     } catch (e) {
-      useAppStore.getState().addToast({
-        title: "Save Failed",
-        description: String(e),
-        variant: "destructive",
-      });
+      notifyError("Save Failed", String(e));
     }
   }, [sql, tabId, updateTab]);
 
@@ -1001,11 +1100,7 @@ export function QueryTab({
       const filename = selected.split(/[/\\]/).pop() || "Query";
       updateTab(tabId, { title: filename });
     } catch (e) {
-      useAppStore.getState().addToast({
-        title: "Open Failed",
-        description: String(e),
-        variant: "destructive",
-      });
+      notifyError("Open Failed", String(e));
     }
   }, [tabId, updateTab]);
 
@@ -1013,11 +1108,7 @@ export function QueryTab({
   const handleSaveSavedQuery = useCallback(async () => {
     const trimmedName = savedQueryNameDraft.trim();
     if (!trimmedName) {
-      useAppStore.getState().addToast({
-        title: "Saved Query Name Required",
-        description: "Enter a name before saving this query.",
-        variant: "destructive",
-      });
+      notifyError("Saved Query Name Required", "Enter a name before saving this query.");
       return;
     }
 
@@ -1050,16 +1141,9 @@ export function QueryTab({
       });
       setShowSaveQueryModal(false);
 
-      useAppStore.getState().addToast({
-        title: currentSavedQuery ? "Saved Query Updated" : "Saved Query Created",
-        description: `${entry.name} is now available in Explorer > Saved Queries.`,
-      });
+      notifySuccess(currentSavedQuery ? "Saved Query Updated" : "Saved Query Created", `${entry.name} is now available in Explorer > Saved Queries.`);
     } catch (error) {
-      useAppStore.getState().addToast({
-        title: "Saved Query Failed",
-        description: String(error),
-        variant: "destructive",
-      });
+      notifyError("Saved Query Failed", String(error));
     } finally {
       setIsSavingSavedQuery(false);
     }
@@ -1173,12 +1257,13 @@ export function QueryTab({
     });
   }, [ensureResultRowsLoaded, activeResultIdx, shouldVirtualizeResults]);
 
-  const scrollToMatch = useCallback((idx: number, matches = findMatches) => {
-    const match = matches[idx];
+  const scrollToMatch = useCallback((idx: number, matches?: { rowIdx: number; colIdx: number }[]) => {
+    const m = matches ?? findMatchesRef.current;
+    const match = m[idx];
     if (!match) return;
 
     scrollResultCellIntoView(match.rowIdx, match.colIdx, "center");
-  }, [findMatches, scrollResultCellIntoView]);
+  }, [scrollResultCellIntoView]); // stable — findMatches read via ref, no reactive dep
 
   const handleSearch = useCallback((q: string) => {
     setFindQuery(q);
@@ -1431,11 +1516,13 @@ export function QueryTab({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [searchActiveResult, searchActiveRows, shouldHandleResultGridKeys]);
 
-  // Sync dirty state
+  // Sync dirty state — debounced to avoid thrashing layoutStore on every keystroke
   useEffect(() => {
-    if (tabId) {
+    if (!tabId) return;
+    const timer = setTimeout(() => {
       updateTab(tabId, { dirty: sql !== lastSavedSql });
-    }
+    }, 300);
+    return () => clearTimeout(timer);
   }, [sql, lastSavedSql, tabId, updateTab]);
 
   const executeQuery = useCallback(
@@ -1532,11 +1619,7 @@ export function QueryTab({
         setExecutionTime(elapsed);
         setError(String(e));
         setHasRun(true);
-        useAppStore.getState().addToast({
-          title: "Query Error",
-          description: String(e),
-          variant: "destructive",
-        });
+        notifyError("Query Error", String(e));
       } finally {
         if (token === runTokenRef.current) {
           setRunning(false);
@@ -1663,11 +1746,7 @@ export function QueryTab({
       if (token !== explainTokenRef.current) return;
       setExplainPayload(null);
       setExplainError(String(e));
-      useAppStore.getState().addToast({
-        title: "Explain Error",
-        description: String(e),
-        variant: "destructive",
-      });
+      notifyError("Explain Error", String(e));
     } finally {
       if (token === explainTokenRef.current) {
         setIsExplaining(false);
@@ -1825,11 +1904,7 @@ export function QueryTab({
     const activeProvider = providers.find((p) => p.id === selectedProviderId);
 
     if (!activeProvider) {
-      useAppStore.getState().addToast({
-        title: "No AI Provider",
-        description: "Please select an AI provider in the Models tab first.",
-        variant: "destructive",
-      });
+      notifyError("No AI Provider", "Please select an AI provider in the Models tab first.");
       return;
     }
 
@@ -1885,19 +1960,11 @@ export function QueryTab({
       setSql(nextValue);
       setCursorPos(nextPos);
 
-      useAppStore.getState().addToast({
-        title: "AI Response",
-        description: "Query generated successfully.",
-        variant: "default",
-      });
+      notifySuccess("AI Response", "Query generated successfully.");
       setIsAiModalOpen(false);
     } catch (e: any) {
       console.error(e);
-      useAppStore.getState().addToast({
-        title: "AI Error",
-        description: e.message || String(e),
-        variant: "destructive",
-      });
+      notifyError("AI Error", e.message || String(e));
     } finally {
       setIsAskingAI(false);
     }
@@ -1983,7 +2050,8 @@ export function QueryTab({
 
       const width = measureDataGridColumnWidth({
         headerText: activeResult.columns[colIdx] ?? "",
-        values: activeResult.rows.map((row) => row[colIdx]),
+        // Sample up to 1000 rows — sufficient for width estimation, avoids O(n) on large result sets
+        values: activeResult.rows.slice(0, 1000).map((row) => row[colIdx]),
         headerFont: getCanvasFontFromElement(
           headerCell,
           '500 11px "Segoe UI", -apple-system, BlinkMacSystemFont, sans-serif',
@@ -2051,6 +2119,8 @@ export function QueryTab({
     () => Math.round(editorFontSize * 1.6 * 100) / 100,
     [editorFontSize],
   );
+  const editorLineHeightRef = useRef(editorLineHeight);
+  editorLineHeightRef.current = editorLineHeight;
   const isDefaultEditorFontSize = editorFontSize === DEFAULT_QUERY_FONT_SIZE_PX;
   const lineCount = useMemo(() => Math.max(1, sql.split("\n").length), [sql]);
 
@@ -2073,17 +2143,17 @@ export function QueryTab({
   const statementSeparatorOffsets = useMemo(() => {
     if (wordWrap) return [];
 
-    return getSqlStatementRanges(sql)
+    return getSqlStatementRanges(deferredSql)
       .filter((range) => range.text.trim().length > 0)
       .slice(1)
       .map((range) => {
-        const lineNumber = sql.slice(0, range.start).split("\n").length;
+        const lineNumber = deferredSql.slice(0, range.start).split("\n").length;
         return {
           key: range.start,
           top: (lineNumber - 1) * editorLineHeight + 12 - editorViewport.scrollTop - 4,
         };
       });
-  }, [editorLineHeight, editorViewport.scrollTop, sql, wordWrap]);
+  }, [editorLineHeight, editorViewport.scrollTop, deferredSql, wordWrap]);
 
   const syncEditorMetrics = useCallback((textarea: HTMLTextAreaElement) => {
     setCursorPos(textarea.selectionStart);
@@ -2293,17 +2363,23 @@ export function QueryTab({
         return;
       }
 
-      // Measure cursor position relative to the editor container
-      const cursorPx = measureCursorPosition(textarea, pos);
-      const lineHeight =
-        parseFloat(getComputedStyle(textarea).lineHeight) || 20;
+      // Compute cursor pixel position from known metrics — avoids the DOM-mirror
+      // + getBoundingClientRect reflow that measureCursorPosition() causes.
+      // scrollTop/scrollLeft are paint-phase reads (no forced layout).
+      const lh = editorLineHeightRef.current;
+      const EDITOR_PADDING = 12; // textarea uses p-3 (0.75rem at base 16px = 12px)
+      const linesBefore = text.slice(0, pos).split("\n");
+      const lineIdx = linesBefore.length - 1;
+      const charInLine = linesBefore[linesBefore.length - 1].length;
+      const cursorTop = lineIdx * lh + EDITOR_PADDING - textarea.scrollTop;
+      const cursorLeft = charInLine * (lh / 1.6) * 0.601 + EDITOR_PADDING - textarea.scrollLeft;
 
       setAcSuggestions(suggestions);
       setAcPrefix(ctx.prefix);
       setAcSelectedIdx(0);
       setAcPosition({
-        top: cursorPx.top + lineHeight + 2,
-        left: cursorPx.left,
+        top: cursorTop + lh + 2,
+        left: cursorLeft,
       });
       setAcVisible(true);
       acDismissedForPrefix.current = null;
@@ -2486,6 +2562,27 @@ export function QueryTab({
       });
     },
     [syncEditorMetrics],
+  );
+
+  // Lighter onClick — avoids layout-forcing scrollHeight/clientHeight reads.
+  // On click only the cursor position changes, not scroll dimensions.
+  const handleEditorClick = useCallback(
+    (e: React.SyntheticEvent<HTMLTextAreaElement>) => {
+      const target = e.currentTarget;
+      const selectionStart = target.selectionStart;
+      const selectionEnd = target.selectionEnd;
+      setCursorPos(selectionStart);
+      setSelectedCharCount(Math.abs(selectionEnd - selectionStart));
+      setMultiCursorSelections((prev) => {
+        if (prev.length === 0) return prev;
+        return prev.some(
+          (range) => range.start === selectionStart && range.end === selectionEnd,
+        )
+          ? prev
+          : [];
+      });
+    },
+    [],
   );
 
   const handleResetEditorFontSize = useCallback(
@@ -3292,13 +3389,16 @@ export function QueryTab({
                 const newPos = e.target.selectionStart;
                 if (showHistory) setShowHistory(false);
                 setSql(newVal);
-                syncEditorMetrics(e.target);
+                // Avoid layout-forcing reads (scrollHeight/clientHeight) on every keystroke.
+                // Viewport dimensions are updated by onScroll / ResizeObserver.
+                setCursorPos(newPos);
+                setSelectedCharCount(0); // typing always collapses selection
                 updateAutocomplete(newVal, newPos);
               }}
               onScroll={handleEditorScroll}
               onSelect={handleEditorSelectionChange}
               onKeyUp={handleEditorSelectionChange}
-              onClick={handleEditorSelectionChange}
+              onClick={handleEditorClick}
               onBeforeInput={handleEditorBeforeInput}
               onKeyDown={handleKeyDown}
               onPaste={handleEditorPaste}
@@ -3615,100 +3715,34 @@ export function QueryTab({
                       />
                     </tr>
                   )}
-                  {visibleResultRows.map(({ row, originalRowIdx }, rowOffset) => {
-                    const ri = shouldVirtualizeResults
-                      ? rowOffset + virtualStartIdx
-                      : rowOffset;
-
-                    return (
-                      <tr
-                        key={originalRowIdx}
-                        className="group border-b hover:bg-accent/20 transition-colors"
-                        role="row"
-                        aria-rowindex={ri + 2}
-                      >
-                        <td
-                          className="sticky left-0 z-10 bg-background px-2 py-1 border-r text-muted-foreground/40 select-none group-hover:bg-accent/20"
-                          role="rowheader"
-                          aria-colindex={1}
-                        >
-                          {ri + 1}
-                        </td>
-                        {row.map((val, ci) => {
-                          const isMatch = findQuery && val !== null && String(val).toLowerCase().includes(findQuery.toLowerCase());
-                          const match = findMatches[currentMatchIdx];
-                          const isCurrent = match?.rowIdx === ri && match?.colIdx === ci;
-                          const isSelected = selectedCell?.rowIdx === ri && selectedCell?.colIdx === ci;
-                          const isNumeric = activeNumericColumns.has(ci);
-                          const colWidth = getResultColWidth(activeResultIdx, ci);
-                          const cellText = getDataGridCellText(val);
-
-                          return (
-                            <td
-                              key={ci}
-                              id={`qcell-${ri}-${ci}`}
-                              role="gridcell"
-                              aria-colindex={ci + 2}
-                              aria-selected={isSelected}
-                              tabIndex={
-                                isSelected || (!selectedCell && ri === 0 && ci === 0)
-                                  ? 0
-                                  : -1
-                              }
-                              className={cn(
-                                "px-2 py-1 border-r font-mono transition-all cursor-default align-top bg-background",
-                                isNumeric && "text-right tabular-nums",
-                                val === null
-                                  ? "text-muted-foreground/40 italic"
-                                  : "",
-                                isCurrent && "ring-2 ring-primary ring-inset z-10 bg-primary/20",
-                                !isCurrent && isMatch && "bg-yellow-500/30",
-                                isSelected && !isCurrent && "ring-1 ring-primary/60 bg-primary/8",
-                              )}
-                              style={
-                                colWidth
-                                  ? { width: colWidth, minWidth: colWidth, maxWidth: colWidth }
-                                  : undefined
-                              }
-                              title={cellText}
-                              onClick={() => setSelectedCell({ rowIdx: ri, colIdx: ci })}
-                              onFocus={() => setSelectedCell({ rowIdx: ri, colIdx: ci })}
-                              onContextMenu={(e) => {
-                                e.preventDefault();
-                                setSelectedCell({ rowIdx: ri, colIdx: ci });
-                                setCellContextMenu({ x: e.clientX, y: e.clientY, rowIdx: ri, colIdx: ci, value: val });
-                              }}
-                            >
-                              {val === null ? (
-                                <span className="text-muted-foreground/40 italic">NULL</span>
-                              ) : (
-                                <div
-                                  className={cn(
-                                    "min-w-0",
-                                    wordWrap
-                                      ? "whitespace-pre-wrap break-all"
-                                      : "overflow-hidden text-ellipsis whitespace-nowrap",
-                                    isNumeric && "text-right",
-                                  )}
-                                  style={
-                                    !wordWrap
-                                      ? {
-                                        maxWidth: colWidth
-                                          ? Math.max(colWidth - 16, 64)
-                                          : 280,
-                                      }
-                                      : undefined
-                                  }
-                                >
-                                  {String(val)}
-                                </div>
-                              )}
-                            </td>
-                          );
-                        })}
-                      </tr>
-                    );
-                  })}
+                  {(() => {
+                    const currentMatch = findMatches[currentMatchIdx];
+                    const lowerFindQuery = findQuery ? findQuery.toLowerCase() : "";
+                    const noSelection = !selectedCell;
+                    return visibleResultRows.map(({ row, originalRowIdx }, rowOffset) => {
+                      const ri = shouldVirtualizeResults ? rowOffset + virtualStartIdx : rowOffset;
+                      return (
+                        <ResultRow
+                          key={originalRowIdx}
+                          row={row}
+                          ri={ri}
+                          originalRowIdx={originalRowIdx}
+                          isSelectedRow={selectedCell?.rowIdx === ri}
+                          selectedColIdx={selectedCell?.rowIdx === ri ? selectedCell.colIdx : null}
+                          isCurrentMatchRow={currentMatch?.rowIdx === ri}
+                          currentMatchColIdx={currentMatch?.colIdx}
+                          noSelection={noSelection}
+                          lowerFindQuery={lowerFindQuery}
+                          activeNumericColumns={activeNumericColumns}
+                          activeResultIdx={activeResultIdx}
+                          getResultColWidth={getResultColWidth}
+                          setSelectedCell={setSelectedCell}
+                          setCellContextMenu={setCellContextMenu}
+                          wordWrap={wordWrap}
+                        />
+                      );
+                    });
+                  })()}
                   {bottomVirtualSpacerHeight > 0 && (
                     <tr aria-hidden="true">
                       <td

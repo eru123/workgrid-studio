@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import {
   dbGetDatabasesInfo,
   dbGetTablesInfo,
@@ -239,12 +239,14 @@ export function DatabaseView({
       .finally(() => setLoadingVars(false));
   }, [profileId]);
 
-  // Fetch variables
+  // Lazy-load: fetch when first navigating to the tab or when profile changes.
+  // variables.length intentionally excluded — data arriving should not re-trigger the effect.
   useEffect(() => {
     if (activeTab === "variables" && variables.length === 0) {
       fetchVariables();
     }
-  }, [profileId, activeTab, variables.length, fetchVariables]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profileId, activeTab, fetchVariables]);
 
   const fetchStatus = useCallback(() => {
     setLoadingStatus(true);
@@ -255,7 +257,6 @@ export function DatabaseView({
       .finally(() => setLoadingStatus(false));
   }, [profileId]);
 
-  // Fetch status (shared by status and commands tabs)
   useEffect(() => {
     if (
       (activeTab === "status" || activeTab === "commands") &&
@@ -263,7 +264,8 @@ export function DatabaseView({
     ) {
       fetchStatus();
     }
-  }, [profileId, activeTab, statusInfos.length, fetchStatus]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profileId, activeTab, fetchStatus]);
 
   const fetchProcesses = useCallback(() => {
     setLoadingProcesses(true);
@@ -274,12 +276,12 @@ export function DatabaseView({
       .finally(() => setLoadingProcesses(false));
   }, [profileId]);
 
-  // Fetch processes
   useEffect(() => {
     if (activeTab === "processes" && processInfos.length === 0) {
       fetchProcesses();
     }
-  }, [profileId, activeTab, processInfos.length, fetchProcesses]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profileId, activeTab, fetchProcesses]);
 
   const fetchUsers = useCallback(() => {
     setLoadingUsers(true);
@@ -298,12 +300,12 @@ export function DatabaseView({
       .finally(() => setLoadingUsers(false));
   }, [profileId]);
 
-  // Fetch users
   useEffect(() => {
     if (activeTab === "users" && userRows.length === 0 && !errorUsers) {
       fetchUsers();
     }
-  }, [profileId, activeTab, userRows.length, errorUsers, fetchUsers]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profileId, activeTab, fetchUsers]);
 
   const triggerRefresh = useCallback(() => {
     if (activeTab === "databases") {
@@ -327,6 +329,11 @@ export function DatabaseView({
     }
   }, [activeTab, database, profileId, fetchUsers, fetchVariables, fetchStatus, fetchProcesses]);
 
+  // Keep a ref to the latest triggerRefresh so the keyboard listener never
+  // needs to be re-registered (stable empty-dep effect).
+  const triggerRefreshRef = useRef(triggerRefresh);
+  useEffect(() => { triggerRefreshRef.current = triggerRefresh; });
+
   const [globalCtxMenu, setGlobalCtxMenu] = useState<{ x: number; y: number } | null>(null);
 
   useEffect(() => {
@@ -340,17 +347,18 @@ export function DatabaseView({
   }, []);
 
   // Handle global refresh shortcuts (F5 / Ctrl + R)
+  // Uses ref so the listener is registered once and never re-bound on tab/profile changes.
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "F5" || (e.ctrlKey && e.key.toLowerCase() === "r")) {
         e.preventDefault();
-        triggerRefresh();
+        triggerRefreshRef.current();
       }
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [triggerRefresh]);
+  }, []); // stable — always calls latest handler via ref
 
   const handleSelectDatabase = (dbName: string) => {
     updateTab(tabId, {

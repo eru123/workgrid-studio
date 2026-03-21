@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { homeDir, join } from "@tauri-apps/api/path";
 import { dbConnect, dbDisconnect, dbForgetHostKey, dbPing } from "@/lib/db";
@@ -17,7 +17,7 @@ import {
 import { useProfileManager } from "@/hooks/useProfileManager";
 import { useProfilesStore } from "@/state/profilesStore";
 import { useSchemaStore } from "@/state/schemaStore";
-import { useAppStore } from "@/state/appStore";
+import { notifyError, notifySuccess } from "@/lib/notifications";
 import { ProfileListSkeleton } from "@/components/ui/Skeleton";
 import { cn } from "@/lib/utils/cn";
 import {
@@ -30,11 +30,11 @@ import {
   X,
   Server,
   Loader2,
-  MoreVertical,
   Database,
   ShieldCheck,
   Key,
 } from "lucide-react";
+import { TreeView, type TreeNode, type ContextMenuItem } from "@/components/ui/TreeView";
 
 const DB_ICONS: Record<DatabaseType, React.ElementType> = {
   postgres: PostgresIcon,
@@ -95,26 +95,11 @@ export function ServersSidebar() {
     duplicateProfile,
   } = useProfileManager();
 
-  const [contextMenu, setContextMenu] = useState<{
-    id: string;
-    x: number;
-    y: number;
-  } | null>(null);
   const [isTestingConnection, setIsTestingConnection] = useState(false);
   const [testConnectionResult, setTestConnectionResult] = useState<{
     tone: "success" | "error";
     message: string;
   } | null>(null);
-
-  useEffect(() => {
-    const handleClose = () => setContextMenu(null);
-    window.addEventListener("click", handleClose);
-    window.addEventListener("scroll", handleClose, true);
-    return () => {
-      window.removeEventListener("click", handleClose);
-      window.removeEventListener("scroll", handleClose, true);
-    };
-  }, []);
 
   const isSqlite = formData.type === "sqlite";
 
@@ -126,11 +111,7 @@ export function ServersSidebar() {
     if (formData.type !== "mysql" && formData.type !== "mariadb") {
       const message = "Test Connection currently supports MySQL and MariaDB profiles.";
       setTestConnectionResult({ tone: "error", message });
-      useAppStore.getState().addToast({
-        title: "Test Connection Unavailable",
-        description: message,
-        variant: "destructive",
-      });
+      notifyError("Test Connection Unavailable", message);
       return;
     }
 
@@ -180,18 +161,11 @@ export function ServersSidebar() {
       const latency = await dbPing(testProfileId);
       const message = `Connected successfully in ${latency}ms.`;
       setTestConnectionResult({ tone: "success", message });
-      useAppStore.getState().addToast({
-        title: "Connection Test Passed",
-        description: message,
-      });
+      notifySuccess("Connection Test Passed", message);
     } catch (error) {
       const message = String(error);
       setTestConnectionResult({ tone: "error", message });
-      useAppStore.getState().addToast({
-        title: "Connection Test Failed",
-        description: message,
-        variant: "destructive",
-      });
+      notifyError("Connection Test Failed", message);
     } finally {
       try {
         await dbDisconnect(testProfileId);
@@ -201,6 +175,108 @@ export function ServersSidebar() {
       setIsTestingConnection(false);
     }
   };
+
+  const profileNodes = useMemo<TreeNode[]>(() => profiles.map((profile) => {
+    const Icon = DB_ICONS[profile.type];
+    const statusMeta = getConnectionStatusMeta(profile.connectionStatus);
+    const latency = latencies[profile.id] ?? null;
+    const serverVersion = serverVersions[profile.id] ?? null;
+    const connectionTarget = profile.type === "sqlite"
+      ? (profile.filePath || "No file set")
+      : `${profile.host}:${profile.port ?? "—"}`;
+    const isConnected = profile.connectionStatus === "connected";
+    const isConnecting = profile.connectionStatus === "connecting";
+
+    const contextMenu: ContextMenuItem[] = [
+      {
+        label: isConnected ? "Disconnect" : "Connect",
+        icon: isConnected
+          ? <PlugZap className="w-3.5 h-3.5 text-red-400" />
+          : <Plug className="w-3.5 h-3.5 text-primary" />,
+        onClick: () => handleConnect(profile.id),
+      },
+      {
+        label: "Edit",
+        icon: <Pencil className="w-3.5 h-3.5" />,
+        onClick: () => handleEdit(profile),
+      },
+      {
+        label: "Duplicate",
+        icon: <Copy className="w-3.5 h-3.5" />,
+        onClick: () => duplicateProfile(profile.id),
+      },
+      { label: "", separator: true, onClick: () => {} },
+      {
+        label: "Delete",
+        icon: <Trash2 className="w-3.5 h-3.5" />,
+        onClick: () => handleDelete(profile.id),
+        danger: true,
+      },
+    ];
+
+    const suffix = (
+      <div className="flex items-center gap-0.5">
+        <span className="text-[10px] text-muted-foreground font-mono max-w-[72px] truncate mr-0.5">
+          {serverVersion ?? connectionTarget}
+        </span>
+        {isConnected && latency !== null && (
+          <span className={cn(
+            "shrink-0 rounded-full px-1 text-[9px] font-mono leading-4",
+            latency === -1
+              ? "bg-red-500/10 text-red-400"
+              : latency > 200
+                ? "bg-amber-500/10 text-amber-400"
+                : "bg-primary/10 text-primary",
+          )}>
+            {latency === -1 ? "err" : `${latency}ms`}
+          </span>
+        )}
+        {isConnected ? (
+          <button
+            onClick={(e) => { e.stopPropagation(); handleConnect(profile.id); }}
+            title="Disconnect"
+            className="w-5 h-5 flex items-center justify-center rounded hover:bg-red-500/20 hover:text-red-500 transition-colors"
+          >
+            <PlugZap className="w-3 h-3" />
+          </button>
+        ) : isConnecting ? (
+          <button
+            onClick={(e) => { e.stopPropagation(); handleCancelConnect(profile.id); }}
+            title="Cancel"
+            className="w-5 h-5 flex items-center justify-center rounded hover:bg-red-500/20 hover:text-red-500 transition-colors"
+          >
+            <Loader2 className="w-3 h-3 animate-spin" />
+          </button>
+        ) : (
+          <button
+            onClick={(e) => { e.stopPropagation(); handleConnect(profile.id); }}
+            title="Connect"
+            className="w-5 h-5 flex items-center justify-center rounded hover:bg-primary/20 hover:text-primary transition-colors opacity-0 group-hover:opacity-100 focus:opacity-100"
+          >
+            <Plug className="w-3 h-3" />
+          </button>
+        )}
+      </div>
+    );
+
+    return {
+      id: profile.id,
+      label: profile.name,
+      icon: (
+        <div className="relative w-3.5 h-3.5 flex items-center justify-center">
+          <Icon className="w-3.5 h-3.5" style={{ color: DB_TYPE_COLORS[profile.type] }} />
+          <div className={cn(
+            "absolute -bottom-0.5 -right-0.5 h-1.5 w-1.5 rounded-full border border-background",
+            statusMeta.dotClassName,
+            isConnecting && "animate-pulse",
+          )} />
+        </div>
+      ),
+      suffix,
+      contextMenu,
+      data: profile,
+    };
+  }), [profiles, latencies, serverVersions, handleConnect, handleCancelConnect, handleEdit, duplicateProfile, handleDelete]);
 
   return (
     <div className="h-full flex flex-col relative bg-background">
@@ -220,9 +296,9 @@ export function ServersSidebar() {
       </div>
 
       {/* List View */}
-      <div className="flex-1 overflow-y-auto w-full p-2 space-y-1">
+      <div className="flex-1 overflow-y-auto w-full">
         {!isLoaded ? (
-          <ProfileListSkeleton />
+          <div className="p-2"><ProfileListSkeleton /></div>
         ) : profiles.length === 0 ? (
           <div className="flex flex-col items-center justify-center p-6 pt-10 text-center select-none gap-3">
             <div className="relative w-16 h-16 mx-auto">
@@ -247,240 +323,13 @@ export function ServersSidebar() {
             </button>
           </div>
         ) : (
-          profiles.map((profile) => {
-            const statusMeta = getConnectionStatusMeta(profile.connectionStatus);
-            const latency = latencies[profile.id] ?? null;
-            const serverVersion = serverVersions[profile.id] ?? null;
-            const connectionTarget =
-              profile.type === "sqlite"
-                ? profile.filePath || "No file set"
-                : `${profile.host}:${profile.port ?? "—"}`;
-
-            const lastConnectedLabel = profile.lastConnectedAt
-              ? new Date(profile.lastConnectedAt).toLocaleString()
-              : "Never";
-
-            return (
-              <div
-                key={profile.id}
-                className="flex flex-col bg-transparent relative group/item"
-                onContextMenu={(e) => {
-                  e.preventDefault();
-                  setContextMenu({
-                    id: profile.id,
-                    x: e.clientX,
-                    y: e.clientY,
-                  });
-                }}
-              >
-                <div
-                  role="button"
-                  tabIndex={0}
-                  onDoubleClick={() => handleDoubleClick(profile.id)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      handleDoubleClick(profile.id);
-                    }
-                  }}
-                  className="w-full text-left px-3 py-1.5 flex items-center gap-2.5 transition-colors group relative hover:bg-accent/50 cursor-pointer"
-                  title={`${profile.name}\n${DB_TYPE_LABELS[profile.type]} • ${statusMeta.label}\n${connectionTarget}\nLast connected: ${lastConnectedLabel}`}
-                  aria-label={`${profile.name}. ${statusMeta.label}. ${connectionTarget}. Press Enter to connect or open.`}
-                >
-                  {/* DB Icon + status */}
-                  <div className="relative shrink-0 flex items-center justify-center w-5 h-5">
-                    {(() => {
-                      const Icon = DB_ICONS[profile.type];
-                      return (
-                        <Icon
-                          className="w-3.5 h-3.5 text-muted-foreground transition-colors group-hover/item:text-foreground"
-                          style={{
-                            color: DB_TYPE_COLORS[profile.type],
-                          }}
-                        />
-                      );
-                    })()}
-                    <div
-                      className={cn(
-                        "absolute -bottom-0.5 right-0 h-2 w-2 rounded-full border border-background",
-                        statusMeta.dotClassName,
-                        profile.connectionStatus === "connecting" && "animate-pulse",
-                      )}
-                    />
-                  </div>
-
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <div className="text-[13px] font-medium truncate leading-tight">
-                        {profile.name}
-                      </div>
-                      {profile.connectionStatus === "connected" && latency !== null && (
-                        <span
-                          className={cn(
-                            "shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-mono",
-                            latency === -1
-                              ? "bg-red-500/10 text-red-400"
-                              : latency > 200
-                                ? "bg-amber-500/10 text-amber-400"
-                                : "bg-primary/10 text-primary",
-                          )}
-                        >
-                          {latency === -1 ? "err" : `${latency}ms`}
-                        </span>
-                      )}
-                    </div>
-                    <div className="text-[10px] text-muted-foreground truncate leading-tight mt-0.5">
-                      {profile.type === "sqlite"
-                        ? profile.filePath || "No file set"
-                        : `${profile.host}:${profile.port ?? "—"}`}
-                    </div>
-                    <div className="text-[10px] text-muted-foreground/80 truncate leading-tight mt-0.5">
-                      {serverVersion || DB_TYPE_LABELS[profile.type]}
-                    </div>
-                    <div className="mt-1 flex items-center">
-                      <span
-                        className={cn(
-                          "inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[9px] font-medium",
-                          statusMeta.badgeClassName,
-                        )}
-                      >
-                        <span
-                          className="h-1.5 w-1.5 rounded-full"
-                          style={{ backgroundColor: DB_TYPE_COLORS[profile.type] }}
-                        />
-                        <span
-                          className={cn(
-                            "h-1.5 w-1.5 rounded-full",
-                            statusMeta.dotClassName,
-                            profile.connectionStatus === "connecting" && "animate-pulse",
-                          )}
-                        />
-                        {statusMeta.label}
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="shrink-0 text-muted-foreground/50 transition-transform flex items-center gap-0.5 ml-auto">
-                    {profile.connectionStatus === "connected" ? (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleConnect(profile.id);
-                        }}
-                        title="Disconnect"
-                        className="w-6 h-6 flex items-center justify-center rounded hover:bg-red-500/20 hover:text-red-500 transition-colors"
-                        aria-label={`Disconnect ${profile.name}`}
-                      >
-                        <PlugZap className="w-3.5 h-3.5" />
-                      </button>
-                    ) : profile.connectionStatus === "connecting" ? (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleCancelConnect(profile.id);
-                        }}
-                        title="Cancel connection"
-                        className="w-6 h-6 flex items-center justify-center rounded hover:bg-red-500/20 hover:text-red-500 transition-colors group/cancel"
-                        aria-label={`Cancel connecting ${profile.name}`}
-                      >
-                        <Loader2 className="w-3.5 h-3.5 animate-spin group-hover/cancel:hidden" />
-                        <X className="w-3.5 h-3.5 hidden group-hover/cancel:block" />
-                      </button>
-                    ) : (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleConnect(profile.id);
-                        }}
-                        title="Connect"
-                        className="w-6 h-6 flex items-center justify-center rounded hover:bg-primary/20 hover:text-primary transition-colors opacity-0 group-hover:opacity-100 focus:opacity-100"
-                        aria-label={`Connect ${profile.name}`}
-                      >
-                        <Plug className="w-3.5 h-3.5" />
-                      </button>
-                    )}
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setContextMenu({
-                          id: profile.id,
-                          x: e.clientX,
-                          y: e.clientY,
-                        });
-                      }}
-                      className="w-6 h-6 flex items-center justify-center rounded hover:bg-muted transition-colors opacity-0 group-hover:opacity-100 focus:opacity-100"
-                      title="More Actions"
-                      aria-label={`More actions for ${profile.name}`}
-                    >
-                      <MoreVertical className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                </div>
-              </div>
-            );
-          })
+          <TreeView
+            nodes={profileNodes}
+            onActivate={(node) => handleDoubleClick(node.id)}
+            className="p-1"
+          />
         )}
       </div>
-
-      {/* Context Menu Dropdown */}
-      {
-        contextMenu &&
-        (() => {
-          const profile = profiles.find((p) => p.id === contextMenu.id);
-          if (!profile) return null;
-          const isConnected = profile.connectionStatus === "connected";
-
-          return (
-            <div
-              className="fixed z-100 min-w-[160px] bg-popover text-popover-foreground border rounded-md shadow-md p-1 text-xs"
-              style={{
-                top: Math.min(contextMenu.y, window.innerHeight - 180),
-                left: Math.min(contextMenu.x, window.innerWidth - 160),
-              }}
-            >
-              <button
-                className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2"
-                onClick={() => {
-                  setContextMenu(null);
-                  handleConnect(profile.id);
-                }}
-              >
-                {isConnected ? (
-                  <PlugZap className="w-3.5 h-3.5 text-red-400" />
-                ) : (
-                  <Plug className="w-3.5 h-3.5 text-primary" />
-                )}
-                {isConnected ? "Disconnect" : "Connect"}
-              </button>
-              <button
-                className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2"
-                onClick={() => {
-                  setContextMenu(null);
-                  handleEdit(profile);
-                }}
-              >
-                <Pencil className="w-3.5 h-3.5 text-muted-foreground" /> Edit
-              </button>
-              <button
-                className="w-full text-left px-2 py-1.5 hover:bg-accent rounded flex items-center gap-2"
-                onClick={() => {
-                  setContextMenu(null);
-                  duplicateProfile(profile.id);
-                }}
-              >
-                <Copy className="w-3.5 h-3.5 text-muted-foreground" /> Duplicate
-              </button>
-              <div className="h-px bg-border my-1" />
-              <button
-                className="w-full text-left px-2 py-1.5 hover:bg-red-500/20 text-red-500 rounded flex items-center gap-2"
-                onClick={() => handleDelete(profile.id)}
-              >
-                <Trash2 className="w-3.5 h-3.5" /> Delete
-              </button>
-            </div>
-          );
-        })()
-      }
 
       {/* Modal Form overlay rendered absolutely within the sidebar / screen */}
       {
@@ -1118,16 +967,9 @@ export function ServersSidebar() {
                                         formData.sshHost!,
                                         formData.sshPort ?? 22,
                                       );
-                                      useAppStore.getState().addToast({
-                                        title: "Host Key Forgotten",
-                                        description: `Fingerprint for ${formData.sshHost}:${formData.sshPort ?? 22} removed. Next connection will perform a fresh TOFU exchange.`,
-                                      });
+                                      notifySuccess("Host Key Forgotten", `Fingerprint for ${formData.sshHost}:${formData.sshPort ?? 22} removed. Next connection will perform a fresh TOFU exchange.`);
                                     } catch (err) {
-                                      useAppStore.getState().addToast({
-                                        title: "Failed to Forget Host Key",
-                                        description: String(err),
-                                        variant: "destructive",
-                                      });
+                                      notifyError("Failed to Forget Host Key", String(err));
                                     }
                                   }}
                                   className="h-7 px-2.5 rounded-md border border-destructive/40 bg-destructive/10 text-destructive hover:bg-destructive/20 text-[10px] font-medium transition-colors"

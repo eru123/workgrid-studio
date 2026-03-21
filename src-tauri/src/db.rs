@@ -1,5 +1,5 @@
 use crate::crypto::{decrypt_password, encrypt_password};
-use crate::logging::{log_error, log_info, log_mysql_verbose, log_query, log_query_result};
+use crate::logging::{log_error, log_info, log_mysql_verbose, log_query, log_query_result, LogState};
 use crate::ssh::{establish_ssh_tunnel, shutdown_tunnel};
 use crate::{AppError, AppResult, DbState};
 use mysql_async::prelude::*;
@@ -167,15 +167,10 @@ fn emit_import_progress(app: &AppHandle, event: &ImportProgressEvent) {
 // ─── Helpers ────────────────────────────────────────────────────────
 
 pub fn get_pool(state: &State<'_, DbState>, profile_id: &str) -> AppResult<Pool> {
-    let pools = state
-        .pools
-        .lock()
-        .map_err(|e| format!("Lock error: {}", e))?;
-    Ok(pools.get(profile_id).cloned().ok_or_else(|| {
-        let msg = "Not connected. Please connect first.".to_string();
-        log_error(profile_id, &msg);
-        msg
-    })?)
+    let pools = state.pools.lock().map_err(|e| format!("Lock error: {}", e))?;
+    pools.get(profile_id).cloned().ok_or_else(|| {
+        AppError::from("Not connected. Please connect first.")
+    })
 }
 
 pub fn split_sql_statements(sql: &str) -> Vec<String> {
@@ -278,6 +273,7 @@ fn db_driver_label(db_type: &str) -> &str {
 }
 
 async fn run_query_with_timeout<T, F>(
+    log_state: &LogState,
     profile_id: &str,
     label: &str,
     timeout_ms: Option<u64>,
@@ -291,7 +287,7 @@ where
     match tokio::time::timeout(Duration::from_millis(effective_timeout_ms), future).await {
         Ok(result) => result.map_err(|e| {
             let msg = format!("Query error [{}]: {}", label, e);
-            log_error(profile_id, &msg);
+            log_error(log_state, label, Some(profile_id), &msg, None);
             AppError::database(msg)
         }),
         Err(_) => {
@@ -300,7 +296,7 @@ where
                 format_timeout_label(effective_timeout_ms),
                 label,
             );
-            log_error(profile_id, &msg);
+            log_error(log_state, label, Some(profile_id), &msg, None);
             Err(AppError::database(msg))
         }
     }
@@ -313,19 +309,24 @@ where
 #[tauri::command]
 pub async fn db_cancel_connect(
     state: State<'_, DbState>,
+    log_state: tauri::State<'_, LogState>,
     profile_id: String,
 ) -> AppResult<()> {
     if let Ok(tokens) = state.cancel_tokens.lock() {
         if let Some(token) = tokens.get(&profile_id) {
             token.store(true, Ordering::Relaxed);
-            log_info(&profile_id, "Connection cancellation requested.");
+            log_info(&log_state, "db", Some(&profile_id), "Connection cancellation requested.");
         }
     }
     Ok(())
 }
 
 #[tauri::command]
-pub async fn db_connect(state: State<'_, DbState>, params: ConnectParams) -> AppResult<String> {
+pub async fn db_connect(
+    state: State<'_, DbState>,
+    log_state: tauri::State<'_, LogState>,
+    params: ConnectParams,
+) -> AppResult<String> {
     let mut params = params;
     let connect_started = Instant::now();
     let pid = params.profile_id.clone();
@@ -334,7 +335,9 @@ pub async fn db_connect(state: State<'_, DbState>, params: ConnectParams) -> App
     let target = format!("{}@{}:{}", params.user, params.host, params.port);
 
     log_info(
-        &pid,
+        &log_state,
+        "db",
+        Some(&pid),
         &format!(
             "Connection requested: driver={}, target={}, database={}, ssl={}, ssh={}, verbose={}",
             db_driver_label(db_type),
@@ -346,6 +349,7 @@ pub async fn db_connect(state: State<'_, DbState>, params: ConnectParams) -> App
         ),
     );
     log_mysql_verbose(
+        &log_state,
         &pid,
         verbose,
         &format!(
@@ -373,7 +377,7 @@ pub async fn db_connect(state: State<'_, DbState>, params: ConnectParams) -> App
             "Unsupported database type '{}'. Only MySQL and MariaDB are supported in this version.",
             db_type
         );
-        log_error(&pid, &msg);
+        log_error(&log_state, "db", Some(&pid), &msg, None);
         return Err(AppError::validation(msg));
     }
 
@@ -408,6 +412,7 @@ pub async fn db_connect(state: State<'_, DbState>, params: ConnectParams) -> App
     let mut conn_params = params.clone();
     conn_params.password = decrypt_password(params.password.clone())?;
     log_mysql_verbose(
+        &log_state,
         &pid,
         verbose,
         "Database password decrypted for active connection attempt.",
@@ -421,6 +426,7 @@ pub async fn db_connect(state: State<'_, DbState>, params: ConnectParams) -> App
             *ssh_passphrase = decrypt_password(ssh_passphrase.clone())?;
         }
         log_mysql_verbose(
+            &log_state,
             &pid,
             verbose,
             "SSH secret material decrypted for active connection attempt.",
@@ -429,7 +435,7 @@ pub async fn db_connect(state: State<'_, DbState>, params: ConnectParams) -> App
         // Cancel check: abort before any blocking SSH work begins.
         if cancel_token.load(Ordering::Relaxed) {
             let msg = "Connection cancelled.".to_string();
-            log_info(&pid, &msg);
+            log_info(&log_state, "db", Some(&pid), &msg);
             return Err(AppError::ssh(msg));
         }
 
@@ -442,7 +448,7 @@ pub async fn db_connect(state: State<'_, DbState>, params: ConnectParams) -> App
                 tunnels.remove(&pid)
             };
             if let Some(old) = old_tunnel {
-                log_info(&pid, "Closing previous SSH tunnel before reconnecting.");
+                log_info(&log_state, "db", Some(&pid), "Closing previous SSH tunnel before reconnecting.");
                 shutdown_tunnel(old);
             }
             // Debug telemetry: log active tunnel count after cleanup.
@@ -455,6 +461,7 @@ pub async fn db_connect(state: State<'_, DbState>, params: ConnectParams) -> App
             }
             if let Ok(tunnels) = state.tunnels.lock() {
                 log_mysql_verbose(
+                    &log_state,
                     &pid,
                     verbose,
                     &format!(
@@ -464,9 +471,11 @@ pub async fn db_connect(state: State<'_, DbState>, params: ConnectParams) -> App
                 );
             }
         }
-        let handle = establish_ssh_tunnel(&pid, &conn_params).await?;
+        let handle = establish_ssh_tunnel(&pid, &conn_params, &log_state).await?;
         log_info(
-            &pid,
+            &log_state,
+            "db",
+            Some(&pid),
             &format!(
                 "SSH tunnel established: 127.0.0.1:{} -> {}:{}",
                 handle.local_port, params.host, params.port
@@ -477,6 +486,7 @@ pub async fn db_connect(state: State<'_, DbState>, params: ConnectParams) -> App
         conn_params.host = "127.0.0.1".to_string();
         conn_params.port = handle.local_port;
         log_mysql_verbose(
+            &log_state,
             &pid,
             verbose,
             &format!(
@@ -493,12 +503,14 @@ pub async fn db_connect(state: State<'_, DbState>, params: ConnectParams) -> App
     // The tunnel will be cleaned up by the disconnect path on the next call.
     if cancel_token.load(Ordering::Relaxed) {
         let msg = "Connection cancelled.".to_string();
-        log_info(&pid, &msg);
+        log_info(&log_state, "db", Some(&pid), &msg);
         return Err(AppError::ssh(msg));
     }
 
     log_info(
-        &pid,
+        &log_state,
+        "db",
+        Some(&pid),
         &format!(
             "Connecting to {} ({}) ...",
             target,
@@ -512,6 +524,7 @@ pub async fn db_connect(state: State<'_, DbState>, params: ConnectParams) -> App
         .user(Some(conn_params.user.clone()))
         .pass(Some(conn_params.password.clone()));
     log_mysql_verbose(
+        &log_state,
         &pid,
         verbose,
         &format!(
@@ -530,13 +543,16 @@ pub async fn db_connect(state: State<'_, DbState>, params: ConnectParams) -> App
 
     if params.ssl {
         log_info(
-            &pid,
+            &log_state,
+            "db",
+            Some(&pid),
             &format!(
                 "MySQL TLS is enabled. Server certificate validation is {}.",
                 configured_label(params.ssl_reject_unauthorized)
             ),
         );
         log_mysql_verbose(
+            &log_state,
             &pid,
             verbose,
             &format!(
@@ -557,11 +573,11 @@ pub async fn db_connect(state: State<'_, DbState>, params: ConnectParams) -> App
                 let path = std::path::PathBuf::from(&ca);
                 if !path.exists() {
                     let msg = format!("CA Certificate file does not exist at path: {}", ca);
-                    log_error(&pid, &msg);
+                    log_error(&log_state, "db", Some(&pid), &msg, None);
                     return Err(AppError::validation(msg));
                 }
                 ssl_opts = ssl_opts.with_root_certs(vec![path.into()]);
-                log_mysql_verbose(&pid, verbose, "Validated MySQL CA certificate path.");
+                log_mysql_verbose(&log_state, &pid, verbose, "Validated MySQL CA certificate path.");
             }
         }
 
@@ -575,11 +591,11 @@ pub async fn db_connect(state: State<'_, DbState>, params: ConnectParams) -> App
                 cert_path = std::path::PathBuf::from(&cert);
                 if !cert_path.exists() {
                     let msg = format!("Client Certificate file does not exist at path: {}", cert);
-                    log_error(&pid, &msg);
+                    log_error(&log_state, "db", Some(&pid), &msg, None);
                     return Err(AppError::validation(msg));
                 }
                 has_cert = true;
-                log_mysql_verbose(&pid, verbose, "Validated MySQL client certificate path.");
+                log_mysql_verbose(&log_state, &pid, verbose, "Validated MySQL client certificate path.");
             }
         }
 
@@ -588,11 +604,11 @@ pub async fn db_connect(state: State<'_, DbState>, params: ConnectParams) -> App
                 key_path = std::path::PathBuf::from(&key);
                 if !key_path.exists() {
                     let msg = format!("Client Key file does not exist at path: {}", key);
-                    log_error(&pid, &msg);
+                    log_error(&log_state, "db", Some(&pid), &msg, None);
                     return Err(AppError::validation(msg));
                 }
                 has_key = true;
-                log_mysql_verbose(&pid, verbose, "Validated MySQL client key path.");
+                log_mysql_verbose(&log_state, &pid, verbose, "Validated MySQL client key path.");
             }
         }
 
@@ -600,6 +616,7 @@ pub async fn db_connect(state: State<'_, DbState>, params: ConnectParams) -> App
             let identity = mysql_async::ClientIdentity::new(cert_path.into(), key_path.into());
             ssl_opts = ssl_opts.with_client_identity(Some(identity));
             log_mysql_verbose(
+                &log_state,
                 &pid,
                 verbose,
                 "Configured MySQL mutual TLS client identity.",
@@ -607,18 +624,19 @@ pub async fn db_connect(state: State<'_, DbState>, params: ConnectParams) -> App
         } else if has_cert || has_key {
             let msg = "Both Client Certificate and Client Key must be provided for mutual TLS."
                 .to_string();
-            log_error(&pid, &msg);
+            log_error(&log_state, "db", Some(&pid), &msg, None);
             return Err(AppError::validation(msg));
         }
 
         builder = builder.ssl_opts(Some(ssl_opts));
     } else {
-        log_mysql_verbose(&pid, verbose, "MySQL TLS disabled for this connection.");
+        log_mysql_verbose(&log_state, &pid, verbose, "MySQL TLS disabled for this connection.");
     }
 
     let pool_opts = PoolOpts::new().with_constraints(PoolConstraints::new(0, 5).unwrap());
     builder = builder.pool_opts(Some(pool_opts));
     log_mysql_verbose(
+        &log_state,
         &pid,
         verbose,
         "Configured MySQL pool constraints: min=0, max=5.",
@@ -642,7 +660,7 @@ pub async fn db_connect(state: State<'_, DbState>, params: ConnectParams) -> App
             }
         } => {
             let msg = "Connection cancelled.".to_string();
-            log_info(&pid, &msg);
+            log_info(&log_state, "db", Some(&pid), &msg);
             return Err(AppError::ssh(msg));
         }
     };
@@ -651,7 +669,9 @@ pub async fn db_connect(state: State<'_, DbState>, params: ConnectParams) -> App
         Ok(conn) => {
             drop(conn);
             log_info(
-                &pid,
+                &log_state,
+                "db",
+                Some(&pid),
                 &format!(
                     "Connected to {} in {} ms",
                     target,
@@ -661,25 +681,26 @@ pub async fn db_connect(state: State<'_, DbState>, params: ConnectParams) -> App
         }
         Err(e) => {
             let msg = format!("Connection failed to {}: {}", target, e);
-            log_error(&pid, &msg);
+            log_error(&log_state, "db", Some(&pid), &msg, None);
             return Err(AppError::database(msg));
         }
     }
 
     let mut pools = state.pools.lock().map_err(|e| {
         let msg = format!("Lock error: {}", e);
-        log_error(&pid, &msg);
+        log_error(&log_state, "db", Some(&pid), &msg, None);
         msg
     })?;
 
     if let Some(old_pool) = pools.remove(&pid) {
-        log_mysql_verbose(&pid, verbose, "Replacing existing MySQL pool for profile.");
+        log_mysql_verbose(&log_state, &pid, verbose, "Replacing existing MySQL pool for profile.");
         tauri::async_runtime::spawn(async move {
             let _ = old_pool.disconnect().await;
         });
     }
     pools.insert(pid.clone(), pool);
     log_mysql_verbose(
+        &log_state,
         &pid,
         verbose,
         &format!("Active MySQL pool count is now {}.", pools.len()),
@@ -695,27 +716,31 @@ pub async fn db_connect(state: State<'_, DbState>, params: ConnectParams) -> App
         target,
         connect_started.elapsed().as_millis()
     );
-    log_mysql_verbose(&pid, verbose, &success_message);
+    log_mysql_verbose(&log_state, &pid, verbose, &success_message);
     Ok(success_message)
 }
 
 #[tauri::command]
-pub async fn db_disconnect(state: State<'_, DbState>, profile_id: String) -> AppResult<String> {
-    log_info(&profile_id, "Disconnecting...");
+pub async fn db_disconnect(
+    state: State<'_, DbState>,
+    log_state: tauri::State<'_, LogState>,
+    profile_id: String,
+) -> AppResult<String> {
+    log_info(&log_state, "db", Some(&profile_id), "Disconnecting...");
 
     // Remove the pool while holding the lock, then drop the lock before awaiting disconnect.
     // Holding a std::sync::Mutex guard across an .await point would block the thread.
     let pool = {
         let mut pools = state.pools.lock().map_err(|e| {
             let msg = format!("Lock error: {}", e);
-            log_error(&profile_id, &msg);
+            log_error(&log_state, "db", Some(&profile_id), &msg, None);
             msg
         })?;
         pools.remove(&profile_id)
     }; // lock released here
 
     if let Some(pool) = pool {
-        log_info(&profile_id, "Closing MySQL pool.");
+        log_info(&log_state, "db", Some(&profile_id), "Closing MySQL pool.");
         let _ = pool.disconnect().await;
     }
 
@@ -726,7 +751,7 @@ pub async fn db_disconnect(state: State<'_, DbState>, profile_id: String) -> App
         tunnels.remove(&profile_id)
     };
     if let Some(handle) = tunnel {
-        log_info(&profile_id, "Shutting down SSH tunnel.");
+        log_info(&log_state, "db", Some(&profile_id), "Shutting down SSH tunnel.");
         shutdown_tunnel(handle);
     }
     // Debug telemetry: log active tunnel count after disconnect.
@@ -738,7 +763,7 @@ pub async fn db_disconnect(state: State<'_, DbState>, profile_id: String) -> App
         );
     }
 
-    log_info(&profile_id, "Disconnected");
+    log_info(&log_state, "db", Some(&profile_id), "Disconnected");
     Ok("Disconnected".to_string())
 }
 
@@ -770,6 +795,7 @@ pub async fn db_ping(state: State<'_, DbState>, profile_id: String) -> AppResult
 #[tauri::command]
 pub async fn db_list_databases(
     state: State<'_, DbState>,
+    log_state: tauri::State<'_, LogState>,
     profile_id: String,
 ) -> AppResult<Vec<String>> {
     let pool = get_pool(&state, &profile_id)?;
@@ -777,19 +803,19 @@ pub async fn db_list_databases(
 
     let mut conn = pool.get_conn().await.map_err(|e| {
         let msg = format!("Connection error: {}", e);
-        log_error(&profile_id, &msg);
+        log_error(&log_state, "db", Some(&profile_id), &msg, None);
         msg
     })?;
 
     match conn.query::<String, _>(query).await {
         Ok(databases) => {
-            log_query_result(&profile_id, query, databases.len());
+            log_query_result(&log_state, &profile_id, query, databases.len());
             drop(conn);
             Ok(databases)
         }
         Err(e) => {
             let msg = format!("Query error [{}]: {}", query, e);
-            log_error(&profile_id, &msg);
+            log_error(&log_state, "db", Some(&profile_id), &msg, None);
             Err(AppError::database(msg))
         }
     }
@@ -798,6 +824,7 @@ pub async fn db_list_databases(
 #[tauri::command]
 pub async fn db_list_tables(
     state: State<'_, DbState>,
+    log_state: tauri::State<'_, LogState>,
     profile_id: String,
     database: String,
 ) -> AppResult<Vec<String>> {
@@ -806,19 +833,19 @@ pub async fn db_list_tables(
 
     let mut conn = pool.get_conn().await.map_err(|e| {
         let msg = format!("Connection error: {}", e);
-        log_error(&profile_id, &msg);
+        log_error(&log_state, "db", Some(&profile_id), &msg, None);
         msg
     })?;
 
     match conn.query::<String, _>(&query).await {
         Ok(tables) => {
-            log_query_result(&profile_id, &query, tables.len());
+            log_query_result(&log_state, &profile_id, &query, tables.len());
             drop(conn);
             Ok(tables)
         }
         Err(e) => {
             let msg = format!("Query error [{}]: {}", query, e);
-            log_error(&profile_id, &msg);
+            log_error(&log_state, "db", Some(&profile_id), &msg, None);
             Err(AppError::database(msg))
         }
     }
@@ -827,6 +854,7 @@ pub async fn db_list_tables(
 #[tauri::command]
 pub async fn db_list_columns(
     state: State<'_, DbState>,
+    log_state: tauri::State<'_, LogState>,
     profile_id: String,
     database: String,
     table: String,
@@ -836,7 +864,7 @@ pub async fn db_list_columns(
 
     let mut conn = pool.get_conn().await.map_err(|e| {
         let msg = format!("Connection error: {}", e);
-        log_error(&profile_id, &msg);
+        log_error(&log_state, "db", Some(&profile_id), &msg, None);
         msg
     })?;
 
@@ -845,7 +873,7 @@ pub async fn db_list_columns(
         .await
     {
         Ok(rows) => {
-            log_query_result(&profile_id, &query, rows.len());
+            log_query_result(&log_state, &profile_id, &query, rows.len());
             let columns: Vec<ColumnInfo> = rows
                 .into_iter()
                 .map(|(field, col_type, null, key, default, extra)| ColumnInfo {
@@ -862,7 +890,7 @@ pub async fn db_list_columns(
         }
         Err(e) => {
             let msg = format!("Query error [{}]: {}", query, e);
-            log_error(&profile_id, &msg);
+            log_error(&log_state, "db", Some(&profile_id), &msg, None);
             Err(AppError::database(msg))
         }
     }
@@ -871,6 +899,7 @@ pub async fn db_list_columns(
 #[tauri::command]
 pub async fn db_get_databases_info(
     state: State<'_, DbState>,
+    log_state: tauri::State<'_, LogState>,
     profile_id: String,
 ) -> AppResult<Vec<DatabaseInfo>> {
     let pool = get_pool(&state, &profile_id)?;
@@ -890,7 +919,7 @@ pub async fn db_get_databases_info(
 
     let mut conn = pool.get_conn().await.map_err(|e| {
         let msg = format!("Connection error: {}", e);
-        log_error(&profile_id, &msg);
+        log_error(&log_state, "db", Some(&profile_id), &msg, None);
         msg
     })?;
 
@@ -900,6 +929,7 @@ pub async fn db_get_databases_info(
     {
         Ok(rows) => {
             log_query_result(
+                &log_state,
                 &profile_id,
                 "SELECT databases info FROM information_schema",
                 rows.len(),
@@ -930,6 +960,7 @@ pub async fn db_get_databases_info(
 #[tauri::command]
 pub async fn db_get_tables_info(
     state: State<'_, DbState>,
+    log_state: tauri::State<'_, LogState>,
     profile_id: String,
     database: String,
 ) -> AppResult<Vec<TableInfo>> {
@@ -951,7 +982,7 @@ pub async fn db_get_tables_info(
 
     let mut conn = pool.get_conn().await.map_err(|e| {
         let msg = format!("Connection error: {}", e);
-        log_error(&profile_id, &msg);
+        log_error(&log_state, "db", Some(&profile_id), &msg, None);
         msg
     })?;
 
@@ -970,6 +1001,7 @@ pub async fn db_get_tables_info(
     {
         Ok(rows) => {
             log_query_result(
+                &log_state,
                 &profile_id,
                 &format!(
                     "SELECT tables info FROM information_schema for {}",
@@ -999,7 +1031,7 @@ pub async fn db_get_tables_info(
         }
         Err(e) => {
             let msg = format!("Query error [tables info]: {}", e);
-            log_error(&profile_id, &msg);
+            log_error(&log_state, "db", Some(&profile_id), &msg, None);
             Err(AppError::database(msg))
         }
     }
@@ -1008,13 +1040,14 @@ pub async fn db_get_tables_info(
 #[tauri::command]
 pub async fn db_get_variables(
     state: State<'_, DbState>,
+    log_state: tauri::State<'_, LogState>,
     profile_id: String,
 ) -> AppResult<Vec<VariableInfo>> {
     let pool = get_pool(&state, &profile_id)?;
 
     let mut conn = pool.get_conn().await.map_err(|e| {
         let msg = format!("Connection error: {}", e);
-        log_error(&profile_id, &msg);
+        log_error(&log_state, "db", Some(&profile_id), &msg, None);
         msg
     })?;
 
@@ -1073,6 +1106,7 @@ pub async fn db_get_variables(
 #[tauri::command]
 pub async fn db_set_variable(
     state: State<'_, DbState>,
+    log_state: tauri::State<'_, LogState>,
     profile_id: String,
     scope: String,
     name: String,
@@ -1081,7 +1115,7 @@ pub async fn db_set_variable(
     let pool = get_pool(&state, &profile_id)?;
     let mut conn = pool.get_conn().await.map_err(|e| {
         let msg = format!("Connection error: {}", e);
-        log_error(&profile_id, &msg);
+        log_error(&log_state, "db", Some(&profile_id), &msg, None);
         msg
     })?;
 
@@ -1093,7 +1127,7 @@ pub async fn db_set_variable(
 
     if !name.chars().all(|c| c.is_alphanumeric() || c == '_') {
         let msg = format!("Invalid variable name: {}", name);
-        log_error(&profile_id, &msg);
+        log_error(&log_state, "db", Some(&profile_id), &msg, None);
         return Err(AppError::validation(msg));
     }
 
@@ -1102,11 +1136,11 @@ pub async fn db_set_variable(
 
     conn.exec_drop(&query, (value,)).await.map_err(|e| {
         let msg = format!("Failed to set variable {}: {}", name, e);
-        log_error(&profile_id, &msg);
+        log_error(&log_state, "db", Some(&profile_id), &msg, None);
         msg
     })?;
 
-    log_query_result(&profile_id, &query, 0);
+    log_query_result(&log_state, &profile_id, &query, 0);
 
     Ok(())
 }
@@ -1114,12 +1148,13 @@ pub async fn db_set_variable(
 #[tauri::command]
 pub async fn db_get_status(
     state: State<'_, DbState>,
+    log_state: tauri::State<'_, LogState>,
     profile_id: String,
 ) -> AppResult<Vec<StatusInfo>> {
     let pool = get_pool(&state, &profile_id)?;
     let mut conn = pool.get_conn().await.map_err(|e| {
         let msg = format!("Connection error: {}", e);
-        log_error(&profile_id, &msg);
+        log_error(&log_state, "db", Some(&profile_id), &msg, None);
         msg
     })?;
 
@@ -1140,12 +1175,13 @@ pub async fn db_get_status(
 #[tauri::command]
 pub async fn db_get_processes(
     state: State<'_, DbState>,
+    log_state: tauri::State<'_, LogState>,
     profile_id: String,
 ) -> AppResult<Vec<ProcessInfo>> {
     let pool = get_pool(&state, &profile_id)?;
     let mut conn = pool.get_conn().await.map_err(|e| {
         let msg = format!("Connection error: {}", e);
-        log_error(&profile_id, &msg);
+        log_error(&log_state, "db", Some(&profile_id), &msg, None);
         msg
     })?;
 
@@ -1185,20 +1221,21 @@ pub async fn db_get_processes(
 #[tauri::command]
 pub async fn db_kill_process(
     state: State<'_, DbState>,
+    log_state: tauri::State<'_, LogState>,
     profile_id: String,
     process_id: u64,
 ) -> AppResult<()> {
     let pool = get_pool(&state, &profile_id)?;
     let mut conn = pool.get_conn().await.map_err(|e| {
         let msg = format!("Connection error: {}", e);
-        log_error(&profile_id, &msg);
+        log_error(&log_state, "db", Some(&profile_id), &msg, None);
         msg
     })?;
 
     let query = format!("KILL {}", process_id);
     conn.query_drop(&query).await.map_err(|e| {
         let msg = format!("Failed to kill process {}: {}", process_id, e);
-        log_error(&profile_id, &msg);
+        log_error(&log_state, "db", Some(&profile_id), &msg, None);
         msg
     })?;
 
@@ -1208,6 +1245,7 @@ pub async fn db_kill_process(
 #[tauri::command]
 pub async fn db_execute_query(
     state: State<'_, DbState>,
+    log_state: tauri::State<'_, LogState>,
     profile_id: String,
     query: String,
     timeout_ms: Option<u64>,
@@ -1215,12 +1253,12 @@ pub async fn db_execute_query(
     let pool = get_pool(&state, &profile_id)?;
     let mut conn = pool.get_conn().await.map_err(|e| {
         let msg = format!("Connection error: {}", e);
-        log_error(&profile_id, &msg);
+        log_error(&log_state, "db", Some(&profile_id), &msg, None);
         msg
     })?;
 
-    log_query(&profile_id, &query);
-    run_query_with_timeout(&profile_id, &query, timeout_ms, conn.query_drop(&query)).await?;
+    log_query(&log_state, &profile_id, &query, None);
+    run_query_with_timeout(&log_state, &profile_id, &query, timeout_ms, conn.query_drop(&query)).await?;
 
     Ok(())
 }
@@ -1228,12 +1266,13 @@ pub async fn db_execute_query(
 #[tauri::command]
 pub async fn db_get_collations(
     state: State<'_, DbState>,
+    log_state: tauri::State<'_, LogState>,
     profile_id: String,
 ) -> AppResult<CollationResponse> {
     let pool = get_pool(&state, &profile_id)?;
     let mut conn = pool.get_conn().await.map_err(|e| {
         let msg = format!("Connection error: {}", e);
-        log_error(&profile_id, &msg);
+        log_error(&log_state, "db", Some(&profile_id), &msg, None);
         msg
     })?;
 
@@ -1267,6 +1306,7 @@ pub async fn db_get_collations(
 #[tauri::command]
 pub async fn db_query(
     state: State<'_, DbState>,
+    log_state: tauri::State<'_, LogState>,
     profile_id: String,
     query: String,
     timeout_ms: Option<u64>,
@@ -1274,7 +1314,7 @@ pub async fn db_query(
     let pool = get_pool(&state, &profile_id)?;
     let mut conn = pool.get_conn().await.map_err(|e| {
         let msg = format!("Connection error: {}", e);
-        log_error(&profile_id, &msg);
+        log_error(&log_state, "db", Some(&profile_id), &msg, None);
         msg
     })?;
 
@@ -1284,10 +1324,11 @@ pub async fn db_query(
     let mut results = Vec::new();
 
     for stmt in &statements {
-        log_query(&profile_id, stmt);
+        log_query(&log_state, &profile_id, stmt, None);
 
         // Try as a query that returns rows
         match run_query_with_timeout(
+            &log_state,
             &profile_id,
             stmt,
             timeout_ms,
@@ -1370,7 +1411,7 @@ pub async fn db_query(
                     }
 
                     let count = result_rows.len();
-                    log_query_result(&profile_id, stmt, count);
+                    log_query_result(&log_state, &profile_id, stmt, count);
 
                     results.push(QueryResultSet {
                         columns,
@@ -1473,6 +1514,7 @@ pub async fn db_get_schema_ddl(
 pub async fn db_import_sql(
     app: AppHandle,
     state: State<'_, DbState>,
+    log_state: tauri::State<'_, LogState>,
     profile_id: String,
     database: String,
     file_path: String,
@@ -1518,8 +1560,11 @@ pub async fn db_import_sql(
         if let Err(e) = conn.query_drop(&stmt).await {
             let message = format!("Execution failed at statement {}: {}", executed + 1, e);
             log_error(
-                &profile_id,
+                &log_state,
+                "db",
+                Some(&profile_id),
                 &format!("SQL execution error at stmt {}: {}", executed + 1, e),
+                None,
             );
             emit_import_progress(
                 &app,

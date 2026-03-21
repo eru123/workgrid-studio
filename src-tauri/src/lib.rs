@@ -1,4 +1,5 @@
 use mysql_async::Pool;
+use tauri::Manager;
 use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
@@ -57,12 +58,19 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .manage(DbState::new())
+        // LogState is initialised inside setup() so we have the AppHandle
+        .setup(|app| {
+            let log_state = logging::LogState::new(app.handle().clone());
+            app.manage(log_state);
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             files::app_read_file,
             files::app_write_file,
             files::app_delete_file,
             files::app_get_data_dir,
             files::app_delete_all_data,
+            logging::get_log_buffer,
             logging::read_profile_log,
             logging::clear_profile_log,
             logging::clear_all_logs,

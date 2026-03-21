@@ -1,0 +1,25 @@
+[
+  { "command": "app.commandPalette",          "key": "Ctrl+Shift+P",  "when": "!inputFocus" },
+  { "command": "app.commandPalette",          "key": "F1" },
+  { "command": "app.openSettings",            "key": "Ctrl+,",        "when": "!inputFocus" },
+  { "command": "app.showShortcuts",           "key": "Ctrl+Shift+K",  "when": "!inputFocus" },
+
+  { "command": "layout.toggleSidebar",        "key": "Ctrl+B" },
+  { "command": "layout.togglePanel",          "key": "Ctrl+`" },
+  { "command": "layout.toggleSecondarySidebar","key": "Ctrl+Alt+B" },
+  { "command": "layout.focusEditor",          "key": "Escape",        "when": "!inputFocus && !modalOpen" },
+
+  { "command": "tab.newSqlQuery",             "key": "Ctrl+N",        "when": "!inputFocus" },
+  { "command": "tab.close",                   "key": "Ctrl+W",        "when": "!inputFocus" },
+  { "command": "tab.reopenClosed",            "key": "Ctrl+Shift+T",  "when": "!inputFocus" },
+  { "command": "tab.nextTab",                 "key": "Ctrl+Tab",      "when": "!inputFocus" },
+  { "command": "tab.prevTab",                 "key": "Ctrl+Shift+Tab","when": "!inputFocus" },
+
+  { "command": "query.execute",               "key": "Ctrl+Enter",    "when": "editorFocus && activeTabType == 'sql'" },
+  { "command": "query.executeAll",            "key": "Ctrl+Shift+Enter", "when": "editorFocus && activeTabType == 'sql'" },
+  { "command": "query.format",               "key": "Shift+Alt+F",   "when": "editorFocus" },
+  { "command": "query.explain",              "key": "Ctrl+E",        "when": "editorFocus && activeTabType == 'sql'" },
+
+  { "command": "editor.find",                "key": "Ctrl+F",        "when": "editorFocus" },
+  { "command": "editor.selectAll",           "key": "Ctrl+A",        "when": "editorFocus" }
+]

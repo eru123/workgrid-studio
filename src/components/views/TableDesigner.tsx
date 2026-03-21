@@ -25,7 +25,7 @@ import { cn } from "@/lib/utils/cn";
 import { AutocompleteInput } from "@/components/ui/AutocompleteInput";
 import { ContextSubmenu } from "@/components/views/ContextSubmenu";
 import { highlightSQL } from "@/lib/sqlHighlight";
-import { useAppStore } from "@/state/appStore";
+import { notifyError } from "@/lib/notifications";
 import { useLayoutStore } from "@/state/layoutStore";
 import { useSchemaStore } from "@/state/schemaStore";
 
@@ -1534,11 +1534,7 @@ export function TableDesigner({ tabId, leafId, profileId, database, tableName }:
       } catch (e) {
         if (!cancelled) {
           setError(String(e));
-          useAppStore.getState().addToast({
-            title: "Failed to Load Table",
-            description: String(e),
-            variant: "destructive",
-          });
+          notifyError("Failed to Load Table", String(e));
         }
       } finally {
         if (!cancelled) {
