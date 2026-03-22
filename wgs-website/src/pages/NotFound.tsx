@@ -15,8 +15,8 @@ export function NotFound() {
           <Link to="/" className="button-link">
             Go home
           </Link>
-          <Link to="/docs" className="ghost-link">
-            Read the docs
+          <Link to="/blog" className="ghost-link">
+            Browse the blog
           </Link>
         </div>
       </div>

@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+- chore(deps): bump pnpm/action-setup from 4 to 5
+- feat: Implement initial WorkGrid Studio website and project planning documents.
 
 ## [0.2.0] - 2026-03-21
 - Introduced a keybindings engine with `when`-expression context guards, a token-bucket notification system (toast + output panel routing), a lazy-loaded SQL formatter, a theme token engine, a connection URL parser, and a viewport-aware popup positioning utility.

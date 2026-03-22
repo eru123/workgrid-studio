@@ -169,7 +169,9 @@ export function Docs() {
   return (
     <div className="inner-page container">
       <div className="inner-hero fade-up">
-        <p className="eyebrow">Documentation</p>
+        <p className="eyebrow">
+          <Link to="/blog">Blog</Link> › Documentation
+        </p>
         <h1 className="inner-title">WorkGrid Studio Docs</h1>
         <p className="inner-lead">
           Everything that is currently implemented and working. For SSH + Docker
@@ -212,6 +214,11 @@ export function Docs() {
               ))}
             </section>
           ))}
+          <div className="docs-nav-footer">
+            <Link to="/blog" className="docs-back-link">
+              ← Back to blog
+            </Link>
+          </div>
         </div>
       </div>
     </div>

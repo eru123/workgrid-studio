@@ -8,7 +8,7 @@ export function DocsSSHDockerSetup() {
     <div className="inner-page container">
       <div className="inner-hero fade-up">
         <p className="eyebrow">
-          <Link to="/docs">Documentation</Link> › SSH + Docker
+          <Link to="/blog">Blog</Link> › SSH + Docker
         </p>
         <h1 className="inner-title">SSH + Docker Permission Setup</h1>
         <p className="inner-lead">
@@ -231,8 +231,8 @@ docker exec -i <container_name> bash -c 'echo ok'
           </section>
 
           <div className="docs-nav-footer">
-            <Link to="/docs" className="docs-back-link">
-              ← Back to documentation
+            <Link to="/blog" className="docs-back-link">
+              ← Back to blog
             </Link>
           </div>
         </div>

@@ -9,6 +9,8 @@ import { Layout } from "./components/Layout";
 import { Home } from "./pages/Home";
 import { Docs } from "./pages/Docs";
 import { DocsSSHDockerSetup } from "./pages/DocsSSHDockerSetup";
+import { Blog } from "./pages/Blog";
+import { BlogWhyWorkgridStudio } from "./pages/BlogWhyWorkgridStudio";
 import { About } from "./pages/About";
 import { Contact } from "./pages/Contact";
 import { NotFound } from "./pages/NotFound";
@@ -20,6 +22,8 @@ export function AppRoutesSSG() {
         <Route index element={<Home />} />
         <Route path="docs" element={<Docs />} />
         <Route path="docs/ssh-docker-setup" element={<DocsSSHDockerSetup />} />
+        <Route path="blog" element={<Blog />} />
+        <Route path="blog/why-workgrid-studio" element={<BlogWhyWorkgridStudio />} />
         <Route path="about" element={<About />} />
         <Route path="contact" element={<Contact />} />
         <Route path="*" element={<NotFound />} />

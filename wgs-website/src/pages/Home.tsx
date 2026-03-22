@@ -30,8 +30,8 @@ export function Home() {
               >
                 Download Free
               </a>
-              <Link to="/docs" className="ghost-link">
-                Read the Docs
+              <Link to="/blog" className="ghost-link">
+                Read the Blog
               </Link>
             </div>
           </div>

@@ -63,6 +63,22 @@ export const PAGE_META: Record<string, PageMeta> = {
       "WorkGrid Studio download, database client download, Windows SQL client, macOS SQL client, Linux database tool, free database workbench",
     canonical: `${BASE_URL}/downloads`,
   },
+  "/blog": {
+    title: "Blog — WorkGrid Studio",
+    description:
+      "Articles, deep-dives, and technical guides from the WorkGrid Studio team. Product updates, tutorials, and developer stories.",
+    keywords:
+      "WorkGrid Studio blog, database workbench articles, SQL tutorials, developer guides, open source database",
+    canonical: `${BASE_URL}/blog`,
+  },
+  "/blog/why-workgrid-studio": {
+    title: "Why WorkGrid Studio? A Case Against Proprietary Lock-In — Blog",
+    description:
+      "Workbench is slow, HeidiSQL is Windows-only, TablePlus costs money. We built WorkGrid Studio as the free, open-source, VSCode-class database workbench that developers actually deserve.",
+    keywords:
+      "WorkGrid Studio vs MySQL Workbench, WorkGrid Studio vs HeidiSQL, WorkGrid Studio vs TablePlus, open source database client, free database GUI",
+    canonical: `${BASE_URL}/blog/why-workgrid-studio`,
+  },
 };
 
 /**
