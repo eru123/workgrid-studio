@@ -499,13 +499,15 @@ export function getSuggestions(
 
     case "column":
       // Columns first
-      for (const c of schema.columns) {
-        addIfMatch(
-          c.name,
-          "column",
-          `${c.type} · ${c.table}`,
-          wrapIfNeeded(c.name),
-        );
+      if (!skipSchema) {
+        for (const c of schema.columns) {
+          addIfMatch(
+            c.name,
+            "column",
+            `${c.type} · ${c.table}`,
+            wrapIfNeeded(c.name),
+          );
+        }
       }
       // Table names (for table.* or table aliases)
       for (const t of schema.tables) {

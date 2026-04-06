@@ -2005,8 +2005,8 @@ const handleKeyDown = (e: React.KeyboardEvent) => {
 
   if (isEditing) {
     return (
-      <td className={cn("p-0 border-r h-full min-h-7 min-w-[300px] bg-background relative z-50", stickyClass)} style={stickyStyle}>
-        <div className="absolute top-0 left-0 min-w-full h-32 border border-primary shadow-xl z-50 bg-background overflow-hidden">
+      <td className={cn("p-0 border-r h-full min-h-7 bg-background relative z-[100]", stickyClass)} style={stickyStyle}>
+        <div className="absolute top-0 left-0 min-w-[300px] border border-primary shadow-[0_8px_30px_rgb(0,0,0,0.12)] z-[100] bg-background overflow-hidden rounded-sm transition-all">
           <CodeEditorShell
              value={localValue}
              onChange={setLocalValue}
@@ -2022,18 +2022,18 @@ const handleKeyDown = (e: React.KeyboardEvent) => {
                      setIsEditing(false);
                  });
                  
-                 // Expand height
+                 // Expand and Blur logic
                  const model = editor.getModel();
                  if (model) {
                    const lineCount = model.getLineCount();
-                   const container = editor.getContainerDOMNode();
+                   const container = editor.getDomNode();
                    if (container) {
                      // 18px line height + 8px padding
                      let neededHeight = lineCount * 18 + 8;
                      if (neededHeight < 64) neededHeight = 64;
                      if (neededHeight > 300) neededHeight = 300;
                      container.parentElement.style.height = `${neededHeight}px`;
-                     editor.layout();
+                     editor.layout(); editor.onDidBlurEditorWidget(() => handleBlurRef.current());
                    }
                  }
              }}
