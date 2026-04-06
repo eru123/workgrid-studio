@@ -16,57 +16,32 @@ import {
 } from "@/lib/sqlHighlight";
 import Editor from "@monaco-editor/react";
 import {
-  detectContext,
-  getSuggestions,
-} from "@/lib/sqlSuggestions";
-import type { Suggestion } from "@/lib/sqlSuggestions";
-import { SqlAutocomplete } from "@/components/ui/SqlAutocomplete";
+  registerSqlProviderIfNeeded,
+  getMonacoKind,
+  modelSuggestionCallbacks,
+} from "@/components/ui/CodeEditorShell";
 import { useSchemaStore } from "@/state/schemaStore";
 import { useLayoutStore } from "@/state/layoutStore";
 import { useAppStore } from "@/state/appStore";
 import { notifyError, notifySuccess } from "@/lib/notifications";
 import { useModelsStore } from "@/state/modelsStore";
 import { useProfilesStore } from "@/state/profilesStore";
-
+import { useQueryHistoryStore } from "@/state/queryHistoryStore";
+import { detectContext, getSuggestions } from "@/lib/sqlSuggestions";
+import {
+  RotateCcw, Play, Square, Database, Clock, Star, Trash2, ChevronDown,  Search, X, Loader2, Copy, Download,History, Save as SaveIcon, FolderOpen,
+  Server, CheckCircle2, XCircle, AlertCircle, FileText, WrapText,
+  AlignLeft, Bot, Sparkles, ChevronUp, ChevronsUpDown
+} from "lucide-react";
 import { useSavedQueriesStore } from "@/state/savedQueriesStore";
 import { aiGenerateQuery, dbGetSchemaDdl } from "@/lib/db";
 import { ensureAiUseAllowed } from "@/lib/privacy";
 import { save, open, ask } from "@tauri-apps/plugin-dialog";
 import { homeDir } from "@tauri-apps/api/path";
 import { writeFile, readTextFile } from "@tauri-apps/plugin-fs";
-import { useQueryHistoryStore } from "@/state/queryHistoryStore";
 import { useCommand } from "@/hooks/useCommand";
 import { useStatusBarEntry } from "@/hooks/useStatusBarEntry";
 import { formatSql } from "@/lib/sqlFormat";
-import {
-  Play,
-  Square,
-  Trash2,
-  Copy,
-  Download,
-  Loader2,
-  Server,
-  Database,
-  Clock,
-  CheckCircle2,
-  XCircle,
-  AlertCircle,
-  FileText,
-  WrapText,
-  RotateCcw,
-  AlignLeft,
-  Bot,
-  Sparkles,
-  Save as SaveIcon,
-  FolderOpen,
-  History,
-  Star,
-  X,
-  Search,
-  ChevronUp,
-  ChevronDown,
-  ChevronsUpDown,
-} from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 import {
   compareDataGridValues,
@@ -721,12 +696,12 @@ export function QueryTab({
   const [historyFilter, setHistoryFilter] = useState("");
 
   // ── Autocomplete state ──────────────────────────────────────
-  const [acVisible, setAcVisible] = useState(false);
-  const [acSelectedIdx, setAcSelectedIdx] = useState(0);
-  const [acSuggestions, setAcSuggestions] = useState<Suggestion[]>([]);
-  const [acPosition, setAcPosition] = useState({ top: 0, left: 0 });
-  const [acPrefix, setAcPrefix] = useState("");
-  const acDismissedForPrefix = useRef<string | null>(null);
+  
+  
+  
+  
+  
+  
 
   // ── Active query range ────────────────────────────────────
   const activeQueryRange = useMemo(() => {
@@ -960,6 +935,11 @@ export function QueryTab({
       },
     };
   }, [databases, selectedProfileId, selectedDb, storeTables, storeColumns]);
+
+  const acSchemaInfoRef = useRef(acSchemaInfo);
+  useEffect(() => {
+    acSchemaInfoRef.current = acSchemaInfo;
+  }, [acSchemaInfo]);
 
   // Auto-select database only for brand-new tabs with no DB selection history.
   useEffect(() => {
@@ -2327,133 +2307,7 @@ export function QueryTab({
     [applyMultiCursorEdit, multiCursorSelections],
   );
 
-  // ── Autocomplete helpers ──────────────────────────────────
-  const acTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const updateAutocompleteImmediate = useCallback(
-    (text: string, pos: number, force = false) => {
-      const textarea = editorRef.current;
-      if (!textarea) {
-        setAcVisible(false);
-        return;
-      }
-
-      const ctx = detectContext(text, pos);
-
-      // Require at least 1 char (or force via Ctrl+Space) to show popup
-      if (
-        !force &&
-        ctx.prefix.length < 1 &&
-        ctx.context !== "dot-table" &&
-        ctx.context !== "dot-column"
-      ) {
-        setAcVisible(false);
-        return;
-      }
-
-      // If user dismissed for this exact prefix, don't re-trigger
-      if (!force && acDismissedForPrefix.current === ctx.prefix) {
-        return;
-      }
-
-      const suggestions = getSuggestions(ctx, acSchemaInfo);
-
-      if (suggestions.length === 0) {
-        setAcVisible(false);
-        return;
-      }
-
-      // Compute cursor pixel position from known metrics — avoids the DOM-mirror
-      // + getBoundingClientRect reflow that measureCursorPosition() causes.
-      // scrollTop/scrollLeft are paint-phase reads (no forced layout).
-      const lh = editorLineHeightRef.current;
-      const EDITOR_PADDING = 12; // textarea uses p-3 (0.75rem at base 16px = 12px)
-      const linesBefore = text.slice(0, pos).split("\n");
-      const lineIdx = linesBefore.length - 1;
-      const charInLine = linesBefore[linesBefore.length - 1].length;
-      const cursorTop = lineIdx * lh + EDITOR_PADDING - textarea.scrollTop;
-      const cursorLeft = charInLine * (lh / 1.6) * 0.601 + EDITOR_PADDING - textarea.scrollLeft;
-
-      setAcSuggestions(suggestions);
-      setAcPrefix(ctx.prefix);
-      setAcSelectedIdx(0);
-      setAcPosition({
-        top: cursorTop + lh + 2,
-        left: cursorLeft,
-      });
-      setAcVisible(true);
-      acDismissedForPrefix.current = null;
-    },
-    [acSchemaInfo],
-  );
-
-  // Debounced wrapper — avoids blocking every keystroke with DOM measurement
-  const updateAutocomplete = useCallback(
-    (text: string, pos: number, force = false) => {
-      if (acTimerRef.current) clearTimeout(acTimerRef.current);
-      if (force) {
-        updateAutocompleteImmediate(text, pos, true);
-        return;
-      }
-      acTimerRef.current = setTimeout(() => {
-        updateAutocompleteImmediate(text, pos, false);
-      }, 120);
-    },
-    [updateAutocompleteImmediate],
-  );
-
-  const dismissAutocomplete = useCallback(() => {
-    if (acVisible) {
-      acDismissedForPrefix.current = acPrefix;
-    }
-    setAcVisible(false);
-  }, [acVisible, acPrefix]);
-
-  const handleAcceptSuggestion = useCallback((suggestion: Suggestion) => {
-    const textarea = editorRef.current;
-    if (!textarea) return;
-
-    const pos = textarea.selectionStart;
-    const text = textarea.value;
-    const insertText = suggestion.insertText ?? suggestion.label;
-
-    // Find the start of the prefix being replaced
-    const ctx = detectContext(text, pos);
-    const prefixLen = ctx.prefix.length;
-    const replaceStart = pos - prefixLen;
-
-    const newText = text.slice(0, replaceStart) + insertText + text.slice(pos);
-    const newCursor = replaceStart + insertText.length;
-
-    pendingEditorSelectionRef.current = {
-      start: newCursor,
-      end: newCursor,
-    };
-    setSql(newText);
-    setAcVisible(false);
-    acDismissedForPrefix.current = null;
-
-    // Re-trigger autocomplete after accepting (for chaining, e.g. after dot)
-    setTimeout(() => {
-      const ta = editorRef.current;
-      if (ta) {
-        ta.focus();
-      }
-    }, 0);
-  }, []);
-
-  // Dismiss autocomplete on blur/click elsewhere
-  useEffect(() => {
-    const handleClickOutside = () => {
-      setAcVisible(false);
-    };
-    window.addEventListener("click", handleClickOutside);
-    window.addEventListener("scroll", handleClickOutside, true);
-    return () => {
-      window.removeEventListener("click", handleClickOutside);
-      window.removeEventListener("scroll", handleClickOutside, true);
-    };
-  }, []);
+  // (Autocomplete is handled natively by Monaco via the provider in CodeEditorShell)
 
   useEffect(() => {
     const pending = pendingEditorSelectionRef.current;
@@ -2661,36 +2515,11 @@ export function QueryTab({
         return;
       }
 
-      // ── Autocomplete keyboard handling ──────────────────────
-      if (acVisible && acSuggestions.length > 0) {
-        if (e.key === "ArrowDown") {
-          e.preventDefault();
-          setAcSelectedIdx((prev) =>
-            Math.min(prev + 1, acSuggestions.length - 1),
-          );
-          return;
-        }
-        if (e.key === "ArrowUp") {
-          e.preventDefault();
-          setAcSelectedIdx((prev) => Math.max(prev - 1, 0));
-          return;
-        }
-        if (e.key === "Tab" || e.key === "Enter") {
-          e.preventDefault();
-          handleAcceptSuggestion(acSuggestions[acSelectedIdx]);
-          return;
-        }
-        if (e.key === "Escape") {
-          e.preventDefault();
-          dismissAutocomplete();
-          return;
-        }
-      }
-
-      // Ctrl+Space: force trigger autocomplete
       if (modKey && e.key === " ") {
         e.preventDefault();
-        updateAutocomplete(editorValue, selectionStart, true);
+        if (monacoRef.current) {
+          monacoRef.current.trigger('keyboard', 'editor.action.triggerSuggest', {});
+        }
         return;
       }
 
@@ -2887,15 +2716,10 @@ export function QueryTab({
       }
     },
     [
-      acSelectedIdx,
-      acSuggestions,
-      acVisible,
       activeColumn,
       activeLine,
       applyMultiCursorEdit,
       applyEditorEdit,
-      dismissAutocomplete,
-      handleAcceptSuggestion,
       handleRun,
       handleRunSelected,
       handleSelectNextOccurrence,
@@ -2903,7 +2727,6 @@ export function QueryTab({
       multiCursorSelections,
       running,
       setEditorSelection,
-      updateAutocomplete,
     ],
   );
 
@@ -3313,7 +3136,7 @@ export function QueryTab({
               language="sql"
               theme="vs-dark"
               value={sql}
-              onChange={(val) => {
+              onChange={(val: string | undefined) => {
                 const newVal = val || "";
                 if (showHistory) setShowHistory(false);
                 setSql(newVal);
@@ -3324,12 +3147,36 @@ export function QueryTab({
                     const pos = model.getOffsetAt(sel.getStartPosition());
                     setCursorPos(pos);
                     setSelectedCharCount(0);
-                    updateAutocomplete(newVal, pos);
+
                   }
                 }
               }}
-              onMount={(editor, monaco) => {
+              
+              
+              onMount={(editor: any, monaco: any) => {
                 monacoRef.current = editor;
+
+                registerSqlProviderIfNeeded(monaco);
+                const model = editor.getModel();
+                if (model) {
+                  modelSuggestionCallbacks.set(model.id, (text, mon, range) => {
+                    const ctx = detectContext(text, text.length);
+                    // Skip heavy schema searching for general context with small prefix (<2 chars)
+                    const skipSchema = ctx.context === "general" && ctx.prefix.length < 2;
+                    const items = getSuggestions(ctx, acSchemaInfoRef.current, 40, skipSchema);
+                    
+                    return {
+                      suggestions: items.map((s) => ({
+                        label: s.label,
+                        kind: getMonacoKind(s.kind, mon),
+                        detail: s.detail,
+                        insertText: s.insertText ?? s.label,
+                        range: range
+                      }))
+                    };
+                  });
+                }
+
 
                 editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
                   actionsRef.current.handleRun?.();
@@ -3381,7 +3228,7 @@ export function QueryTab({
                   set: () => {}
                 });
 
-                editor.onDidChangeCursorPosition((e) => {
+                editor.onDidChangeCursorPosition((e: any) => {
                   if (monacoRef.current) {
                     const model = monacoRef.current.getModel();
                     if (model) {
@@ -3436,16 +3283,7 @@ export function QueryTab({
                   : `${(executionTime / 1000).toFixed(2)}s`}
               </div>
             )}
-            {/* Autocomplete popup */}
-            <SqlAutocomplete
-              suggestions={acSuggestions}
-              selectedIndex={acSelectedIdx}
-              prefix={acPrefix}
-              position={acPosition}
-              onAccept={handleAcceptSuggestion}
-              onSelectedIndexChange={setAcSelectedIdx}
-              visible={acVisible}
-            />
+            
           </div>
         </div>
       </div>
