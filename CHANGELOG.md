@@ -1,11 +1,9 @@
 # Changelog
 
 ## [Unreleased]
-- chore(deps): bump pnpm/action-setup from 4 to 5
-- feat: Implement initial WorkGrid Studio website and project planning documents.
-- update agent
-- add github workflows and execution rules for agent
-- chore: update pnpm packages
+- Updated core dependencies and internal tooling to improve overall project stability.
+- Launched the initial project website alongside architecture and planning documents.
+- Enhanced AI agent capabilities with new workflows and integrated developer rules.
 
 ## [0.2.0] - 2026-03-21
 - Introduced a keybindings engine with `when`-expression context guards, a token-bucket notification system (toast + output panel routing), a lazy-loaded SQL formatter, a theme token engine, a connection URL parser, and a viewport-aware popup positioning utility.
