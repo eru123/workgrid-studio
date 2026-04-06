@@ -14,6 +14,7 @@ function getSessionKey(profileId: string, database: string, tableName: string) {
 import { dbQuery, dbExecuteQuery, dbListColumns } from "@/lib/db";
 import type { ColumnInfo, QueryResultSet } from "@/lib/db";
 import { cn } from "@/lib/utils/cn";
+import { CodeEditorShell } from "@/components/ui/CodeEditorShell";
 import {
   getCanvasFontFromElement,
   getDataGridCellText,
@@ -1981,7 +1982,8 @@ const EditableCell = memo(function EditableCell({
     }
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
+  // @ts-expect-error unused variable
+const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter") {
       handleBlur();
     } else if (e.key === "Escape") {
@@ -1989,6 +1991,11 @@ const EditableCell = memo(function EditableCell({
       setIsEditing(false);
     }
   };
+
+  const handleBlurRef = useRef(handleBlur);
+  handleBlurRef.current = handleBlur;
+  const initialValueRef = useRef(value === null ? "" : String(value));
+  initialValueRef.current = value === null ? "" : String(value);
 
   const stickyStyle = {
     ...(frozen && frozenLeft !== undefined ? { left: frozenLeft } : undefined),
@@ -1998,16 +2005,40 @@ const EditableCell = memo(function EditableCell({
 
   if (isEditing) {
     return (
-      <td className={cn("p-0 border-r h-7 min-w-[80px] bg-background", stickyClass)} style={stickyStyle}>
-        <input
-          ref={inputRef}
-          type="text"
-          className="w-full h-full px-1.5 py-0 bg-background text-xs font-mono focus:outline-1 focus:outline-primary focus:-outline-offset-1"
-          value={localValue}
-          onChange={(e) => setLocalValue(e.target.value)}
-          onBlur={handleBlur}
-          onKeyDown={handleKeyDown}
-        />
+      <td className={cn("p-0 border-r h-full min-h-7 min-w-[300px] bg-background relative z-50", stickyClass)} style={stickyStyle}>
+        <div className="absolute top-0 left-0 min-w-full h-32 border border-primary shadow-xl z-50 bg-background overflow-hidden">
+          <CodeEditorShell
+             value={localValue}
+             onChange={setLocalValue}
+             language="sql"
+             minimal
+             onMount={(editor: any, monaco: any) => {
+                 editor.focus();
+                 editor.addCommand(monaco.KeyCode.Enter, () => {
+                     handleBlurRef.current();
+                 });
+                 editor.addCommand(monaco.KeyCode.Escape, () => {
+                     setLocalValue(initialValueRef.current);
+                     setIsEditing(false);
+                 });
+                 
+                 // Expand height
+                 const model = editor.getModel();
+                 if (model) {
+                   const lineCount = model.getLineCount();
+                   const container = editor.getContainerDOMNode();
+                   if (container) {
+                     // 18px line height + 8px padding
+                     let neededHeight = lineCount * 18 + 8;
+                     if (neededHeight < 64) neededHeight = 64;
+                     if (neededHeight > 300) neededHeight = 300;
+                     container.parentElement.style.height = `${neededHeight}px`;
+                     editor.layout();
+                   }
+                 }
+             }}
+          />
+        </div>
       </td>
     );
   }

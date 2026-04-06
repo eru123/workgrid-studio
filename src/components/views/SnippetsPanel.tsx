@@ -3,6 +3,7 @@ import { useSnippetsStore, type SnippetEntry } from "@/state/snippetsStore";
 import { useProfilesStore } from "@/state/profilesStore";
 import { notifyError, notifySuccess } from "@/lib/notifications";
 import { Plus, Pencil, Trash2, Search, Snail, FileCode2, Play } from "lucide-react";
+import { CodeEditorShell } from "@/components/ui/CodeEditorShell";
 
 const INSERT_EVENT = "workgrid:insert-snippet";
 
@@ -258,12 +259,13 @@ export function SnippetsPanel({ activeProfileId }: Props) {
 
               <label className="space-y-1">
                 <span className="text-[11px] text-muted-foreground">Body</span>
-                <textarea
-                  value={editing.body}
-                  onChange={(e) => setEditing((prev) => prev ? { ...prev, body: e.target.value } : prev)}
-                  rows={10}
-                  className="w-full rounded-md border bg-background px-3 py-2 font-mono text-xs outline-none focus:border-primary"
-                />
+                <div className="w-full h-64 border rounded-md focus-within:border-primary overflow-hidden">
+                  <CodeEditorShell
+                    value={editing.body}
+                    onChange={(val) => setEditing((prev) => prev ? { ...prev, body: val } : prev)}
+                    language="sql"
+                  />
+                </div>
               </label>
             </div>
             <div className="flex items-center justify-end gap-2 border-t px-4 py-3">
