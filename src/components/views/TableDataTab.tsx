@@ -14,6 +14,7 @@ function getSessionKey(profileId: string, database: string, tableName: string) {
 import { dbQuery, dbExecuteQuery, dbListColumns } from "@/lib/db";
 import type { ColumnInfo, QueryResultSet } from "@/lib/db";
 import { cn } from "@/lib/utils/cn";
+import { CodeEditorShell } from "@/components/ui/CodeEditorShell";
 import {
   getCanvasFontFromElement,
   getDataGridCellText,
@@ -26,9 +27,7 @@ import { useSchemaStore } from "@/state/schemaStore";
 import { useProfilesStore } from "@/state/profilesStore";
 import { FindToolbar } from "@/components/ui/FindToolbar";
 import { CellContextMenu } from "@/components/ui/CellContextMenu";
-import { AutocompleteInput } from "@/components/ui/AutocompleteInput";
 import { DataGridSkeleton } from "@/components/ui/Skeleton";
-import { highlightSQL } from "@/lib/sqlHighlight";
 import {
   Loader2,
   ChevronUp,
@@ -78,249 +77,10 @@ function escId(v: string): string {
 
 const PAGE_SIZE_OPTIONS = [50, 100, 200, 500, 1000];
 
-const VALUE_OPERATORS = new Set([
-  "=",
-  "!=",
-  "<>",
-  ">",
-  ">=",
-  "<",
-  "<=",
-  "LIKE",
-]);
+// Redundant filter suggestion logic removed (Monaco handles this natively).
 
-function normalizeWhereIdentifier(token: string): string {
-  return token
-    .replace(/^[`(]+/, "")
-    .replace(/[`)]+$/, "")
-    .replace(/`/g, "")
-    .trim()
-    .toLowerCase();
-}
 
-function inferWhereValueKind(colType: string | undefined) {
-  const upper = (colType ?? "").toUpperCase();
-  if (
-    /^TINYINT\(1\)$/.test(upper) ||
-    /\bBOOL\b/.test(upper) ||
-    /\bBOOLEAN\b/.test(upper)
-  ) {
-    return "boolean" as const;
-  }
-  if (
-    /\b(TINYINT|SMALLINT|MEDIUMINT|INT|INTEGER|BIGINT|DECIMAL|NUMERIC|FLOAT|DOUBLE|REAL|BIT)\b/.test(
-      upper,
-    )
-  ) {
-    return "numeric" as const;
-  }
-  if (/\b(DATE|DATETIME|TIMESTAMP|TIME|YEAR)\b/.test(upper)) {
-    return "temporal" as const;
-  }
-  if (/\b(JSON)\b/.test(upper)) {
-    return "json" as const;
-  }
-  if (
-    /\b(CHAR|VARCHAR|TEXT|TINYTEXT|MEDIUMTEXT|LONGTEXT|ENUM|SET|BLOB|TINYBLOB|MEDIUMBLOB|LONGBLOB)\b/.test(
-      upper,
-    )
-  ) {
-    return "string" as const;
-  }
-  return "other" as const;
-}
-
-function whereValueSuggestions(columnInfo?: ColumnInfo): string[] {
-  const out: string[] = [];
-  const seen = new Set<string>();
-  const add = (value: string) => {
-    if (!value || seen.has(value)) return;
-    seen.add(value);
-    out.push(value);
-  };
-
-  if (!columnInfo || columnInfo.nullable) add("NULL");
-
-  const kind = inferWhereValueKind(columnInfo?.col_type);
-  if (kind === "boolean") {
-    add("1");
-    add("0");
-    add("TRUE");
-    add("FALSE");
-    return out;
-  }
-  if (kind === "numeric") {
-    add("0");
-    add("1");
-    add("-1");
-    return out;
-  }
-  if (kind === "temporal") {
-    add("CURRENT_DATE");
-    add("CURRENT_TIMESTAMP");
-    add("NOW()");
-    add("'2026-01-01'");
-    return out;
-  }
-  if (kind === "json") {
-    add("(JSON_OBJECT())");
-    add("(JSON_ARRAY())");
-    add("'{}'");
-    add("'[]'");
-    return out;
-  }
-  if (kind === "string") {
-    add("''");
-    add("'value'");
-    add("'%term%'");
-    return out;
-  }
-
-  add("'value'");
-  return out;
-}
-
-function buildWhereSuggestions(
-  whereClause: string,
-  columns: string[],
-  columnInfos: ColumnInfo[],
-): string[] {
-  const sourceColumns =
-    columns.length > 0 ? columns : columnInfos.map((col) => col.name);
-  const uniqueColumns = Array.from(new Set(sourceColumns));
-  const columnTokens = uniqueColumns.map((col) =>
-    /^[A-Za-z_][A-Za-z0-9_]*$/.test(col) ? col : escId(col),
-  );
-  const findColumn = (token: string): ColumnInfo | undefined => {
-    const normalized = normalizeWhereIdentifier(token);
-    if (!normalized) return undefined;
-    return columnInfos.find((col) => col.name.toLowerCase() === normalized);
-  };
-  const isColumnToken = (token: string): boolean => {
-    const normalized = normalizeWhereIdentifier(token);
-    if (!normalized) return false;
-    return uniqueColumns.some((col) => col.toLowerCase() === normalized);
-  };
-
-  const tokenMatch = whereClause.match(/(\S+)$/);
-  const activeToken = tokenMatch ? tokenMatch[1] : "";
-  const prefix = tokenMatch
-    ? whereClause.slice(0, whereClause.length - activeToken.length)
-    : whereClause;
-  const activeLower = activeToken.toLowerCase();
-
-  const words = whereClause.trim() ? whereClause.trim().split(/\s+/) : [];
-  const contextWords = tokenMatch ? words.slice(0, -1) : words;
-  const prev = contextWords[contextWords.length - 1] ?? "";
-  const prevUpper = prev.toUpperCase();
-  const prevPrev = contextWords[contextWords.length - 2] ?? "";
-  const prevPrevUpper = prevPrev.toUpperCase();
-  const prevPrevPrev = contextWords[contextWords.length - 3] ?? "";
-
-  const out: string[] = [];
-  const seen = new Set<string>();
-  const add = (candidate: string) => {
-    if (!candidate) return;
-    if (activeLower && !candidate.toLowerCase().includes(activeLower)) return;
-    const finalValue = `${prefix}${candidate}`;
-    if (seen.has(finalValue)) return;
-    seen.add(finalValue);
-    out.push(finalValue);
-  };
-  const addColumns = () => columnTokens.forEach(add);
-  const addOperators = () => {
-    [
-      "=",
-      "!=",
-      "<>",
-      ">",
-      ">=",
-      "<",
-      "<=",
-      "LIKE",
-      "NOT LIKE",
-      "IN",
-      "NOT IN",
-      "BETWEEN",
-      "IS NULL",
-      "IS NOT NULL",
-    ].forEach(add);
-  };
-
-  if (contextWords.length === 0) {
-    addColumns();
-    ["(", "NOT", "NULL"].forEach(add);
-    return out.slice(0, 12);
-  }
-
-  if (prevUpper === "AND" || prevUpper === "OR" || prevUpper === "(") {
-    addColumns();
-    add("NOT");
-    add("(");
-    return out.slice(0, 12);
-  }
-
-  if (isColumnToken(prev)) {
-    addOperators();
-    return out.slice(0, 12);
-  }
-
-  if (prevUpper === "IS") {
-    add("NULL");
-    add("NOT NULL");
-    return out.slice(0, 12);
-  }
-
-  if (prevUpper === "NOT") {
-    if (prevPrevUpper === "IS") {
-      add("NULL");
-      return out.slice(0, 12);
-    }
-    add("LIKE");
-    add("IN");
-    return out.slice(0, 12);
-  }
-
-  let valueColumn: ColumnInfo | undefined;
-  if (VALUE_OPERATORS.has(prevUpper)) {
-    valueColumn = findColumn(prevPrev);
-  } else if (prevUpper === "LIKE" && prevPrevUpper === "NOT") {
-    valueColumn = findColumn(prevPrevPrev);
-  } else if (prevUpper === "IN" || prevUpper === "BETWEEN") {
-    valueColumn = findColumn(prevPrev);
-  }
-
-  if (prevUpper === "BETWEEN") {
-    whereValueSuggestions(valueColumn).forEach((value) =>
-      add(`${value} AND ${value}`),
-    );
-    return out.slice(0, 12);
-  }
-
-  if (
-    contextWords.length >= 2 &&
-    contextWords[contextWords.length - 2].toUpperCase() === "BETWEEN"
-  ) {
-    add("AND");
-    return out.slice(0, 12);
-  }
-
-  if (prevUpper === "IN") {
-    add("(NULL)");
-    whereValueSuggestions(valueColumn).forEach((value) => add(`(${value})`));
-    add("(...)");
-    return out.slice(0, 12);
-  }
-
-  if (VALUE_OPERATORS.has(prevUpper) || valueColumn) {
-    whereValueSuggestions(valueColumn).forEach(add);
-    return out.slice(0, 12);
-  }
-
-  addColumns();
-  ["AND", "OR", "NOT", "LIKE", "IN", "IS", "NULL"].forEach(add);
-  return out.slice(0, 12);
-}
+// Removed buildWhereSuggestions - natively handled by Monaco now.
 
 // ═══════════════════════════════════════════════════════════════════════
 //  Component
@@ -590,21 +350,6 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
     setAppliedWhere("");
     setPage(0);
   }, []);
-
-  const whereSuggestions = useMemo(
-    () => buildWhereSuggestions(whereClause, columns, columnInfos),
-    [whereClause, columns, columnInfos],
-  );
-  const whereHighlightHtml = useMemo(() => {
-    if (!whereClause) return "";
-    const html = highlightSQL(
-      whereClause,
-      whereClause.length,
-      whereClause.length,
-      null,
-    );
-    return html.endsWith("\n") ? html.slice(0, -1) : html;
-  }, [whereClause]);
 
   // ── Close column picker on outside click ────────────────
   useEffect(() => {
@@ -1250,20 +995,22 @@ export function TableDataTab({ profileId, database, tableName }: Props) {
             <span className="text-[10px] text-muted-foreground shrink-0 font-medium uppercase tracking-wide">
               WHERE
             </span>
-            <AutocompleteInput
-              value={whereClause}
-              onChange={setWhereClause}
-              suggestions={whereSuggestions}
-              selectOnEnter={false}
-              selectOnTab
-              onEnter={applyFilter}
-              highlightHtml={whereHighlightHtml}
-              highlightClassName="h-6 rounded px-2 py-[4px] text-xs leading-4 font-mono"
-              inputClassName="flex-1 h-6 rounded bg-secondary/50 border px-2 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-primary"
-              dropdownClassName="max-h-56 overflow-y-auto border-border/70"
-              placeholder="e.g. status = 'active' AND created_at > '2024-01-01'"
-              spellCheck={false}
-            />
+            <div className="flex-1 h-7 border rounded bg-secondary/30 overflow-hidden shadow-sm">
+              <CodeEditorShell
+                value={whereClause}
+                onChange={setWhereClause}
+                language="sql"
+                minimal
+                onMount={(editor, monaco) => {
+                  editor.addCommand(monaco.KeyCode.Enter, () => {
+                    applyFilter();
+                  });
+                  // Match height of container
+                  editor.layout();
+                }}
+                className="h-full border-none"
+              />
+            </div>
             <button
               className="px-2 py-1 text-xs rounded bg-primary text-primary-foreground hover:bg-primary/90 transition-colors flex items-center gap-1"
               onClick={applyFilter}
@@ -1981,7 +1728,8 @@ const EditableCell = memo(function EditableCell({
     }
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
+  // @ts-expect-error unused variable
+const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter") {
       handleBlur();
     } else if (e.key === "Escape") {
@@ -1989,6 +1737,11 @@ const EditableCell = memo(function EditableCell({
       setIsEditing(false);
     }
   };
+
+  const handleBlurRef = useRef(handleBlur);
+  handleBlurRef.current = handleBlur;
+  const initialValueRef = useRef(value === null ? "" : String(value));
+  initialValueRef.current = value === null ? "" : String(value);
 
   const stickyStyle = {
     ...(frozen && frozenLeft !== undefined ? { left: frozenLeft } : undefined),
@@ -1998,16 +1751,40 @@ const EditableCell = memo(function EditableCell({
 
   if (isEditing) {
     return (
-      <td className={cn("p-0 border-r h-7 min-w-[80px] bg-background", stickyClass)} style={stickyStyle}>
-        <input
-          ref={inputRef}
-          type="text"
-          className="w-full h-full px-1.5 py-0 bg-background text-xs font-mono focus:outline-1 focus:outline-primary focus:-outline-offset-1"
-          value={localValue}
-          onChange={(e) => setLocalValue(e.target.value)}
-          onBlur={handleBlur}
-          onKeyDown={handleKeyDown}
-        />
+      <td className={cn("p-0 border-r h-full min-h-7 bg-background relative z-[100]", stickyClass)} style={stickyStyle}>
+        <div className="absolute top-0 left-0 min-w-[300px] border border-primary shadow-[0_8px_30px_rgb(0,0,0,0.12)] z-[100] bg-background overflow-hidden rounded-sm transition-all">
+          <CodeEditorShell
+             value={localValue}
+             onChange={setLocalValue}
+             language="sql"
+             minimal
+             onMount={(editor: any, monaco: any) => {
+                 editor.focus();
+                 editor.addCommand(monaco.KeyCode.Enter, () => {
+                     handleBlurRef.current();
+                 });
+                 editor.addCommand(monaco.KeyCode.Escape, () => {
+                     setLocalValue(initialValueRef.current);
+                     setIsEditing(false);
+                 });
+                 
+                 // Expand and Blur logic
+                 const model = editor.getModel();
+                 if (model) {
+                   const lineCount = model.getLineCount();
+                   const container = editor.getDomNode();
+                   if (container) {
+                     // 18px line height + 8px padding
+                     let neededHeight = lineCount * 18 + 8;
+                     if (neededHeight < 64) neededHeight = 64;
+                     if (neededHeight > 300) neededHeight = 300;
+                     container.parentElement.style.height = `${neededHeight}px`;
+                     editor.layout(); editor.onDidBlurEditorWidget(() => handleBlurRef.current());
+                   }
+                 }
+             }}
+          />
+        </div>
       </td>
     );
   }

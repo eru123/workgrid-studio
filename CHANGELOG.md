@@ -1,8 +1,11 @@
 # Changelog
 
 ## [Unreleased]
-- chore(deps): bump pnpm/action-setup from 4 to 5
-- feat: Implement initial WorkGrid Studio website and project planning documents.
+- Improved application stability and performance via core dependency updates.
+- Launched the official WorkGrid Studio website and architecture documentation.
+- Enhanced the AI assistant with robust new workflow capabilities and developer rules.
+- Upgraded the SQL autocomplete engine for smarter, context-aware query suggestions.
+- Integrated advanced code editing features across all query and table builder views.
 
 ## [0.2.0] - 2026-03-21
 - Introduced a keybindings engine with `when`-expression context guards, a token-bucket notification system (toast + output panel routing), a lazy-loaded SQL formatter, a theme token engine, a connection URL parser, and a viewport-aware popup positioning utility.

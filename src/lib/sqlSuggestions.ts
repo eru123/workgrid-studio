@@ -443,6 +443,7 @@ export function getSuggestions(
   contextInfo: ContextInfo,
   schema: SchemaInfo,
   maxResults = 40,
+  skipSchema = false,
 ): Suggestion[] {
   const { context, prefix, dotPrefix } = contextInfo;
   const results: Array<Suggestion & { score: number }> = [];
@@ -498,13 +499,15 @@ export function getSuggestions(
 
     case "column":
       // Columns first
-      for (const c of schema.columns) {
-        addIfMatch(
-          c.name,
-          "column",
-          `${c.type} · ${c.table}`,
-          wrapIfNeeded(c.name),
-        );
+      if (!skipSchema) {
+        for (const c of schema.columns) {
+          addIfMatch(
+            c.name,
+            "column",
+            `${c.type} · ${c.table}`,
+            wrapIfNeeded(c.name),
+          );
+        }
       }
       // Table names (for table.* or table aliases)
       for (const t of schema.tables) {
@@ -519,7 +522,6 @@ export function getSuggestions(
         addIfMatch(kw, "keyword", "Keyword");
       }
       break;
-
     case "general":
     default:
       // Keywords
@@ -534,22 +536,24 @@ export function getSuggestions(
       for (const t of SQL_TYPES) {
         addIfMatch(t, "type", "Type");
       }
-      // Tables
-      for (const t of schema.tables) {
-        addIfMatch(t, "table", "Table", wrapIfNeeded(t));
-      }
-      // Databases
-      for (const db of schema.databases) {
-        addIfMatch(db, "database", "Database", wrapIfNeeded(db));
-      }
-      // Columns
-      for (const c of schema.columns) {
-        addIfMatch(
-          c.name,
-          "column",
-          `${c.type} · ${c.table}`,
-          wrapIfNeeded(c.name),
-        );
+      if (!skipSchema) {
+        // Tables
+        for (const t of schema.tables) {
+          addIfMatch(t, "table", "Table", wrapIfNeeded(t));
+        }
+        // Databases
+        for (const db of schema.databases) {
+          addIfMatch(db, "database", "Database", wrapIfNeeded(db));
+        }
+        // Columns
+        for (const c of schema.columns) {
+          addIfMatch(
+            c.name,
+            "column",
+            `${c.type} · ${c.table}`,
+            wrapIfNeeded(c.name),
+          );
+        }
       }
       break;
   }

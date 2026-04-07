@@ -4,6 +4,7 @@ import { QueryBuilder, formatQuery, type Field, type RuleGroupType } from "react
 import { useSchemaStore, type ColumnInfo } from "@/state/schemaStore";
 import { useLayoutStore } from "@/state/layoutStore";
 import { notifyError, notifySuccess } from "@/lib/notifications";
+import { CodeEditorShell } from "@/components/ui/CodeEditorShell";
 
 interface Props {
   profileId: string;
@@ -451,11 +452,13 @@ export function QueryBuilderTab({ profileId, database }: Props) {
               <div className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                 Generated SQL
               </div>
-              <textarea
-                readOnly
-                value={sql}
-                className="min-h-64 w-full rounded border bg-muted/20 p-3 font-mono text-[11px] outline-none"
-              />
+              <div className="min-h-64 h-64 w-full rounded border bg-muted/20 overflow-hidden">
+                <CodeEditorShell
+                  value={sql}
+                  language="sql"
+                  readOnly
+                />
+              </div>
             </div>
           </div>
         </div>
