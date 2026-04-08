@@ -1365,7 +1365,7 @@ function BottomPanel({ isSecondary }: { isSecondary?: boolean }) {
                     <th className="py-2 px-3 font-normal min-w-[200px]">
                       Payload
                     </th>
-                    <th className="py-2 px-3 font-normal min-w-[300px]">
+                    <th className="py-2 px-3 font-normal min-w-75">
                       Response
                     </th>
                   </tr>

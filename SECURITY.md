@@ -33,11 +33,11 @@ To help us triage and resolve the issue quickly, please include:
 
 ## Response Timeline
 
-| Step | Target timeframe |
-| ---- | ---------------- |
-| Acknowledgement | Within **48 hours** |
-| Initial assessment | Within **7 days** |
-| Fix & release | Depends on severity; critical issues are prioritised |
+| Step               | Target timeframe                                     |
+| ------------------ | ---------------------------------------------------- |
+| Acknowledgement    | Within **48 hours**                                  |
+| Initial assessment | Within **7 days**                                    |
+| Fix & release      | Depends on severity; critical issues are prioritised |
 
 We will keep you informed of our progress throughout the process.
 

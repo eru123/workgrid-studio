@@ -57,7 +57,7 @@ export function ToastContainer() {
   const timerMapRef = useRef<Map<string, TimerEntry>>(new Map());
 
   return (
-    <div className="fixed bottom-4 right-4 z-[100] flex flex-col gap-2 pointer-events-none w-80 max-w-[calc(100vw-2rem)]">
+    <div className="fixed bottom-4 right-4 z-100 flex flex-col gap-2 pointer-events-none w-80 max-w-[calc(100vw-2rem)]">
       {toasts.map((toast) => (
         <ToastItem
           key={toast.id}
@@ -108,13 +108,14 @@ function ToastItem({
   useEffect(() => {
     if (persistent || autoDismissMs === null) return;
 
+    const timerMap = timerMapRef.current;
     const entry: TimerEntry = { timer: null };
-    timerMapRef.current.set(id, entry);
+    timerMap.set(id, entry);
     entry.timer = setTimeout(onDismiss, autoDismissMs);
 
     return () => {
       if (entry.timer !== null) clearTimeout(entry.timer);
-      timerMapRef.current.delete(id);
+      timerMap.delete(id);
     };
   }, [id, persistent, autoDismissMs, onDismiss, timerMapRef]);
 

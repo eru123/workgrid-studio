@@ -6,8 +6,11 @@
 - Enhanced the AI assistant with robust new workflow capabilities and developer rules.
 - Upgraded the SQL autocomplete engine for smarter, context-aware query suggestions.
 - Integrated advanced code editing features across all query and table builder views.
+- fix issues
+- remove deperecated baseUrl
 
 ## [0.2.0] - 2026-03-21
+
 - Introduced a keybindings engine with `when`-expression context guards, a token-bucket notification system (toast + output panel routing), a lazy-loaded SQL formatter, a theme token engine, a connection URL parser, and a viewport-aware popup positioning utility.
 - Added QueryBuilder tab (visual WHERE/JOIN/ORDER builder with generated SQL preview), Snippets panel with persistent snippet store, Triggers view, Stored Procedures/Routines view, View editor, Events view, and Users management view.
 - Implemented full PostgreSQL command suite (`pg_connect`, `pg_query`, `pg_get_databases_info`, `pg_get_tables_info`, `pg_list_columns`, `pg_get_processes`, `pg_kill_process`, and more). Added SQLite and MSSQL backend stubs.
@@ -15,14 +18,17 @@
 - Resolved table header transparency, QueryBuilder infinite render loop, missing `ActivityView` type variant, `SnippetsPanel` double-import breaking code-splitting, and PostgreSQL boolean wire-value coercion.
 
 ## [0.1.10] - 2026-03-21
+
 - Fix errors on website deployment via cloudflare pages.
 
 ## [0.1.9] - 2026-03-20
+
 - Replaced the libssh2-based SSH implementation with russh, a pure Rust SSH library. This change improves security, reduces dependencies, and provides better async support.
 - Added docker support for SSH connections, you can now pass container name with ssh to automatically get the host ip address for you.
 - Update project's website, new pages are implemented such as Documentation, Changelogs, Contact Us, About Us and Download Page.
 
 ## [0.1.8] - 2026-03-17
+
 - **Explorer & Database View:** Auto-loads tables for filtered databases, hides empty databases, and reorganizes database view tabs for a cleaner navigation flow.
 - **Connection Flow & SSH Compatibility:** Adds connection cancellation support, improves SSH key handling, and expands compatibility with OpenSSH key formats.
 - **SSH Tunneling:** Simplifies the SSH tunnel implementation with a single-threaded bidirectional copy model to reduce connection complexity.
@@ -31,12 +37,14 @@
 - **Maintenance:** Ignores test artifacts to keep the release and repository noise down.
 
 ## [0.1.7] - 2026-03-16
+
 - **Workspace & Layout:** Added comprehensive project setup and layout management, and removed the legacy results tab flow to simplify the editor workspace.
 - **Grid & Query UX:** Improved table data grid stability with fixed-width sticky columns and clearer selected-cell styling for better scanability.
 - **Stability & Polish:** Resolved store-selector crashes caused by nullish coalescing and bundled broader UI/UX fixes surfaced during internal testing.
 - **Contributor Experience:** Updated contribution guidelines to cover linting and pre-commit hook expectations.
 
 ## [0.1.6] - 2026-03-15
+
 - **[Breaking] Vault & Security:** Migrated to secure, per-installation vault encryption via the OS credential store. Added Content Security Policy (CSP) and restricted file-system permissions.
 - **Networking & SSH:** Overhauled SSH tunneling to fix memory leaks and thread hanging. Replaced basic host key logging with TOFU (Trust On First Use) verification and added connection auto-reconnects.
 - **Query & Data Operations:** Added "Explain Plan", sorting, and results virtualization for performance. Grid data can now be exported to JSON/CSV/SQL, and CSV imports are fully transactional with progress tracking.
@@ -47,6 +55,7 @@
 - Create ci.yml
 
 ## [0.1.5] - 2026-03-14
+
 - Exclude main branch from changelog workflow
 - Add environment variable for Node.js version
 - Update manual-multi-platform-build.yml
@@ -55,11 +64,13 @@
 - Create dependabot.yml
 
 ## [0.1.4] - 2026-03-14
+
 - Add GitHub Actions workflow to update changelog
-- Enhance manual build workflow for versioning and changelog    
+- Enhance manual build workflow for versioning and changelog
 - feat(changelog): introduce automated changelog management
 
 ## [0.1.3] - 2026-03-14
+
 - feat: add clear_ai_logs function to Tauri API
 - chore: bump version to v0.1.2
 - feat: initial multi-platform CI/CD build workflow

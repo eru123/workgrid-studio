@@ -6,25 +6,25 @@ WorkGrid Studio is a cross-platform desktop database management app built with *
 
 ## Tech Stack
 
-| Layer | Technology |
-|---|---|
-| Desktop shell | Tauri 2 |
-| Frontend framework | React 19 |
-| Language | TypeScript 5.8 (strict) |
-| Build tool | Vite 7 |
-| CSS | TailwindCSS v4 (PostCSS) |
-| State management | Zustand 5 |
-| Icons | lucide-react, react-icons |
-| Class utility | clsx + tailwind-merge (via `cn()`) |
-| Package manager | pnpm 10 (required) |
-| Rust async runtime | tokio |
-| Rust DB driver | mysql_async (rustls TLS) |
+| Layer              | Technology                         |
+| ------------------ | ---------------------------------- |
+| Desktop shell      | Tauri 2                            |
+| Frontend framework | React 19                           |
+| Language           | TypeScript 5.8 (strict)            |
+| Build tool         | Vite 7                             |
+| CSS                | TailwindCSS v4 (PostCSS)           |
+| State management   | Zustand 5                          |
+| Icons              | lucide-react, react-icons          |
+| Class utility      | clsx + tailwind-merge (via `cn()`) |
+| Package manager    | pnpm 10 (required)                 |
+| Rust async runtime | tokio                              |
+| Rust DB driver     | mysql_async (rustls TLS)           |
 
 ---
 
 ## Repository Layout
 
-```
+```bash
 workgrid-studio/
 ├── src/                           # React/TypeScript frontend (desktop app UI)
 │   ├── app/
@@ -221,6 +221,7 @@ pnpm version:bump:major    # Bump major, sync all files
 **`.github/workflows/manual-multi-platform-build.yml`** — manually triggered via `workflow_dispatch`.
 
 Workflow steps:
+
 1. Prompts for bump level (patch / minor / major).
 2. Bumps and syncs version files (`package.json` → `tauri.conf.json`, `Cargo.toml`).
 3. Promotes `[Unreleased]` in `CHANGELOG.md` to the new version heading.
@@ -239,20 +240,20 @@ All native capabilities are exposed as **Tauri commands** defined in `src-tauri/
 
 ### Registered commands
 
-| Command | Purpose |
-|---|---|
-| `app_read_file` / `app_write_file` / `app_delete_file` | JSON persistence in `~/.workgrid-studio/data/` |
-| `app_get_data_dir` | Returns the data directory path |
-| `read_profile_log` / `clear_profile_log` | Read/clear per-profile log files |
-| `db_connect` / `db_disconnect` | Open/close a MySQL connection pool keyed by `profile_id` |
-| `db_list_databases` / `db_list_tables` / `db_list_columns` | Schema introspection |
-| `db_get_databases_info` / `db_get_tables_info` | HeidiSQL-style rich metadata |
-| `db_get_variables` / `db_set_variable` | MySQL server variables (SESSION/GLOBAL) |
-| `db_get_status` | `SHOW GLOBAL STATUS` |
-| `db_get_processes` / `db_kill_process` | Process list management |
-| `db_execute_query` | Execute DDL/DML (no result rows) |
-| `db_query` | Execute queries and return `QueryResultSet[]` |
-| `db_get_collations` | List available collations |
+| Command                                                    | Purpose                                                  |
+| ---------------------------------------------------------- | -------------------------------------------------------- |
+| `app_read_file` / `app_write_file` / `app_delete_file`     | JSON persistence in `~/.workgrid-studio/data/`           |
+| `app_get_data_dir`                                         | Returns the data directory path                          |
+| `read_profile_log` / `clear_profile_log`                   | Read/clear per-profile log files                         |
+| `db_connect` / `db_disconnect`                             | Open/close a MySQL connection pool keyed by `profile_id` |
+| `db_list_databases` / `db_list_tables` / `db_list_columns` | Schema introspection                                     |
+| `db_get_databases_info` / `db_get_tables_info`             | HeidiSQL-style rich metadata                             |
+| `db_get_variables` / `db_set_variable`                     | MySQL server variables (SESSION/GLOBAL)                  |
+| `db_get_status`                                            | `SHOW GLOBAL STATUS`                                     |
+| `db_get_processes` / `db_kill_process`                     | Process list management                                  |
+| `db_execute_query`                                         | Execute DDL/DML (no result rows)                         |
+| `db_query`                                                 | Execute queries and return `QueryResultSet[]`            |
+| `db_get_collations`                                        | List available collations                                |
 
 ### DbState
 
@@ -262,7 +263,7 @@ The Rust backend maintains a `DbState` struct with a `Mutex<HashMap<String, Pool
 
 Persisted files live in `~/.workgrid-studio/` (Linux/macOS) or `%USERPROFILE%\.workgrid-studio\` (Windows):
 
-```
+```bash
 ~/.workgrid-studio/
 ├── data/
 │   └── profiles.json        # Saved connection profiles
@@ -281,16 +282,16 @@ Persisted files live in `~/.workgrid-studio/` (Linux/macOS) or `%USERPROFILE%\.w
 
 All state is managed through Zustand stores. Each store is colocated in `src/state/`:
 
-| Store | Responsibility |
-|---|---|
-| `appStore` | Theme (`light`/`dark`/`system`), toast notifications, hotkeys enabled flag, focused container |
-| `layoutStore` | Activity bar view, sidebar/panel dimensions, **editor split tree**, tab management |
-| `profilesStore` | Connection profiles — loaded from disk on startup, debounce-saved on mutation |
-| `schemaStore` | Cached DB/table/column metadata |
-| `queryHistoryStore` | Per-profile query history (persisted) |
-| `resultsStore` | Query result sets (in-memory, not persisted) |
-| `modelsStore` | AI model provider configuration |
-| `tasksStore` | Task tracker items |
+| Store               | Responsibility                                                                                |
+| ------------------- | --------------------------------------------------------------------------------------------- |
+| `appStore`          | Theme (`light`/`dark`/`system`), toast notifications, hotkeys enabled flag, focused container |
+| `layoutStore`       | Activity bar view, sidebar/panel dimensions, **editor split tree**, tab management            |
+| `profilesStore`     | Connection profiles — loaded from disk on startup, debounce-saved on mutation                 |
+| `schemaStore`       | Cached DB/table/column metadata                                                               |
+| `queryHistoryStore` | Per-profile query history (persisted)                                                         |
+| `resultsStore`      | Query result sets (in-memory, not persisted)                                                  |
+| `modelsStore`       | AI model provider configuration                                                               |
+| `tasksStore`        | Task tracker items                                                                            |
 
 ### Editor Layout (Split Pane Tree)
 
@@ -305,6 +306,7 @@ Each tab carries an optional `meta: Record<string, string>` for domain data (e.g
 ### Application Shell
 
 `Workbench` renders:
+
 - **Activity bar** (left, fixed 48px): Explorer, Servers, AI Models, Tasks icons + Sidebar/Panel toggles
 - **Primary sidebar** (resizable, default 260px): switches content by `activeView`
 - **Editor area**: renders the `SplitTree` recursively via `EditorNode`
@@ -335,6 +337,7 @@ import { useLayoutStore } from "@/state/layoutStore";
 ## TypeScript Configuration
 
 Strict mode is fully enabled. The compiler enforces:
+
 - `strict: true`
 - `noUnusedLocals: true`
 - `noUnusedParameters: true`
@@ -424,12 +427,12 @@ Marketing and SEO website for WorkGrid Studio. Built with **Vite + React**. Depl
 
 Contains always-on rules and step-by-step task workflows for AI-assisted development:
 
-| File | Purpose |
-|---|---|
-| `.agent/rules/coding-standards.md` | Senior Desktop Architect persona, priorities, anti-patterns |
-| `.agent/workflows/add-editor-tab.md` | End-to-end guide for adding a new tab type |
-| `.agent/workflows/add-tauri-command.md` | Adding a Rust command + TypeScript wrapper |
-| `.agent/workflows/add-zustand-store.md` | Store creation with persistence and loading guards |
+| File                                    | Purpose                                                     |
+| --------------------------------------- | ----------------------------------------------------------- |
+| `.agent/rules/coding-standards.md`      | Senior Desktop Architect persona, priorities, anti-patterns |
+| `.agent/workflows/add-editor-tab.md`    | End-to-end guide for adding a new tab type                  |
+| `.agent/workflows/add-tauri-command.md` | Adding a Rust command + TypeScript wrapper                  |
+| `.agent/workflows/add-zustand-store.md` | Store creation with persistence and loading guards          |
 
 ---
 

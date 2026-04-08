@@ -144,7 +144,7 @@ export function QueryBuilderTab({ profileId, database }: Props) {
     try {
       whereSql = formatQuery(query, { format: "sql", quoteFieldNamesWith: "`" }).trim();
     } catch {
-      whereSql = "";
+      // keep empty string default
     }
 
     setSql(buildSql(selectedDatabase, selectedTable, selectedColumns, whereSql, joins, orderRows));

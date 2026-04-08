@@ -646,8 +646,7 @@ export function QueryTab({
   const [hasDbSelectionHistory, setHasDbSelectionHistory] = useState(
     initialDatabase !== undefined,
   );
-  // @ts-expect-error unused variable
-  const [textareaContentWidth, setTextareaContentWidth] = useState(0);
+  const [_textareaContentWidth, _setTextareaContentWidth] = useState(0);
   const [isFormatting, setIsFormatting] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [showSaveQueryModal, setShowSaveQueryModal] = useState(false);
@@ -777,8 +776,7 @@ export function QueryTab({
     );
   }, [cursorPos, deferredSql, selectedCharCount]);
 
-  // @ts-expect-error unused variable
-  const highlightedHTML = useMemo(() => {
+  const _highlightedHTML = useMemo(() => {
     if (deferredActiveQueryRange) {
       return highlightSQL(
         deferredSql,
@@ -2112,13 +2110,11 @@ export function QueryTab({
   }, [cursorPos, sql]);
 
   // Active line highlight top offset (non-wrap only; wrap mode uses line-number container measurement)
-  // @ts-expect-error unused variable
-  const activeLineTopPx = useMemo(() => {
+  const _activeLineTopPx = useMemo(() => {
     // padding-top of textarea is 12px (p-3)
     return (activeLine - 1) * editorLineHeight + 12;
   }, [activeLine, editorLineHeight]);
-  // @ts-expect-error unused variable
-  const statementSeparatorOffsets = useMemo(() => {
+  const _statementSeparatorOffsets = useMemo(() => {
     if (wordWrap) return [];
 
     return getSqlStatementRanges(deferredSql)
@@ -2235,8 +2231,7 @@ export function QueryTab({
     [multiCursorSelections, setEditorSelection],
   );
 
-  // @ts-expect-error unused variable
-  const handleEditorBeforeInput = useCallback(
+  const _handleEditorBeforeInput = useCallback(
     (e: React.FormEvent<HTMLTextAreaElement>) => {
       if (multiCursorSelections.length < 2) return;
 
@@ -2291,8 +2286,7 @@ export function QueryTab({
     [applyMultiCursorEdit, multiCursorSelections],
   );
 
-  // @ts-expect-error unused variable
-  const handleEditorPaste = useCallback(
+  const _handleEditorPaste = useCallback(
     (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
       if (multiCursorSelections.length < 2) return;
 
@@ -2380,7 +2374,7 @@ export function QueryTab({
       setWordWrap,
       running,
     };
-  });
+  }, [handleRun, handleRunSelected, handleStop, setWordWrap, running]);
 
   // ── Tab dirty state ───────────────────────────────────────
   useEffect(() => {
@@ -2405,8 +2399,7 @@ export function QueryTab({
     priority: 20,
   });
 
-  // @ts-expect-error unused variable
-  const handleEditorScroll = useCallback(
+  const _handleEditorScroll = useCallback(
     (e: React.UIEvent<HTMLTextAreaElement>) => {
       if (lineNumberRef.current) {
         lineNumberRef.current.scrollTop = e.currentTarget.scrollTop;
@@ -2420,8 +2413,7 @@ export function QueryTab({
     [syncEditorMetrics],
   );
 
-  // @ts-expect-error unused variable
-  const handleEditorSelectionChange = useCallback(
+  const _handleEditorSelectionChange = useCallback(
     (e: React.SyntheticEvent<HTMLTextAreaElement>) => {
       syncEditorMetrics(e.currentTarget);
       const selectionStart = e.currentTarget.selectionStart;
@@ -2442,8 +2434,7 @@ export function QueryTab({
 
   // Lighter onClick — avoids layout-forcing scrollHeight/clientHeight reads.
   // On click only the cursor position changes, not scroll dimensions.
-  // @ts-expect-error unused variable
-  const handleEditorClick = useCallback(
+  const _handleEditorClick = useCallback(
     (e: React.SyntheticEvent<HTMLTextAreaElement>) => {
       const target = e.currentTarget;
       const selectionStart = target.selectionStart;
@@ -2472,8 +2463,7 @@ export function QueryTab({
   );
 
   // ── Keyboard shortcut ─────────────────────────────────────
-  // @ts-expect-error unused variable
-  const handleKeyDown = useCallback(
+  const _handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
       const editorValue = e.currentTarget.value;
       const { selectionStart, selectionEnd } = e.currentTarget;
