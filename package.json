@@ -33,7 +33,7 @@
     "@tauri-apps/plugin-window-state": "^2.4.1",
     "clsx": "^2.1.1",
     "exceljs": "^4.4.0",
-    "lucide-react": "^0.577.0",
+    "lucide-react": "^1.7.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "react-querybuilder": "^8.14.4",
@@ -47,8 +47,8 @@
     "@tauri-apps/cli": "^2.10.1",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
-    "@typescript-eslint/eslint-plugin": "^8.58.0",
-    "@typescript-eslint/parser": "^8.58.0",
+    "@typescript-eslint/eslint-plugin": "^8.58.1",
+    "@typescript-eslint/parser": "^8.58.1",
     "@vitejs/plugin-react": "^6.0.1",
     "eslint": "^10.2.0",
     "eslint-plugin-react-hooks": "^7.0.1",
@@ -56,8 +56,8 @@
     "husky": "^9.1.7",
     "rollup-plugin-visualizer": "^7.0.1",
     "tailwindcss": "^4.2.2",
-    "typescript": "~5.9.3",
-    "vite": "^8.0.4"
+    "typescript": "~6.0.2",
+    "vite": "^8.0.7"
   },
   "pnpm": {
     "peerDependencyRules": {
