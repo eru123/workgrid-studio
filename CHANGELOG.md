@@ -1,12 +1,13 @@
 # Changelog
 
 ## [Unreleased]
-
 - Improved application stability and performance via core dependency updates.
 - Launched the official WorkGrid Studio website and architecture documentation.
 - Enhanced the AI assistant with robust new workflow capabilities and developer rules.
 - Upgraded the SQL autocomplete engine for smarter, context-aware query suggestions.
 - Integrated advanced code editing features across all query and table builder views.
+- fix issues
+- remove deperecated baseUrl
 
 ## [0.2.0] - 2026-03-21
 
