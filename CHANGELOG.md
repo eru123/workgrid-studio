@@ -8,6 +8,7 @@
 - Integrated advanced code editing features across all query and table builder views.
 - fix issues
 - remove deperecated baseUrl
+- up
 
 ## [0.2.0] - 2026-03-21
 
