@@ -1728,15 +1728,6 @@ const EditableCell = memo(function EditableCell({
     }
   };
 
-  const _handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter") {
-      handleBlur();
-    } else if (e.key === "Escape") {
-      setLocalValue(value === null ? "" : String(value));
-      setIsEditing(false);
-    }
-  };
-
   const handleBlurRef = useRef(handleBlur);
   handleBlurRef.current = handleBlur;
   const initialValueRef = useRef(value === null ? "" : String(value));
