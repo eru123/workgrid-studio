@@ -48,7 +48,7 @@ export const FindToolbar: React.FC<FindToolbarProps> = ({
     if (!isOpen) return null;
 
     return (
-        <div className="absolute top-2 right-6 z-[100] flex items-center gap-1 p-1 bg-popover border rounded-md shadow-xl animate-in fade-in slide-in-from-top-1">
+        <div className="absolute top-2 right-6 z-100 flex items-center gap-1 p-1 bg-popover border rounded-md shadow-xl animate-in fade-in slide-in-from-top-1">
             <div className="relative flex items-center">
                 <Search className="absolute left-2 w-3 h-3 text-muted-foreground" />
                 <input

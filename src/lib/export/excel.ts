@@ -4,7 +4,7 @@ import { writeFile } from "@tauri-apps/plugin-fs";
 import type { QueryResultSet } from "@/lib/db";
 
 function sanitizeSheetName(name: string): string {
-  const cleaned = name.replace(/[\[\]:*?/\\]/g, " ").trim();
+  const cleaned = name.replace(/[[\]:*?/\\]/g, " ").trim();
   return cleaned.slice(0, 31) || "Sheet1";
 }
 

@@ -1728,8 +1728,7 @@ const EditableCell = memo(function EditableCell({
     }
   };
 
-  // @ts-expect-error unused variable
-const handleKeyDown = (e: React.KeyboardEvent) => {
+  const _handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter") {
       handleBlur();
     } else if (e.key === "Escape") {
@@ -1751,38 +1750,38 @@ const handleKeyDown = (e: React.KeyboardEvent) => {
 
   if (isEditing) {
     return (
-      <td className={cn("p-0 border-r h-full min-h-7 bg-background relative z-[100]", stickyClass)} style={stickyStyle}>
-        <div className="absolute top-0 left-0 min-w-[300px] border border-primary shadow-[0_8px_30px_rgb(0,0,0,0.12)] z-[100] bg-background overflow-hidden rounded-sm transition-all">
+      <td className={cn("p-0 border-r h-full min-h-7 bg-background relative z-100", stickyClass)} style={stickyStyle}>
+        <div className="absolute top-0 left-0 min-w-75 border border-primary shadow-[0_8px_30px_rgb(0,0,0,0.12)] z-100 bg-background overflow-hidden rounded-sm transition-all">
           <CodeEditorShell
-             value={localValue}
-             onChange={setLocalValue}
-             language="sql"
-             minimal
-             onMount={(editor: any, monaco: any) => {
-                 editor.focus();
-                 editor.addCommand(monaco.KeyCode.Enter, () => {
-                     handleBlurRef.current();
-                 });
-                 editor.addCommand(monaco.KeyCode.Escape, () => {
-                     setLocalValue(initialValueRef.current);
-                     setIsEditing(false);
-                 });
-                 
-                 // Expand and Blur logic
-                 const model = editor.getModel();
-                 if (model) {
-                   const lineCount = model.getLineCount();
-                   const container = editor.getDomNode();
-                   if (container) {
-                     // 18px line height + 8px padding
-                     let neededHeight = lineCount * 18 + 8;
-                     if (neededHeight < 64) neededHeight = 64;
-                     if (neededHeight > 300) neededHeight = 300;
-                     container.parentElement.style.height = `${neededHeight}px`;
-                     editor.layout(); editor.onDidBlurEditorWidget(() => handleBlurRef.current());
-                   }
-                 }
-             }}
+            value={localValue}
+            onChange={setLocalValue}
+            language="sql"
+            minimal
+            onMount={(editor: any, monaco: any) => {
+              editor.focus();
+              editor.addCommand(monaco.KeyCode.Enter, () => {
+                handleBlurRef.current();
+              });
+              editor.addCommand(monaco.KeyCode.Escape, () => {
+                setLocalValue(initialValueRef.current);
+                setIsEditing(false);
+              });
+
+              // Expand and Blur logic
+              const model = editor.getModel();
+              if (model) {
+                const lineCount = model.getLineCount();
+                const container = editor.getDomNode();
+                if (container) {
+                  // 18px line height + 8px padding
+                  let neededHeight = lineCount * 18 + 8;
+                  if (neededHeight < 64) neededHeight = 64;
+                  if (neededHeight > 300) neededHeight = 300;
+                  container.parentElement.style.height = `${neededHeight}px`;
+                  editor.layout(); editor.onDidBlurEditorWidget(() => handleBlurRef.current());
+                }
+              }
+            }}
           />
         </div>
       </td>

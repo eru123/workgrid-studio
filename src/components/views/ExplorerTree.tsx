@@ -217,7 +217,7 @@ export function ExplorerTree() {
       }
     }, 300);
     return () => clearTimeout(timer);
-  }, [tableFilter, connectedList, schemaDatabases]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [tableFilter, connectedList, schemaDatabases]);
 
   // ── Global search ─────────────────────────────────────────────────────────
   type SearchResult =

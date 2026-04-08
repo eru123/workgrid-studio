@@ -75,7 +75,7 @@ export interface TreeViewProps {
 
 // ─── Tree Context ─────────────────────────────────────────────────────────────
 
-interface TreeCtx {
+interface TreeCtxValue {
   selectedId: string | null;
   expandedIds: Set<string>;
   loadingIds: Map<string, boolean>;
@@ -88,9 +88,9 @@ interface TreeCtx {
   setContextMenuState: (s: ContextMenuState | null) => void;
 }
 
-const TreeCtx = createContext<TreeCtx | null>(null);
+const TreeCtx = createContext<TreeCtxValue | null>(null);
 
-function useTreeCtx(): TreeCtx {
+function useTreeCtx(): TreeCtxValue {
   const ctx = useContext(TreeCtx);
   if (!ctx) throw new Error("useTreeCtx must be inside <TreeView>");
   return ctx;
