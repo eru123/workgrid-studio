@@ -33,7 +33,7 @@ export function CellContextMenu({
     const menu = (
         <div
             style={{ position: "fixed", top, left, zIndex: 200 }}
-            className="min-w-[200px] bg-popover text-popover-foreground border rounded-md shadow-xl p-1 text-xs"
+            className="min-w-50 bg-popover text-popover-foreground border rounded-md shadow-xl p-1 text-xs"
             onClick={(e) => e.stopPropagation()}
             onContextMenu={(e) => e.preventDefault()}
         >

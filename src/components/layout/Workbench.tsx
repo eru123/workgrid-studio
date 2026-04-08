@@ -1359,10 +1359,10 @@ function BottomPanel({ isSecondary }: { isSecondary?: boolean }) {
                     <th className="py-2 px-3 font-normal tracking-wide min-w-[120px]">
                       Model
                     </th>
-                    <th className="py-2 px-3 font-normal max-w-[200px] truncate">
+                    <th className="py-2 px-3 font-normal max-w-50 truncate">
                       URI
                     </th>
-                    <th className="py-2 px-3 font-normal min-w-[200px]">
+                    <th className="py-2 px-3 font-normal min-w-50">
                       Payload
                     </th>
                     <th className="py-2 px-3 font-normal min-w-75">
@@ -1385,7 +1385,7 @@ function BottomPanel({ isSecondary }: { isSecondary?: boolean }) {
                         </span>
                       </td>
                       <td
-                        className="py-2 px-3 truncate max-w-[200px] text-muted-foreground/80"
+                        className="py-2 px-3 truncate max-w-50 text-muted-foreground/80"
                         title={log.uri}
                       >
                         {log.uri}
