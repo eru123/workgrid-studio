@@ -71,6 +71,7 @@ pnpm tauri dev
 ## Submitting a Pull Request
 
 1. **Fork** the repository and create a branch from `main`:
+
    ```bash
    git checkout -b feat/your-feature-name
    ```
@@ -78,10 +79,12 @@ pnpm tauri dev
 2. **Make your changes.** Keep commits focused — one logical change per commit.
 
 3. **Validate** before pushing:
+
    ```bash
    pnpm lint
    pnpm build
    ```
+
    This runs ESLint, `tsc`, the Vite build, and version consistency checks. Fix all errors before opening a PR.
 
 4. **Pre-commit hooks** run automatically after `pnpm install`.
@@ -121,14 +124,15 @@ pnpm tauri dev
 
 Use the [Conventional Commits](https://www.conventionalcommits.org/) format:
 
-```
+```bash
 <type>(<scope>): <short summary>
 ```
 
 Common types: `feat`, `fix`, `refactor`, `style`, `docs`, `chore`, `ci`.
 
 Examples:
-```
+
+```bash
 feat(query-tab): add explain plan view
 fix(session): handle reconnect on connection drop
 docs: update contributing guide

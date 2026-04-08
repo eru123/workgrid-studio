@@ -4,7 +4,7 @@ WorkGrid Studio is a cross-platform desktop database management app built with *
 
 ## Monorepo Structure
 
-```
+```bash
 workgrid-studio/
 ├── src/                    # React/TypeScript frontend (desktop app UI)
 ├── src-tauri/              # Rust Tauri backend (native shell, DB driver, IPC commands)
@@ -33,7 +33,7 @@ Install these once on your machine before developing.
 
 ### 1) Node.js and pnpm
 
-1. Install Node.js (LTS): https://nodejs.org/
+1. Install Node.js (LTS): <https://nodejs.org/>
 2. Enable Corepack and activate pnpm:
 
    ```bash
@@ -53,7 +53,7 @@ Install these once on your machine before developing.
 #### Windows
 
 1. Install **Visual Studio Build Tools 2022** (required for `x86_64-pc-windows-msvc`):
-   https://visualstudio.microsoft.com/visual-cpp-build-tools/
+   <https://visualstudio.microsoft.com/visual-cpp-build-tools/>
    Select the `Desktop development with C++` workload.
 2. Install Rustup:
    - Option A (recommended):
@@ -63,7 +63,7 @@ Install these once on your machine before developing.
    ```
 
    - Option B:
-     Download and run `rustup-init.exe` from https://rustup.rs/
+     Download and run `rustup-init.exe` from <https://rustup.rs/>
 
 3. Set stable MSVC toolchain:
 
@@ -105,7 +105,7 @@ Install these once on your machine before developing.
 ### 3) Tauri system prerequisites
 
 Install platform-specific dependencies required by Tauri:
-https://v2.tauri.app/start/prerequisites/
+[https://v2.tauri.app/start/prerequisites/](https://v2.tauri.app/start/prerequisites/)
 
 ---
 
@@ -190,6 +190,7 @@ These are handled automatically by CI — run them locally only when needed.
 **`.github/workflows/manual-multi-platform-build.yml`** — manually triggered via `workflow_dispatch`.
 
 Workflow steps:
+
 1. Prompts for bump level (`patch` / `minor` / `major`).
 2. Bumps and syncs version files across `package.json`, `tauri.conf.json`, and `Cargo.toml`.
 3. Promotes the `[Unreleased]` changelog section to the new version.
