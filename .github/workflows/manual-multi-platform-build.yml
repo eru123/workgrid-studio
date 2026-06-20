@@ -28,7 +28,7 @@ jobs:
       notes: ${{ steps.changelog.outputs.notes }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -93,7 +93,7 @@ jobs:
 
     steps:
       - name: Checkout version tag
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ needs.prepare-version.outputs.tag }}
 
