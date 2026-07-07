@@ -403,7 +403,6 @@ export function QueryTab({
   }, []);
 
   // ── Matching brackets ─────────────────────────────────────
-  const deferredSql = useDeferredValue(sql);
   const deferredEditorScrollTop = useDeferredValue(editorViewport.scrollTop);
   const deferredResultScrollTop = useDeferredValue(resultViewport.scrollTop);
   // ── Cancellation token ────────────────────────────────────
