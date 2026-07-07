@@ -9,6 +9,7 @@
 - fix issues
 - remove deperecated baseUrl
 - up
+- chore: update pnpm workspace configuration and remove unused deferred value in QueryTab component
 
 ## [0.2.0] - 2026-03-21
 
