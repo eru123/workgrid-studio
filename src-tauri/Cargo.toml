@@ -30,9 +30,8 @@ async-trait = "0.1"
 # Database drivers
 mysql_async = { version = "0.36", default-features = false, features = ["default-rustls"] }
 
-# SSH tunneling
+# SSH tunneling (russh bundles key handling via russh::keys since 0.50)
 russh = "0.61"
-russh-keys = "0.61"
 
 # Credential encryption
 aes-gcm = "0.10"

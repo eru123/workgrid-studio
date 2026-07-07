@@ -93,8 +93,8 @@ impl From<russh::Error> for AppError {
     }
 }
 
-impl From<russh_keys::Error> for AppError {
-    fn from(value: russh_keys::Error) -> Self {
+impl From<russh::keys::ssh_key::Error> for AppError {
+    fn from(value: russh::keys::ssh_key::Error) -> Self {
         Self::ssh(value.to_string())
     }
 }

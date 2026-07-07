@@ -12,9 +12,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
-use async_trait::async_trait;
 use russh::client;
-use russh_keys::{HashAlg, PrivateKey};
+use russh::keys::{HashAlg, PrivateKey, PrivateKeyWithHashAlg};
 use tokio::net::TcpListener;
 
 use crate::models::ConnectParams;
@@ -68,13 +67,12 @@ struct SshClientHandler {
     strict: bool,
 }
 
-#[async_trait]
 impl client::Handler for SshClientHandler {
     type Error = AppError;
 
     async fn check_server_key(
         &mut self,
-        server_public_key: &russh_keys::PublicKey,
+        server_public_key: &russh::keys::ssh_key::PublicKey,
     ) -> Result<bool, Self::Error> {
         let fingerprint = server_public_key.fingerprint(HashAlg::Sha256).to_string();
         let host_id = format!("[{}]:{}", self.ssh_host, self.ssh_port);
@@ -174,25 +172,24 @@ pub async fn establish_ssh_tunnel(
     // Authenticate.
     if let Some(key_path) = trimmed_option(params.ssh_key_file.as_ref()) {
         let passphrase = trimmed_option(params.ssh_passphrase.as_ref());
-        let key: PrivateKey = russh_keys::load_secret_key(key_path, passphrase)
+        let key: PrivateKey = russh::keys::load_secret_key(key_path, passphrase)
             .map_err(|e| AppError::ssh(format!("SSH key load error: {}", e)))?;
-        let key_with_hash = russh_keys::key::PrivateKeyWithHashAlg::new(Arc::new(key), None)
-            .map_err(|e| AppError::ssh(format!("SSH key error: {}", e)))?;
-        let authenticated = session
+        let key_with_hash = PrivateKeyWithHashAlg::new(Arc::new(key), None);
+        let result = session
             .authenticate_publickey(&ssh_user, key_with_hash)
             .await
             .map_err(|e| AppError::ssh(format!("SSH auth error: {}", e)))?;
-        if !authenticated {
+        if !result.success() {
             return Err(AppError::ssh(
                 "SSH key authentication was rejected by the server",
             ));
         }
     } else if let Some(password) = trimmed_option(params.ssh_password.as_ref()) {
-        let authenticated = session
+        let result = session
             .authenticate_password(&ssh_user, password)
             .await
             .map_err(|e| AppError::ssh(format!("SSH auth error: {}", e)))?;
-        if !authenticated {
+        if !result.success() {
             return Err(AppError::ssh(
                 "SSH password authentication was rejected by the server",
             ));
