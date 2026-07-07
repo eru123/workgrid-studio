@@ -1,0 +1,182 @@
+/*  Fallback CSS variable values for the most-used VS Code color tokens, dark */
+/*  theme. These are a safety net so the shell renders with reasonable colors */
+/*  before `applyTheme('dark')` is called (which resolves the full registered */
+/*  token set and overwrites these). Hosts that call `applyTheme` on startup can */
+/*  ignore this file entirely; it exists so a bare `<Workbench>` mount without */
+/*  any theme setup is still legible. */
+/*  */
+/*  Values mirror the Dark+ (default dark) theme. */
+
+:root {
+	/* base */
+	--wg-foreground: #cccccc;
+	--wg-disabledForeground: #808080;
+	--wg-errorForeground: #f48771;
+	--wg-descriptionForeground: #cccccccc;
+	--wg-icon-foreground: #c5c5c5;
+	--wg-focusBorder: #007fd4;
+	--wg-contrastBorder: #6fc3df;
+	--wg-contrastActiveBorder: #1a85b5;
+	--wg-selection-background: #264f78;
+	--wg-textSeparator-foreground: #00000000;
+	--wg-textLink-foreground: #3794ff;
+	--wg-textLink-activeForeground: #3794ff;
+	--wg-textPreformat-foreground: #d7ba7d;
+	--wg-textBlockQuote-background: #7f7f7f1a;
+	--wg-textBlockQuote-border: #007acc80;
+	--wg-textCodeBlock-background: #0a0a0a66;
+
+	/* window / shell */
+	--wg-widget-shadow: #000000;
+	--wg-widget-border: #00000000;
+	--wg-scrollbar-shadow: #000000;
+	--wg-scrollbarSlider-background: #79797966;
+	--wg-scrollbarSlider-hoverBackground: #646464b3;
+	--wg-scrollbarSlider-activeBackground: #bfbfbf66;
+	--wg-badge-background: #4d4d4d;
+	--wg-badge-foreground: #ffffff;
+
+	/* activity bar */
+	--wg-activityBar-background: #333333;
+	--wg-activityBar-foreground: #ffffff;
+	--wg-activityBar-inactiveForeground: #ffffff66;
+	--wg-activityBar-activeBorder: #ffffff;
+	--wg-activityBar-dropBorder: #ffffff;
+	--wg-activityBarBadge-background: #007acc;
+	--wg-activityBarBadge-foreground: #ffffff;
+
+	/* side bar */
+	--wg-sideBar-background: #252526;
+	--wg-sideBar-foreground: #cccccc;
+	--wg-sideBar-border: #00000000;
+	--wg-sideBarTitle-foreground: #bbbbbb;
+	--wg-sideBarSectionHeader-background: #80808033;
+	--wg-sideBarSectionHeader-foreground: #cccccc;
+
+	/* list / tree */
+	--wg-list-focusOutline: #007fd4;
+	--wg-list-activeSelectionBackground: #094771;
+	--wg-list-activeSelectionForeground: #ffffff;
+	--wg-list-activeSelectionIconForeground: #ffffff;
+	--wg-list-inactiveSelectionBackground: #37373d;
+	--wg-list-hoverBackground: #2a2d2e;
+	--wg-list-dropBackground: #062b4a;
+	--wg-list-focusHighlightForeground: #18a3ff;
+	--wg-list-highlightForeground: #18a3ff;
+	--wg-list-errorForeground: #f48771;
+	--wg-list-warningForeground: #cca700;
+	--wg-listFilterWidget-background: #252526;
+	--wg-listFilterWidget-outline: #00000000;
+	--wg-listFilterWidget-noMatchesOutline: #be1100;
+	--wg-tree-indentGuidesStroke: #585858;
+
+	/* editor */
+	--wg-editor-background: #1e1e1e;
+	--wg-editor-foreground: #d4d4d4;
+	--wg-editorLineNumber-foreground: #858585;
+	--wg-editorLineNumber-activeForeground: #c6c6c6;
+	--wg-editorCursor-foreground: #aeafad;
+	--wg-editor-selectionBackground: #264f78;
+	--wg-editor-inactiveSelectionBackground: #3a3d41;
+	--wg-editor-lineHighlightBackground: #ffffff0b;
+	--wg-editor-lineHighlightBorder: #282828;
+	--wg-editor-indentGuide-background: #404040;
+	--wg-editorIndentGuide-background: #404040;
+	--wg-editorIndentGuide-activeBackground: #707070;
+	--wg-editorWidget-background: #252526;
+	--wg-editorWidget-foreground: #cccccc;
+	--wg-editorWidget-border: #454545;
+	--wg-editorSuggestWidget-background: #252526;
+	--wg-editorSuggestWidget-border: #454545;
+	--wg-editorSuggestWidget-foreground: #d4d4d4;
+	--wg-editorSuggestWidget-selectedBackground: #094771;
+	--wg-editorSuggestWidget-highlightForeground: #18a3ff;
+
+	/* editor group / tabs */
+	--wg-editorGroup-border: #444444;
+	--wg-editorGroup-dropBackground: #53595d80;
+	--wg-editorGroupHeader-tabsBackground: #2d2d2d;
+	--wg-editorGroupHeader-tabsBorder: #252526;
+	--wg-tab-activeBackground: #1e1e1e;
+	--wg-tab-activeForeground: #ffffff;
+	--wg-tab-inactiveBackground: #2d2d2d;
+	--wg-tab-inactiveForeground: #ffffff80;
+	--wg-tab-border: #252526;
+	--wg-tab-activeBorder: #1e1e1e;
+	--wg-tab-unfocusedActiveForeground: #ffffff80;
+	--wg-tab-unfocusedInactiveForeground: #ffffff40;
+
+	/* status bar */
+	--wg-statusBar-foreground: #ffffff;
+	--wg-statusBar-background: #007acc;
+	--wg-statusBar-noFolderForeground: #ffffff;
+	--wg-statusBar-noFolderBackground: #68217a;
+	--wg-statusBarItem-activeBackground: #ffffff2e;
+	--wg-statusBarItem-hoverBackground: #ffffff1f;
+	--wg-statusBarItem-compactHoverBackground: #ffffff33;
+	--wg-statusBarItem-errorBackground: #c72e2f;
+	--wg-statusBarItem-errorForeground: #ffffff;
+	--wg-statusBarItem-warningBackground: #725a00;
+	--wg-statusBarItem-warningForeground: #ffffff;
+
+	/* panel (bottom) */
+	--wg-panel-background: #1e1e1e;
+	--wg-panel-border: #80808059;
+	--wg-panelTitle-activeForeground: #e7e7e7;
+	--wg-panelTitle-activeBorder: #e7e7e7;
+	--wg-panelTitle-inactiveForeground: #ffffff99;
+	--wg-panelInput-border: #dddddd33;
+
+	/* title bar */
+	--wg-titleBar-activeForeground: #cccccc;
+	--wg-titleBar-inactiveForeground: #cccccc99;
+	--wg-titleBar-activeBackground: #3c3c3c;
+	--wg-titleBar-inactiveBackground: #3c3c3c;
+
+	/* inputs / buttons */
+	--wg-input-background: #3c3c3c;
+	--wg-input-foreground: #cccccc;
+	--wg-input-border: #3c3c3c;
+	--wg-inputOption-activeBorder: #007acc;
+	--wg-inputOption-activeBackground: #007acc4d;
+	--wg-inputOption-activeForeground: #ffffff;
+	--wg-input-placeholderForeground: #cccccc66;
+	--wg-button-background: #0e639c;
+	--wg-button-foreground: #ffffff;
+	--wg-button-hoverBackground: #1177bb;
+	--wg-button-secondaryBackground: #3a3d41;
+	--wg-button-secondaryForeground: #ffffff;
+	--wg-button-border: #ffffff00;
+
+	/* menus / context view */
+	--wg-menu-background: #252526;
+	--wg-menu-foreground: #cccccc;
+	--wg-menu-border: #454545;
+	--wg-menu-selectionBackground: #094771;
+	--wg-menu-selectionForeground: #ffffff;
+	--wg-menu-selectionBorder: #00000000;
+	--wg-menu-separatorBackground: #bbbbbb33;
+	--wg-contextView-background: #252526;
+	--wg-contextView-border: #454545;
+
+	/* quick pick */
+	--wg-quickInput-background: #252526;
+	--wg-quickInput-foreground: #cccccc;
+	--wg-quickInputTitle-background: #ffffff1b;
+	--wg-quickInputList-focusBackground: #094771;
+	--wg-quickInputList-focusForeground: #ffffff;
+	--wg-quickInputList-focusIconForeground: #ffffff;
+
+	/* notifications */
+	--wg-notifications-background: #252526;
+	--wg-notifications-foreground: #cccccc;
+	--wg-notifications-border: #454545;
+	--wg-notificationCenter-headerBackground: #303031;
+	--wg-notificationLink-foreground: #3794ff;
+	--wg-notificationToast-foreground: #cccccc;
+
+	/* hover */
+	--wg-editorHoverWidget-background: #252526;
+	--wg-editorHoverWidget-foreground: #cccccc;
+	--wg-editorHoverWidget-border: #454545;
+}

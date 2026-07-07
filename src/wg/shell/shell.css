@@ -1,0 +1,484 @@
+/*  Shell layout + part styling. Adapted from VS Code's workbench part CSS */
+/*  (parts/{activitybar,sidebar,panel,statusbar,editor,notifications}/media/*.css) */
+/*  but rewritten for the React shell's class names. Colors come from the VS Code */
+/*  CSS-variable tokens (see theme/theme-tokens.css + applyTheme). */
+
+@import '../theme/theme-tokens.css';
+
+/*   ------ Workbench grid */
+
+.wg-workbench {
+	display: grid;
+	grid-template-areas:
+		"titlebar    titlebar   titlebar   titlebar"
+		"activitybar sidebar    editor     auxiliarybar"
+		"activitybar sidebar    editor     auxiliarybar"
+		"activitybar panel      panel      auxiliarybar"
+		"statusbar   statusbar  statusbar  statusbar";
+	grid-template-columns: var(--wg-layout-activitybar-width, 48px) var(--wg-layout-sidebar-width, 280px) 1fr var(--wg-layout-auxiliarybar-width, 0px);
+	grid-template-rows: var(--wg-layout-titlebar-height, 30px) 1fr var(--wg-layout-panel-height, 0px) var(--wg-layout-statusbar-height, 22px);
+	height: 100%;
+	width: 100%;
+	overflow: hidden;
+	background: var(--wg-editor-background, #1e1e1e);
+	color: var(--wg-foreground, #cccccc);
+	font-family: var(--wg-font-family, -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif);
+	font-size: var(--wg-font-size, 13px);
+}
+
+.wg-workbench[data-sidebar-hidden="true"] { --wg-layout-sidebar-width: 0px; }
+.wg-workbench[data-panel-hidden="true"] { --wg-layout-panel-height: 0px; }
+.wg-workbench[data-auxiliarybar-hidden="true"] { --wg-layout-auxiliarybar-width: 0px; }
+
+.wg-titlebar   { grid-area: titlebar; }
+.wg-activitybar { grid-area: activitybar; }
+.wg-sidebar    { grid-area: sidebar; overflow: hidden; }
+.wg-editor     { grid-area: editor; overflow: hidden; }
+.wg-auxiliarybar { grid-area: auxiliarybar; overflow: hidden; }
+.wg-panel      { grid-area: panel; overflow: hidden; }
+.wg-statusbar  { grid-area: statusbar; }
+
+/*   ------ Title bar */
+
+.wg-titlebar {
+	display: flex;
+	align-items: center;
+	height: var(--wg-layout-titlebar-height, 30px);
+	background: var(--wg-titleBar-activeBackground, #3c3c3c);
+	color: var(--wg-titleBar-activeForeground, #cccccc);
+	padding: 0 8px;
+	-webkit-app-region: drag;
+	user-select: none;
+}
+.wg-titlebar .wg-titlebar-menubar {
+	display: flex;
+	gap: 0;
+	-webkit-app-region: no-drag;
+}
+.wg-titlebar .wg-titlebar-menubar-item {
+	padding: 0 8px;
+	height: 100%;
+	display: flex;
+	align-items: center;
+	cursor: default;
+	font-size: 13px;
+}
+.wg-titlebar .wg-titlebar-menubar-item:hover { background: var(--wg-menubar-selectionBackground, #094771); }
+.wg-titlebar .wg-titlebar-title {
+	flex: 1;
+	text-align: center;
+	font-size: 12px;
+	opacity: 0.9;
+}
+
+/*   ------ Activity bar */
+
+.wg-activitybar {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	background: var(--wg-activityBar-background, #333333);
+	color: var(--wg-activityBar-foreground, #ffffff);
+	width: var(--wg-layout-activitybar-width, 48px);
+	overflow: hidden;
+}
+.wg-activitybar-items { flex: 1; display: flex; flex-direction: column; width: 100%; }
+.wg-activitybar-actions { display: flex; flex-direction: column; width: 100%; padding-bottom: 4px; }
+
+.wg-activity-item {
+	position: relative;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	height: 48px;
+	width: 48px;
+	cursor: pointer;
+	color: var(--wg-activityBar-inactiveForeground, #ffffff99);
+	font-size: 24px;
+}
+.wg-activity-item:hover { color: var(--wg-activityBar-foreground, #ffffff); }
+.wg-activity-item[data-active="true"] {
+	color: var(--wg-activityBar-foreground, #ffffff);
+}
+.wg-activity-item[data-active="true"]::after {
+	content: "";
+	position: absolute;
+	left: 0;
+	top: 0;
+	bottom: 0;
+	width: 2px;
+	background: var(--wg-activityBar-activeBorder, #ffffff);
+}
+.wg-activity-item .wg-badge {
+	position: absolute;
+	bottom: 8px;
+	left: 50%;
+	transform: translateX(-2px);
+	background: var(--wg-activityBarBadge-background, #007acc);
+	color: var(--wg-activityBarBadge-foreground, #ffffff);
+	font-size: 9px;
+	font-weight: 600;
+	min-width: 16px;
+	height: 16px;
+	padding: 0 4px;
+	border-radius: 8px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	line-height: 1;
+}
+.wg-activity-item .wg-badge[data-kind="error"] { background: var(--wg-statusBarItem-errorBackground, #c72e2f); }
+.wg-activity-item .wg-badge[data-kind="warning"] { background: var(--wg-statusBarItem-warningBackground, #725a00); }
+
+/*   ------ Sidebar */
+
+.wg-sidebar {
+	display: flex;
+	flex-direction: column;
+	background: var(--wg-sideBar-background, #252526);
+	color: var(--wg-sideBar-foreground, #cccccc);
+	min-width: 0;
+}
+.wg-sidebar-header {
+	display: flex;
+	align-items: center;
+	height: 35px;
+	padding: 0 12px;
+	font-size: 11px;
+	font-weight: 700;
+	text-transform: uppercase;
+	letter-spacing: 0.5px;
+	color: var(--wg-sideBarTitle-foreground, #bbbbbb);
+}
+.wg-sidebar-actions { margin-left: auto; display: flex; gap: 4px; }
+
+/*   ------ View pane */
+
+.wg-viewpane-container { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+.wg-viewpane { display: flex; flex-direction: column; overflow: hidden; }
+.wg-viewpane-header {
+	display: flex;
+	align-items: center;
+	height: 22px;
+	padding: 0 8px;
+	cursor: pointer;
+	user-select: none;
+	background: var(--wg-sideBarSectionHeader-background, #80808033);
+	color: var(--wg-sideBarSectionHeader-foreground, #cccccc);
+	font-size: 11px;
+	font-weight: 700;
+	text-transform: uppercase;
+}
+.wg-viewpane-header:hover { background: var(--wg-list-hoverBackground, #2a2d2e); }
+.wg-viewpane-header .wg-twisty { width: 16px; transition: transform 0.1s; }
+.wg-viewpane[data-collapsed="true"] .wg-viewpane-header .wg-twisty { transform: rotate(-90deg); }
+.wg-viewpane-body { flex: 1; overflow: auto; padding: 4px 0; }
+.wg-viewpane[data-collapsed="true"] .wg-viewpane-body { display: none; }
+
+/*   ------ Tree */
+
+.wg-tree { font-size: 13px; }
+.wg-tree-node {
+	display: flex;
+	align-items: center;
+	height: 22px;
+	padding: 0 8px;
+	cursor: pointer;
+	white-space: nowrap;
+}
+.wg-tree-node:hover { background: var(--wg-list-hoverBackground, #2a2d2e); }
+.wg-tree-node[data-active="true"] { background: var(--wg-list-inactiveSelectionBackground, #37373d); }
+.wg-tree-node[data-active="true"] { background: var(--wg-list-activeSelectionBackground, #094771); color: var(--wg-list-activeSelectionForeground, #ffffff); }
+.wg-tree-node-indent { display: inline-block; width: 8px; }
+.wg-tree-node-twisty { width: 16px; text-align: center; color: var(--wg-icon-foreground, #c5c5c5); font-size: 16px; }
+.wg-tree-node-twisty[data-empty="true"] { visibility: hidden; }
+.wg-tree-node-icon { width: 16px; margin-right: 6px; color: var(--wg-icon-foreground, #c5c5c5); font-size: 16px; }
+.wg-tree-node-label { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+.wg-tree-node-description { color: var(--wg-descriptionForeground, #cccccc99); font-size: 12px; margin-left: 8px; }
+.wg-tree-node-badge {
+	background: var(--wg-badge-background, #4d4d4d);
+	color: var(--wg-badge-foreground, #ffffff);
+	font-size: 11px;
+	padding: 0 6px;
+	border-radius: 8px;
+	margin-left: 6px;
+}
+
+/*   ------ Editor area / tabs */
+
+.wg-editor-area { display: flex; flex-direction: column; width: 100%; height: 100%; overflow: hidden; background: var(--wg-editor-background, #1e1e1e); }
+.wg-editor-group { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; overflow: hidden; }
+.wg-editor-split { display: flex; flex: 1; min-width: 0; min-height: 0; }
+.wg-editor-split[data-orientation="vertical"] { flex-direction: column; }
+
+.wg-tabs {
+	display: flex;
+	background: var(--wg-editorGroupHeader-tabsBackground, #2d2d2d);
+	border-bottom: 1px solid var(--wg-tab-border, #252526);
+	overflow-x: auto;
+	overflow-y: hidden;
+	height: 35px;
+}
+.wg-tab {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	height: 35px;
+	padding: 0 10px;
+	cursor: pointer;
+	white-space: nowrap;
+	background: var(--wg-tab-inactiveBackground, #2d2d2d);
+	color: var(--wg-tab-inactiveForeground, #ffffff80);
+	border-right: 1px solid var(--wg-tab-border, #252526);
+	position: relative;
+	font-size: 13px;
+}
+.wg-tab:hover { color: var(--wg-tab-activeForeground, #ffffff); }
+.wg-tab[data-active="true"] {
+	background: var(--wg-tab-activeBackground, #1e1e1e);
+	color: var(--wg-tab-activeForeground, #ffffff);
+}
+.wg-tab[data-active="true"]::after {
+	content: "";
+	position: absolute;
+	top: 0; left: 0; right: 0;
+	height: 1px;
+	background: var(--wg-tab-activeBorderTop, var(--wg-tab-activeBorder, #1e1e1e));
+}
+.wg-tab .wg-tab-icon { font-size: 16px; color: var(--wg-icon-foreground, #c5c5c5); }
+.wg-tab .wg-tab-close {
+	margin-left: 4px;
+	padding: 2px;
+	border-radius: 3px;
+	font-size: 14px;
+	opacity: 0;
+}
+.wg-tab:hover .wg-tab-close, .wg-tab[data-active="true"] .wg-tab-close, .wg-tab[data-dirty="true"] .wg-tab-close { opacity: 0.8; }
+.wg-tab .wg-tab-close:hover { opacity: 1; background: var(--wg-list-hoverBackground, #2a2d2e); }
+.wg-tab[data-dirty="true"] .wg-tab-close::before { content: "●"; }
+.wg-tab[data-dirty="true"] .wg-tab-close .codicon-close { display: none; }
+
+.wg-breadcrumbs {
+	display: flex;
+	align-items: center;
+	height: 22px;
+	padding: 0 8px;
+	background: var(--wg-breadcrumbs-background, var(--wg-editorGroupHeader-tabsBackground, #2d2d2d));
+	border-bottom: 1px solid var(--wg-tab-border, #252526);
+	font-size: 12px;
+	overflow-x: auto;
+	overflow-y: hidden;
+}
+.wg-breadcrumb {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	padding: 0 4px;
+	cursor: pointer;
+	white-space: nowrap;
+	color: var(--wg-breadcrumbs-foreground, var(--wg-foreground, #cccccc));
+}
+.wg-breadcrumb:hover { color: var(--wg-breadcrumbs-focusForeground, #ffffff); }
+.wg-breadcrumb-separator { color: var(--wg-breadcrumbs-inactiveForegroundColor, #ffffff66); }
+
+.wg-editor-body { flex: 1; min-height: 0; position: relative; overflow: hidden; }
+
+/*   ------ Status bar */
+
+.wg-statusbar {
+	display: flex;
+	align-items: center;
+	height: var(--wg-layout-statusbar-height, 22px);
+	background: var(--wg-statusBar-background, #007acc);
+	color: var(--wg-statusBar-foreground, #ffffff);
+	font-size: 12px;
+	padding: 0 4px;
+	overflow: hidden;
+}
+.wg-statusbar-left, .wg-statusbar-right { display: flex; align-items: center; }
+.wg-statusbar-right { margin-left: auto; }
+.wg-statusbar-item {
+	display: flex;
+	align-items: center;
+	gap: 3px;
+	padding: 0 5px;
+	height: 100%;
+	cursor: pointer;
+	white-space: nowrap;
+}
+.wg-statusbar-item:hover { background: var(--wg-statusBarItem-hoverBackground, #ffffff1f); }
+.wg-statusbar-item[data-kind="error"] { background: var(--wg-statusBarItem-errorBackground, #c72e2f); }
+.wg-statusbar-item[data-kind="warning"] { background: var(--wg-statusBarItem-warningBackground, #725a00); }
+
+/*   ------ Panel */
+
+.wg-panel {
+	display: flex;
+	flex-direction: column;
+	background: var(--wg-panel-background, #1e1e1e);
+	border-top: 1px solid var(--wg-panel-border, #80808059);
+	overflow: hidden;
+}
+.wg-panel-header { display: flex; align-items: center; height: 35px; padding: 0 8px; border-bottom: 1px solid var(--wg-panel-border, #80808059); }
+.wg-panel-tab {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 0 10px;
+	height: 100%;
+	cursor: pointer;
+	text-transform: uppercase;
+	font-size: 11px;
+	font-weight: 700;
+	color: var(--wg-panelTitle-inactiveForeground, #ffffff99);
+	border-bottom: 1px solid transparent;
+}
+.wg-panel-tab:hover { color: var(--wg-panelTitle-activeForeground, #e7e7e7); }
+.wg-panel-tab[data-active="true"] { color: var(--wg-panelTitle-activeForeground, #e7e7e7); border-bottom-color: var(--wg-panelTitle-activeBorder, #e7e7e7); }
+.wg-panel-body { flex: 1; overflow: auto; padding: 4px 8px; }
+
+/*   ------ Command palette */
+
+.wg-quickpick-overlay {
+	position: fixed; inset: 0; z-index: 2000;
+	display: flex; align-items: flex-start; justify-content: center;
+	padding-top: 64px;
+	background: transparent;
+}
+.wg-quickpick {
+	width: 600px; max-width: 90vw;
+	background: var(--wg-quickInput-background, #252526);
+	color: var(--wg-quickInput-foreground, #cccccc);
+	border: 1px solid var(--wg-quickInputList-focusBackground, #094771);
+	border-radius: 3px;
+	box-shadow: 0 2px 8px rgba(0,0,0,0.36);
+	display: flex; flex-direction: column;
+	max-height: 60vh;
+}
+.wg-quickpick-input {
+	width: 100%; box-sizing: border-box;
+	padding: 8px 12px;
+	background: var(--wg-input-background, #3c3c3c);
+	color: var(--wg-input-foreground, #cccccc);
+	border: none; border-bottom: 1px solid var(--wg-input-border, #3c3c3c);
+	font-size: 13px; outline: none;
+}
+.wg-quickpick-list { flex: 1; overflow-y: auto; }
+.wg-quickpick-row {
+	display: flex; align-items: center; gap: 8px;
+	padding: 4px 12px;
+	cursor: pointer;
+	font-size: 13px;
+}
+.wg-quickpick-row:hover { background: var(--wg-list-hoverBackground, #2a2d2e); }
+.wg-quickpick-row[data-active="true"] { background: var(--wg-quickInputList-focusBackground, #094771); color: var(--wg-quickInputList-focusForeground, #ffffff); }
+.wg-quickpick-row-icon { font-size: 16px; color: var(--wg-icon-foreground, #c5c5c5); }
+.wg-quickpick-row-label { flex: 1; }
+.wg-quickpick-row-detail { color: var(--wg-descriptionForeground, #cccccc99); font-size: 12px; }
+.wg-quickpick-row-keybinding { color: var(--wg-foreground, #cccccc); font-size: 11px; opacity: 0.8; }
+
+/*   ------ Notifications */
+
+.wg-notifications-toasts {
+	position: fixed; bottom: 32px; right: 12px; z-index: 2100;
+	display: flex; flex-direction: column; gap: 8px;
+	max-width: 380px;
+}
+.wg-notification {
+	background: var(--wg-notifications-background, #252526);
+	color: var(--wg-notifications-foreground, #cccccc);
+	border: 1px solid var(--wg-notifications-border, #454545);
+	border-left-width: 4px;
+	border-radius: 3px;
+	padding: 10px 12px;
+	box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+	animation: wg-notification-enter 0.18s ease-out;
+}
+.wg-notification[data-severity="error"] { border-left-color: var(--wg-errorForeground, #f48771); }
+.wg-notification[data-severity="warning"] { border-left-color: var(--wg-editorWarning-foreground, #cca700); }
+.wg-notification[data-severity="info"] { border-left-color: var(--wg-editorInfo-foreground, #3794ff); }
+.wg-notification[data-leaving="true"] { animation: wg-notification-leave 0.18s ease-in forwards; }
+@keyframes wg-notification-enter { from { opacity: 0; transform: translateX(20px); } to { opacity: 1; transform: translateX(0); } }
+@keyframes wg-notification-leave { to { opacity: 0; transform: translateX(20px); } }
+.wg-notification-header { display: flex; align-items: center; gap: 6px; font-weight: 600; margin-bottom: 4px; }
+.wg-notification-source { color: var(--wg-descriptionForeground, #cccccc99); font-weight: 400; font-size: 12px; }
+.wg-notification-message { font-size: 13px; }
+.wg-notification-actions { display: flex; gap: 8px; margin-top: 8px; }
+.wg-notification-action { padding: 2px 8px; border: 1px solid var(--wg-button-border, transparent); background: var(--wg-button-secondaryBackground, #3a3d41); color: var(--wg-button-secondaryForeground, #ffffff); border-radius: 2px; cursor: pointer; font-size: 12px; }
+.wg-notification-action:hover { background: var(--wg-button-hoverBackground, #1177bb); }
+.wg-notification-close { margin-left: auto; cursor: pointer; opacity: 0.7; }
+.wg-notification-close:hover { opacity: 1; }
+
+/*   ------ Context menu */
+
+.wg-contextmenu {
+	position: fixed; z-index: 2200;
+	min-width: 200px;
+	background: var(--wg-menu-background, #252526);
+	color: var(--wg-menu-foreground, #cccccc);
+	border: 1px solid var(--wg-menu-border, #454545);
+	border-radius: 3px;
+	box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+	padding: 4px 0;
+	font-size: 13px;
+}
+.wg-contextmenu-item {
+	display: flex; align-items: center; gap: 8px;
+	padding: 4px 24px 4px 20px;
+	cursor: pointer;
+	white-space: nowrap;
+}
+.wg-contextmenu-item:hover { background: var(--wg-menu-selectionBackground, #094771); color: var(--wg-menu-selectionForeground, #ffffff); }
+.wg-contextmenu-item[data-disabled="true"] { opacity: 0.5; cursor: default; }
+.wg-contextmenu-item[data-disabled="true"]:hover { background: transparent; }
+.wg-contextmenu-item-icon { width: 16px; font-size: 16px; }
+.wg-contextmenu-item-label { flex: 1; }
+.wg-contextmenu-item-accelerator { color: var(--wg-descriptionForeground, #cccccc99); font-size: 11px; }
+.wg-contextmenu-item-submenu-indicator { font-size: 12px; opacity: 0.7; }
+.wg-contextmenu-separator { height: 1px; background: var(--wg-menu-separatorBackground, #bbbbbb33); margin: 4px 0; }
+.wg-contextmenu-item-check { width: 16px; color: var(--wg-menu-selectionForeground, #ffffff); }
+
+/*   ------ Tooltip / hover */
+
+.wg-tooltip {
+	position: fixed; z-index: 2300;
+	background: var(--wg-editorHoverWidget-background, #252526);
+	color: var(--wg-editorHoverWidget-foreground, #cccccc);
+	border: 1px solid var(--wg-editorHoverWidget-border, #454545);
+	border-radius: 3px;
+	padding: 6px 10px;
+	font-size: 12px;
+	max-width: 400px;
+	box-shadow: 0 2px 8px rgba(0,0,0,0.36);
+	pointer-events: none;
+}
+
+/*   ------ Sash (resizable divider) */
+
+.wg-sash {
+	position: relative;
+	z-index: 10;
+	flex-shrink: 0;
+}
+.wg-sash[data-orientation="vertical"] { width: 4px; cursor: col-resize; }
+.wg-sash[data-orientation="horizontal"] { height: 4px; cursor: row-resize; }
+.wg-sash::before {
+	content: "";
+	position: absolute;
+	inset: 0;
+	transition: background-color 0.1s;
+}
+.wg-sash:hover::before, .wg-sash[data-active="true"]::before {
+	background: var(--wg-sash-hoverBorder, #007fd4);
+}
+
+/*   ------ Scrollbars (VS Code style) */
+
+.wg-workbench ::-webkit-scrollbar { width: 10px; height: 10px; }
+.wg-workbench ::-webkit-scrollbar-track { background: transparent; }
+.wg-workbench ::-webkit-scrollbar-thumb {
+	background: var(--wg-scrollbarSlider-background, #79797966);
+	border-radius: 5px;
+}
+.wg-workbench ::-webkit-scrollbar-thumb:hover { background: var(--wg-scrollbarSlider-hoverBackground, #646464b3); }
+.wg-workbench ::-webkit-scrollbar-thumb:active { background: var(--wg-scrollbarSlider-activeBackground, #bfbfbf66); }

@@ -1,0 +1,64 @@
+.monaco-custom-radio {
+	display: flex;
+}
+
+.monaco-custom-radio > .monaco-button {
+	border-radius: 0;
+	font-size: 0.9em;
+	line-height: 1em;
+	padding-left: 0.5em;
+	padding-right: 0.5em;
+}
+
+.monaco-custom-radio > .monaco-button:first-child {
+	border-top-left-radius: 3px;
+	border-bottom-left-radius: 3px;
+}
+
+.monaco-custom-radio > .monaco-button:last-child {
+	border-top-right-radius: 3px;
+	border-bottom-right-radius: 3px;
+}
+
+.monaco-custom-radio > .monaco-button:not(.active):not(:last-child) {
+	border-right: none;
+}
+
+.monaco-custom-radio > .monaco-button.previous-active {
+	border-left: none;
+}
+
+/* default color styles - based on CSS variables */
+
+.monaco-custom-radio > .monaco-button {
+	color: var(--wg-radio-inactiveForeground);
+	background-color: var(--wg-radio-inactiveBackground);
+	border-color: var(--wg-radio-inactiveBorder, transparent);
+}
+
+.monaco-custom-radio > .monaco-button.active:hover,
+.monaco-custom-radio > .monaco-button.active {
+	color: var(--wg-radio-activeForeground);
+	background-color: var(--wg-radio-activeBackground);
+	border-color: var(--wg-radio-activeBorder, transparent);
+}
+
+.hc-black .monaco-custom-radio > .monaco-button.active,
+.hc-light .monaco-custom-radio > .monaco-button.active {
+	border-color: var(--wg-radio-activeBorder, transparent);
+}
+
+.hc-black .monaco-custom-radio > .monaco-button:not(.active),
+.hc-light .monaco-custom-radio > .monaco-button:not(.active) {
+	border-color: var(--wg-radio-inactiveBorder, transparent);
+}
+
+.hc-black .monaco-custom-radio > .monaco-button:not(.active):hover,
+.hc-light .monaco-custom-radio > .monaco-button:not(.active):hover {
+	outline: 1px dashed var(--wg-toolbar-hoverOutline);
+	outline-offset: -1px
+}
+
+.monaco-custom-radio > .monaco-button:hover:not(.active) {
+	background-color: var(--wg-radio-inactiveHoverBackground);
+}

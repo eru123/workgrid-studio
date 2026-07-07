@@ -1,0 +1,23 @@
+.monaco-drag-image {
+	display: inline-block;
+	padding: 1px 7px;
+	border-radius: 10px;
+	font-size: 12px;
+	position: absolute;
+	z-index: 1000;
+
+	/* Default styles */
+	background-color: var(--wg-list-activeSelectionBackground);
+	color: var(--wg-list-activeSelectionForeground);
+	outline: 1px solid var(--wg-list-focusOutline);
+	outline-offset: -1px;
+
+	/*
+	 * Browsers apply an effect to the drag image when the div becomes too
+	 * large which makes them unreadable. Use max width so it does not happen
+	 */
+	max-width: 120px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
