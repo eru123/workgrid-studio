@@ -1,11 +1,16 @@
 [package]
 name = "workgrid-studio"
-version = "0.2.0"
+version = "0.1.0"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
 
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
 [lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
 name = "workgrid_studio_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
@@ -15,28 +20,6 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
-tauri-plugin-dialog = "2"
-tauri-plugin-fs = "2"
-tauri-plugin-window-state = "2"
-tauri-plugin-updater = "2"
-tauri-plugin-process = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-mysql_async = { version = "0.36", default-features = false, features = ["default-rustls"] }
-tokio = { version = "1", features = ["full"] }
-tokio-postgres = { version = "0.7", features = ["with-serde_json-1"] }
-deadpool-postgres = "0.14"
-rusqlite = { version = "0.32", features = ["bundled"] }
-tiberius = { version = "0.12", default-features = false, features = ["rustls", "chrono"] }
-tokio-util = { version = "0.7", features = ["compat"] }
-reqwest = { version = "0.13", features = ["json"] }
-aes-gcm = "0.10"
-rand = "0.9"
-base64 = "0.22"
-keyring = "3"
-uuid = { version = "1.22.0", features = ["v4"] }
-chrono = "0.4.44"
-csv = "1.4.0"
-russh = "0.49"
-russh-keys = "0.49"
-async-trait = "0.1.89"
+

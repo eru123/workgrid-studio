@@ -1,9 +1,2 @@
-packages:
-  - "wgs-website"
-  - "wgs-updater"
-  - "."
-
-onlyBuiltDependencies:
-  - esbuild
-  - sharp
-  - workerd
+allowBuilds:
+  esbuild: true

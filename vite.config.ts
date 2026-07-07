@@ -1,36 +1,13 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
-import { readFileSync } from "node:fs";
-import { visualizer } from "rollup-plugin-visualizer";
-
-const packageJson = JSON.parse(
-  readFileSync(new URL("./package.json", import.meta.url), "utf8")
-) as { version: string };
 
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
 
 // https://vite.dev/config/
-export default defineConfig(async ({ mode }) => ({
-  plugins: [
-    react(),
-    mode === "analyze"
-      ? visualizer({
-          filename: "dist/bundle-stats.html",
-          gzipSize: true,
-          brotliSize: true,
-          open: false,
-        })
-      : null,
-  ].filter(Boolean),
-  resolve: {
-    alias: {
-      "@": "/src",
-    },
-  },
-  define: {
-    __APP_VERSION__: JSON.stringify(packageJson.version),
-  },
+export default defineConfig(async () => ({
+  plugins: [react()],
+
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
   // 1. prevent Vite from obscuring rust errors
