@@ -60,6 +60,9 @@ export type { WorkbenchProps } from './shell/Workbench.js';
 export { Welcome } from './shell/Welcome.js';
 export type { WelcomeProps } from './shell/Welcome.js';
 
+export { ConnectModal } from './shell/ConnectModal.js';
+export type { ConnectModalProps } from './shell/ConnectModal.js';
+
 export { ActivityBar } from './shell/ActivityBar.js';
 export type { ActivityBarProps } from './shell/ActivityBar.js';
 
@@ -115,7 +118,7 @@ export type {
 	ContextMenuItem,
 } from './shell/types.js';
 
-//  ------ Backend seams — interfaces only, unimplemented
+//  ------ Backend seams + IPC data types
 
 export type {
 	WorkbenchBackend,
@@ -125,3 +128,12 @@ export type {
 	TreeNode,
 	TreeBadge,
 } from './backend/BackendAdapter.js';
+
+export type {
+	QueryResultSet,
+	ColumnInfo,
+	TableInfo,
+	DatabaseInfo,
+	ConnectParams,
+	ConnectionHandle,
+} from './backend/types.js';

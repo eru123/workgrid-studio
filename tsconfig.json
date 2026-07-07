@@ -33,6 +33,9 @@
   "include": [
     "src"
   ],
+  "exclude": [
+    "src/wg/base"
+  ],
   "references": [
     {
       "path": "./tsconfig.node.json"
