@@ -12,9 +12,11 @@
   "app": {
     "windows": [
       {
-        "title": "workgrid-studio",
-        "width": 800,
-        "height": 600
+        "title": "WorkGrid Studio",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 900,
+        "minHeight": 600
       }
     ],
     "security": {

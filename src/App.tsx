@@ -2,57 +2,22 @@ import { useEffect, useState } from "react";
 import {
   Workbench,
   Welcome,
+  ConnectModal,
   type ActivityBarItem,
   type EditorGroup,
   type PanelTab,
   type StatusBarItem,
   type ViewPaneContainerDescriptor,
-  type TreeNode,
+  type ConnectionHandle,
   applyTheme,
 } from "@/wg";
+import { createWorkbenchBackend } from "@/wg/backend/workbenchBackend";
+import { dbDisconnect } from "@/wg/backend/ipc";
 import "./App.css";
 
-// WorkGrid Studio — UI shell. The default editor content is the Welcome
-// screen. Backend (Rust IPC) is not wired yet; the explorer tree uses a small
-// mock so the shell is visually complete and interactive.
-
-const EXPLORER_VIEW: ViewPaneContainerDescriptor = {
-  id: "explorer",
-  title: "Explorer",
-  icon: "files",
-  panes: [
-    {
-      id: "connections",
-      title: "Connections",
-      initiallyCollapsed: false,
-      tree: {
-        getRoots: () => [
-          { id: "r1", label: "localhost (MySQL 8.0)", icon: "server", collapsible: true, data: { kind: "server" } },
-          { id: "r2", label: "prod-db (PostgreSQL 16)", icon: "server", collapsible: true, data: { kind: "server" } },
-        ],
-        getChildren: (node: TreeNode) => {
-          if (node.id === "r1") {
-            return [
-              { id: "r1-db1", label: "workgrid", icon: "database", collapsible: true, badges: [{ text: "12" }] },
-            ];
-          }
-          if (node.id === "r1-db1") {
-            return [
-              { id: "r1-db1-t1", label: "users", icon: "table", badges: [{ text: "1.2k" }] },
-              { id: "r1-db1-t2", label: "sessions", icon: "table" },
-              { id: "r1-db1-v1", label: "active_users", icon: "symbol-enum" },
-            ];
-          }
-          return [];
-        },
-        onActivate: (node: TreeNode) => {
-          // Backend will open the table in the editor area.
-          void node;
-        },
-      },
-    },
-  ],
-};
+// WorkGrid Studio app shell. Default state: Welcome screen with a "New
+// Connection" action. On successful connect, the explorer tree switches to
+// the real IPC-backed TreeBackend (databases → tables → columns from Rust).
 
 const ACTIVITY_ITEMS: ActivityBarItem[] = [
   { id: "explorer", icon: "files", title: "Explorer", viewContainerId: "explorer" },
@@ -67,32 +32,6 @@ const ACTIVITY_ACTIONS: ActivityBarItem[] = [
   { id: "settings", icon: "settings-gear", title: "Manage" },
 ];
 
-const EDITOR_GROUP: EditorGroup = {
-  id: "g1",
-  orientation: "horizontal",
-  activeTabId: "welcome",
-  tabs: [
-    {
-      id: "welcome",
-      label: "Welcome",
-      icon: "info",
-      kind: "custom",
-      render: () => (
-        <Welcome
-          recent={[
-            { label: "localhost (MySQL 8.0)", description: "workgrid · 5 min ago", icon: "server" },
-            { label: "prod-db (PostgreSQL 16)", description: "analytics · 2 days ago", icon: "server" },
-          ]}
-          onAction={(actionId) => {
-            // Backend wires these later.
-            void actionId;
-          }}
-        />
-      ),
-    },
-  ],
-};
-
 const PANEL_TABS: PanelTab[] = [
   {
     id: "problems",
@@ -104,7 +43,7 @@ const PANEL_TABS: PanelTab[] = [
     id: "output",
     label: "Output",
     icon: "output",
-    render: () => <pre style={{ padding: 8, fontFamily: "var(--wg-editor-font-family, monospace)", fontSize: 12 }}>workgrid: ready{"\n"}backend: not connected (ui-only)</pre>,
+    render: () => <pre style={{ padding: 8, fontFamily: "var(--wg-editor-font-family, monospace)", fontSize: 12 }}>workgrid: ready</pre>,
   },
   {
     id: "terminal",
@@ -114,26 +53,91 @@ const PANEL_TABS: PanelTab[] = [
   },
 ];
 
-const STATUS_ITEMS: StatusBarItem[] = [
-  { id: "s1", text: "", icon: "remote", alignment: "left", priority: 1, tooltip: "Not connected" },
-  { id: "s2", text: "No connection", alignment: "left", priority: 0 },
-  { id: "s3", text: "UI shell", alignment: "right", priority: 100 },
-  { id: "s4", text: "UTF-8", alignment: "right", priority: 98 },
-  { id: "s5", text: "●", alignment: "right", priority: 96, tooltip: "Ready" },
-];
-
 function App() {
   const [activeView, setActiveView] = useState("explorer");
+  const [connectOpen, setConnectOpen] = useState(false);
+  const [connection, setConnection] = useState<ConnectionHandle | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  // Apply the dark theme on mount. This resolves every registered color token
-  // and writes the --wg-* CSS variables the shell reads.
   useEffect(() => {
     applyTheme("dark");
   }, []);
 
+  const handleConnected = (handle: ConnectionHandle) => {
+    setConnection(handle);
+    setError(null);
+  };
+
+  const handleDisconnect = async () => {
+    if (connection) {
+      try {
+        await dbDisconnect(connection.profileId);
+      } catch {
+        // ignore — UI should reflect disconnected regardless
+      }
+    }
+    setConnection(null);
+  };
+
+  // Build the welcome tab (shown when not connected, or alongside).
+  const welcomeTab: EditorGroup = {
+    id: "g1",
+    orientation: "horizontal",
+    activeTabId: "welcome",
+    tabs: [
+      {
+        id: "welcome",
+        label: "Welcome",
+        icon: "info",
+        kind: "custom",
+        render: () => (
+          <Welcome
+            recent={connection ? [{ label: connection.profileId, description: `${connection.dbType} · ${connection.serverVersion}`, icon: "server" }] : []}
+            onAction={(actionId) => {
+              if (actionId === "new-connection") {
+                setConnectOpen(true);
+              }
+            }}
+          />
+        ),
+      },
+    ],
+  };
+
+  // Build the explorer view — real IPC-backed tree when connected, empty when not.
+  const explorerView: ViewPaneContainerDescriptor = connection
+    ? {
+        id: "explorer",
+        title: "Explorer",
+        icon: "files",
+        panes: [
+          {
+            id: "connections",
+            title: connection.profileId,
+            tree: createWorkbenchBackend(connection.profileId).tree,
+          },
+        ],
+      }
+    : {
+        id: "explorer",
+        title: "Explorer",
+        icon: "files",
+        panes: [
+          {
+            id: "empty",
+            title: "No Connection",
+            render: () => (
+              <div style={{ padding: 12, color: "var(--wg-descriptionForeground)", fontSize: 12 }}>
+                No database connected. Click <strong>New Connection</strong> to get started.
+              </div>
+            ),
+          },
+        ],
+      };
+
   const sidebar =
     activeView === "explorer"
-      ? EXPLORER_VIEW
+      ? explorerView
       : {
           id: activeView,
           title: activeView.charAt(0).toUpperCase() + activeView.slice(1),
@@ -141,18 +145,40 @@ function App() {
           panes: [],
         };
 
+  // Status bar reflects connection state.
+  const statusBarItems: StatusBarItem[] = connection
+    ? [
+        { id: "s1", text: "", icon: "remote", alignment: "left", priority: 1, tooltip: "Connected" },
+        { id: "s2", text: `${connection.dbType} · ${connection.serverVersion}`, alignment: "left", priority: 0 },
+        { id: "s3", text: "Connected", alignment: "right", priority: 100 },
+        { id: "s4", text: "●", alignment: "right", priority: 96, tooltip: "Ready" },
+      ]
+    : [
+        { id: "s1", text: "", icon: "remote", alignment: "left", priority: 1, tooltip: "Not connected" },
+        { id: "s2", text: "No connection", alignment: "left", priority: 0 },
+        { id: "s3", text: "UI shell", alignment: "right", priority: 100 },
+        { id: "s4", text: "●", alignment: "right", priority: 96, tooltip: "Ready" },
+      ];
+
   return (
-    <Workbench
-      title="WorkGrid Studio"
-      activityItems={ACTIVITY_ITEMS}
-      activityActions={ACTIVITY_ACTIONS}
-      activeViewContainerId={activeView}
-      onActivitySelect={(item) => setActiveView(item.viewContainerId ?? activeView)}
-      sidebar={sidebar}
-      editorGroup={EDITOR_GROUP}
-      panelTabs={PANEL_TABS}
-      statusBarItems={STATUS_ITEMS}
-    />
+    <>
+      <Workbench
+        title={`WorkGrid Studio${connection ? ` — ${connection.profileId}` : ""}`}
+        activityItems={ACTIVITY_ITEMS}
+        activityActions={ACTIVITY_ACTIONS}
+        activeViewContainerId={activeView}
+        onActivitySelect={(item) => setActiveView(item.viewContainerId ?? activeView)}
+        sidebar={sidebar}
+        editorGroup={welcomeTab}
+        panelTabs={PANEL_TABS}
+        statusBarItems={statusBarItems}
+      />
+      <ConnectModal
+        open={connectOpen}
+        onClose={() => setConnectOpen(false)}
+        onConnected={handleConnected}
+      />
+    </>
   );
 }
 
