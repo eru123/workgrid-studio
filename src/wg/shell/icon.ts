@@ -15,8 +15,9 @@ const VALID_CODICON_IDS = new Set<string>(
  */
 export function codiconClass(icon?: string): string {
 	if (!icon) {
-		return 'codicon-symbol-misc';
+		return 'codicon codicon-symbol-misc';
 	}
 	const name = icon.replace(/^codicon-/, '').replace(/^\/?[^/]+\//, '');
-	return `codicon-${VALID_CODICON_IDS.has(name) ? name : (name || 'symbol-misc')}`;
+	const id = VALID_CODICON_IDS.has(name) ? name : (name || 'symbol-misc');
+	return `codicon codicon-${id}`;
 }
