@@ -29,7 +29,7 @@ export {
 
 export * from './theme/colors.js';
 
-//  ------ Codicons
+import './base/browser/ui/codicons/codiconStyles.js';
 
 export { Codicon } from './base/common/codicons.js';
 export { ThemeIcon } from './base/common/themables.js';

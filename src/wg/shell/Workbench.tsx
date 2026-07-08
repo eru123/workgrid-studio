@@ -16,6 +16,7 @@ import { Sidebar } from './Sidebar.js';
 import { Sash } from './Sash.js';
 import { StatusBar } from './StatusBar.js';
 import { TitleBar } from './TitleBar.js';
+import { InputGuard } from './InputGuard.js';
 import type { WorkbenchBackend } from '../backend/BackendAdapter.js';
 import type {
 	ActivityBarItem,
@@ -79,81 +80,86 @@ export function Workbench(props: WorkbenchProps) {
 		setSidebarWidth((w) => Math.max(170, Math.min(800, w + delta)));
 	}, []);
 	const onPanelSash = useCallback((delta: number) => {
-		// Dragging the panel sash up (negative delta) grows the panel.
 		setPanelHeight((h) => Math.max(80, Math.min(600, h - delta)));
 	}, []);
 
+	const disableContextMenu = true;
+	const disableBrowserShortcuts = true;
+
 	return (
-		<div
-			className="wg-workbench"
-			style={{
-				'--wg-layout-sidebar-width': `${sidebarActuallyHidden ? 0 : sidebarWidth}px`,
-				'--wg-layout-panel-height': `${panelActuallyHidden ? 0 : panelHeight}px`,
-				'--wg-layout-auxiliarybar-width': props.auxiliaryBar ? '300px' : '0px',
-			} as React.CSSProperties}
-			data-sidebar-hidden={sidebarActuallyHidden}
-			data-panel-hidden={panelActuallyHidden}
-			data-auxiliarybar-hidden={!props.auxiliaryBar}
-		>
-			<TitleBar title={props.title} menubar={props.menubar} onMenuSelect={props.onMenuSelect} />
+		<>
+			<InputGuard disableContextMenu={disableContextMenu} disableBrowserShortcuts={disableBrowserShortcuts} />
+			<div
+				className="wg-workbench"
+				style={{
+					'--wg-layout-sidebar-width': `${sidebarActuallyHidden ? 0 : sidebarWidth}px`,
+					'--wg-layout-panel-height': `${panelActuallyHidden ? 0 : panelHeight}px`,
+					'--wg-layout-auxiliarybar-width': props.auxiliaryBar ? '300px' : '0px',
+				} as React.CSSProperties}
+				data-sidebar-hidden={sidebarActuallyHidden}
+				data-panel-hidden={panelActuallyHidden}
+				data-auxiliarybar-hidden={!props.auxiliaryBar}
+			>
+				<TitleBar title={props.title} menubar={props.menubar} onMenuSelect={props.onMenuSelect} />
 
-			<ActivityBar
-				items={props.activityItems ?? []}
-				actions={props.activityActions}
-				activeViewContainerId={props.activeViewContainerId}
-				onSelect={(item) => {
-					if (item.viewContainerId === props.activeViewContainerId) {
-						setSidebarHidden((h) => !h);
-					} else {
-						setSidebarHidden(false);
-						props.onActivitySelect?.(item);
-					}
-				}}
-			/>
+				<ActivityBar
+					items={props.activityItems ?? []}
+					actions={props.activityActions}
+					activeViewContainerId={props.activeViewContainerId}
+					onSelect={(item) => {
+						if (item.viewContainerId === props.activeViewContainerId) {
+							setSidebarHidden((h) => !h);
+						} else {
+							setSidebarHidden(false);
+							props.onActivitySelect?.(item);
+						}
+					}}
+				/>
 
-			{!sidebarActuallyHidden ? (
-				<Sidebar container={props.sidebar} headerActions={props.sidebarHeaderActions} />
-			) : null}
-
-			{/* Sidebar resize sash — overlay at the sidebar's right edge. */}
-			{!sidebarActuallyHidden ? (
-				<div style={{ position: 'absolute', left: `calc(var(--wg-layout-activitybar-width) + var(--wg-layout-sidebar-width) - 2px)`, top: 'var(--wg-layout-titlebar-height)', bottom: 'var(--wg-layout-statusbar-height)', zIndex: 20 }}>
-					<Sash orientation="vertical" onResize={onSidebarSash} />
-				</div>
-			) : null}
-
-			<div className="wg-editor">
-				{props.editorGroup ? (
-					<EditorArea
-						group={props.editorGroup}
-						onActivateTab={props.onActivateTab}
-						onCloseTab={props.onCloseTab}
-					/>
+				{!sidebarActuallyHidden ? (
+					<Sidebar container={props.sidebar} headerActions={props.sidebarHeaderActions} />
 				) : null}
-			</div>
 
-			{!panelActuallyHidden ? (
-				<div className="wg-panel-wrap" style={{ gridArea: 'panel', position: 'relative', display: 'flex', flexDirection: 'column' }}>
-					{/* Panel resize sash — overlay at the panel's top edge. */}
-					<div style={{ position: 'absolute', left: 0, right: 0, top: '-2px', height: '4px', zIndex: 20 }}>
-						<Sash orientation="horizontal" onResize={onPanelSash} />
+				{/* Sidebar resize sash — overlay at the sidebar's right edge. */}
+				{!sidebarActuallyHidden ? (
+					<div style={{ position: 'absolute', left: `calc(var(--wg-layout-activitybar-width) + var(--wg-layout-sidebar-width) - 2px)`, top: 'var(--wg-layout-titlebar-height)', bottom: 'var(--wg-layout-statusbar-height)', zIndex: 20 }}>
+						<Sash orientation="vertical" onResize={onSidebarSash} />
 					</div>
-					<Panel
-						tabs={props.panelTabs!}
-						activeTabId={props.panelActiveTabId}
-						headerActions={props.panelHeaderActions}
-					/>
+				) : null}
+
+				<div className="wg-editor">
+					{props.editorGroup ? (
+						<EditorArea
+							group={props.editorGroup}
+							onActivateTab={props.onActivateTab}
+							onCloseTab={props.onCloseTab}
+						/>
+					) : null}
 				</div>
-			) : null}
 
-			{props.auxiliaryBar ? (
-				<div className="wg-auxiliarybar">{props.auxiliaryBar}</div>
-			) : null}
+				{!panelActuallyHidden ? (
+					<div className="wg-panel-wrap" style={{ gridArea: 'panel', position: 'relative', display: 'flex', flexDirection: 'column' }}>
+						{/* Panel resize sash — overlay at the panel's top edge. */}
+						<div style={{ position: 'absolute', left: 0, right: 0, top: '-2px', height: '4px', zIndex: 20 }}>
+							<Sash orientation="horizontal" onResize={onPanelSash} />
+						</div>
+						<Panel
+							tabs={props.panelTabs!}
+							activeTabId={props.panelActiveTabId}
+							headerActions={props.panelHeaderActions}
+						/>
+					</div>
+				) : null}
 
-			<StatusBar
-				items={props.statusBarItems ?? []}
-				onClick={props.onStatusBarClick}
-			/>
-		</div>
+				{props.auxiliaryBar ? (
+					<div className="wg-auxiliarybar">{props.auxiliaryBar}</div>
+				) : null}
+
+				<StatusBar
+					items={props.statusBarItems ?? []}
+					onClick={props.onStatusBarClick}
+				/>
+			</div>
+		</>
 	);
 }
