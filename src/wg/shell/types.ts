@@ -16,6 +16,8 @@ export interface ActivityBarItem {
 	readonly badge?: { readonly text: string; readonly kind?: 'default' | 'error' | 'warning' };
 	/** Which sidebar view container this item toggles. */
 	readonly viewContainerId?: string;
+	/** Layout group within the activity bar. Defaults to 'top'. */
+	readonly group?: 'top' | 'sessions' | 'bottom';
 }
 
 //  ------ Sidebar / view panes

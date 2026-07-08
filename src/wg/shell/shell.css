@@ -81,8 +81,30 @@
 	color: var(--wg-activityBar-foreground, #ffffff);
 	width: var(--wg-layout-activitybar-width, 48px);
 	overflow: hidden;
+	min-height: 0;
 }
-.wg-activitybar-items { flex: 1; display: flex; flex-direction: column; width: 100%; }
+.wg-activitybar-top,
+.wg-activitybar-bottom {
+	flex: 0 0 auto;
+	display: flex;
+	flex-direction: column;
+	width: 100%;
+}
+.wg-activitybar-sessions {
+	flex: 1 1 auto;
+	overflow-y: auto;
+	overflow-x: hidden;
+	min-height: 0;
+	width: 100%;
+}
+.wg-activitybar-divider {
+	width: 60%;
+	height: 1px;
+	background: var(--wg-activityBar-inactiveForeground, #ffffff22);
+	margin: 4px auto;
+	flex: 0 0 auto;
+}
+.wg-activitybar-items { display: flex; flex-direction: column; width: 100%; }
 .wg-activitybar-actions { display: flex; flex-direction: column; width: 100%; padding-bottom: 4px; }
 
 .wg-activity-item {

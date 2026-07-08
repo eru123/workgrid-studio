@@ -19,17 +19,27 @@ import "./App.css";
 // Connection" action. On successful connect, the explorer tree switches to
 // the real IPC-backed TreeBackend (databases → tables → columns from Rust).
 
-const ACTIVITY_ITEMS: ActivityBarItem[] = [
-  { id: "explorer", icon: "files", title: "Explorer", viewContainerId: "explorer" },
-  { id: "search", icon: "search", title: "Search", viewContainerId: "search" },
-  { id: "scm", icon: "source-control", title: "Source Control", viewContainerId: "scm" },
-  { id: "debug", icon: "debug-alt", title: "Run and Debug", viewContainerId: "debug" },
-  { id: "extensions", icon: "extensions", title: "Extensions", viewContainerId: "extensions" },
+const PLACEHOLDER_SESSIONS: ActivityBarItem[] = [
+  { id: "s1", icon: "database", title: "s1", group: "sessions" },
+  { id: "s2", icon: "server", title: "s2", group: "sessions" },
+  { id: "s3", icon: "server", title: "s3", group: "sessions" },
+  { id: "s4", icon: "server", title: "s4", group: "sessions" },
+  { id: "s5", icon: "server", title: "s5", group: "sessions" },
+  { id: "s6", icon: "server", title: "s6", group: "sessions" },
+  { id: "s7", icon: "server", title: "s7", group: "sessions" },
+  { id: "s8", icon: "server", title: "s8", group: "sessions" },
+  { id: "s9", icon: "server", title: "s9", group: "sessions" },
+  { id: "s10", icon: "server", title: "s10", group: "sessions" },
 ];
 
-const ACTIVITY_ACTIONS: ActivityBarItem[] = [
-  { id: "accounts", icon: "accounts", title: "Accounts" },
-  { id: "settings", icon: "settings-gear", title: "Manage" },
+const ACTIVITY_ITEMS: ActivityBarItem[] = [
+  { id: "dashboard", icon: "preview", title: "Dashboard", viewContainerId: "dashboard" },
+  { id: "servers", icon: "server", title: "Servers", viewContainerId: "servers" },
+  { id: "ssh", icon: "remote", title: "SSH", viewContainerId: "ssh" },
+  { id: "credentials", icon: "key", title: "Credentials", viewContainerId: "credentials" },
+  { id: "providers", icon: "hubot", title: "Providers", viewContainerId: "providers" },
+  ...PLACEHOLDER_SESSIONS,
+  { id: "settings", icon: "settings-gear", title: "Settings", viewContainerId: "settings" },
 ];
 
 const PANEL_TABS: PanelTab[] = [
@@ -104,45 +114,67 @@ function App() {
     ],
   };
 
-  // Build the explorer view — real IPC-backed tree when connected, empty when not.
-  const explorerView: ViewPaneContainerDescriptor = connection
-    ? {
-        id: "explorer",
-        title: "Explorer",
-        icon: "files",
-        panes: [
-          {
-            id: "connections",
-            title: connection.profileId,
-            tree: createWorkbenchBackend(connection.profileId).tree,
-          },
-        ],
-      }
-    : {
-        id: "explorer",
-        title: "Explorer",
-        icon: "files",
-        panes: [
-          {
-            id: "empty",
-            title: "No Connection",
-            render: () => (
-              <div style={{ padding: 12, color: "var(--wg-descriptionForeground)", fontSize: 12 }}>
-                No database connected. Click <strong>New Connection</strong> to get started.
-              </div>
-            ),
-          },
-        ],
-      };
-
-  const sidebar =
+  const sidebar: ViewPaneContainerDescriptor =
     activeView === "explorer"
-      ? explorerView
+      ? connection
+        ? {
+            id: "explorer",
+            title: "Explorer",
+            icon: "files",
+            panes: [
+              {
+                id: "connections",
+                title: connection.profileId,
+                tree: createWorkbenchBackend(connection.profileId).tree,
+              },
+            ],
+          }
+        : {
+            id: "explorer",
+            title: "Explorer",
+            icon: "files",
+            panes: [
+              {
+                id: "empty",
+                title: "No Connection",
+                render: () => (
+                  <div style={{ padding: 12, color: "var(--wg-descriptionForeground)", fontSize: 12 }}>
+                    No database connected. Click <strong>New Connection</strong> to get started.
+                  </div>
+                ),
+              },
+            ],
+          }
       : {
           id: activeView,
-          title: activeView.charAt(0).toUpperCase() + activeView.slice(1),
+          title:
+            activeView === "dashboard"
+              ? "Dashboard"
+              : activeView === "servers"
+                ? "Servers"
+                : activeView === "ssh"
+                  ? "SSH"
+                  : activeView === "credentials"
+                    ? "Credentials"
+                    : activeView === "providers"
+                      ? "Providers"
+                      : activeView === "settings"
+                        ? "Settings"
+                        : "Sessions",
           icon: "info",
-          panes: [],
+          panes: [
+            {
+              id: `${activeView}-placeholder`,
+              title: "Coming soon",
+              render: () => (
+                <div style={{ padding: 12, color: "var(--wg-descriptionForeground)", fontSize: 12 }}>
+                  {activeView === "providers"
+                    ? "AI features are disabled until an AI provider is configured."
+                    : "This view is a placeholder."}
+                </div>
+              ),
+            },
+          ],
         };
 
   // Status bar reflects connection state.
@@ -165,7 +197,6 @@ function App() {
       <Workbench
         title={`WorkGrid Studio${connection ? ` — ${connection.profileId}` : ""}`}
         activityItems={ACTIVITY_ITEMS}
-        activityActions={ACTIVITY_ACTIONS}
         activeViewContainerId={activeView}
         onActivitySelect={(item) => setActiveView(item.viewContainerId ?? activeView)}
         sidebar={sidebar}
@@ -173,11 +204,7 @@ function App() {
         panelTabs={PANEL_TABS}
         statusBarItems={statusBarItems}
       />
-      <ConnectModal
-        open={connectOpen}
-        onClose={() => setConnectOpen(false)}
-        onConnected={handleConnected}
-      />
+      <ConnectModal open={connectOpen} onClose={() => setConnectOpen(false)} onConnected={handleConnected} />
     </>
   );
 }
