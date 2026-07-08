@@ -15,7 +15,6 @@ import { Panel } from './Panel.js';
 import { Sidebar } from './Sidebar.js';
 import { Sash } from './Sash.js';
 import { StatusBar } from './StatusBar.js';
-import { TitleBar } from './TitleBar.js';
 import { InputGuard } from './InputGuard.js';
 import type { WorkbenchBackend } from '../backend/BackendAdapter.js';
 import type {
@@ -26,14 +25,8 @@ import type {
 	ViewPaneContainerDescriptor,
 } from './types.js';
 import type { ContextMenuItem } from './types.js';
-import type { TitleBarMenuItem } from './TitleBar.js';
 
 export interface WorkbenchProps {
-	title?: string;
-	menubar?: readonly TitleBarMenuItem[];
-	onMenuSelect?: (item: ContextMenuItem) => void;
-
-	/** Activity bar items (top section) + global actions (bottom section). */
 	activityItems?: readonly ActivityBarItem[];
 	activityActions?: readonly ActivityBarItem[];
 	activeViewContainerId?: string;
@@ -100,8 +93,6 @@ export function Workbench(props: WorkbenchProps) {
 				data-panel-hidden={panelActuallyHidden}
 				data-auxiliarybar-hidden={!props.auxiliaryBar}
 			>
-				<TitleBar title={props.title} menubar={props.menubar} onMenuSelect={props.onMenuSelect} />
-
 				<ActivityBar
 					items={props.activityItems ?? []}
 					actions={props.activityActions}
@@ -122,7 +113,7 @@ export function Workbench(props: WorkbenchProps) {
 
 				{/* Sidebar resize sash — overlay at the sidebar's right edge. */}
 				{!sidebarActuallyHidden ? (
-					<div style={{ position: 'absolute', left: `calc(var(--wg-layout-activitybar-width) + var(--wg-layout-sidebar-width) - 2px)`, top: 'var(--wg-layout-titlebar-height)', bottom: 'var(--wg-layout-statusbar-height)', zIndex: 20 }}>
+					<div style={{ position: 'absolute', left: `calc(var(--wg-layout-activitybar-width) + var(--wg-layout-sidebar-width) - 2px)`, top: 0, bottom: 'var(--wg-layout-statusbar-height)', zIndex: 20 }}>
 						<Sash orientation="vertical" onResize={onSidebarSash} />
 					</div>
 				) : null}

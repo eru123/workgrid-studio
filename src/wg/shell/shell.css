@@ -10,13 +10,11 @@
 .wg-workbench {
 	display: grid;
 	grid-template-areas:
-		"titlebar    titlebar   titlebar   titlebar"
-		"activitybar sidebar    editor     auxiliarybar"
 		"activitybar sidebar    editor     auxiliarybar"
 		"activitybar panel      panel      auxiliarybar"
 		"statusbar   statusbar  statusbar  statusbar";
 	grid-template-columns: var(--wg-layout-activitybar-width, 48px) var(--wg-layout-sidebar-width, 280px) 1fr var(--wg-layout-auxiliarybar-width, 0px);
-	grid-template-rows: var(--wg-layout-titlebar-height, 30px) 1fr var(--wg-layout-panel-height, 0px) var(--wg-layout-statusbar-height, 22px);
+	grid-template-rows: 1fr var(--wg-layout-panel-height, 0px) var(--wg-layout-statusbar-height, 22px);
 	height: 100%;
 	width: 100%;
 	overflow: hidden;
@@ -30,7 +28,6 @@
 .wg-workbench[data-panel-hidden="true"] { --wg-layout-panel-height: 0px; }
 .wg-workbench[data-auxiliarybar-hidden="true"] { --wg-layout-auxiliarybar-width: 0px; }
 
-.wg-titlebar   { grid-area: titlebar; }
 .wg-activitybar { grid-area: activitybar; }
 .wg-sidebar    { grid-area: sidebar; overflow: hidden; }
 .wg-editor     { grid-area: editor; overflow: hidden; }

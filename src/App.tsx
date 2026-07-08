@@ -15,10 +15,7 @@ import { createWorkbenchBackend } from "@/wg/backend/workbenchBackend";
 import { dbDisconnect } from "@/wg/backend/ipc";
 import "./App.css";
 
-// WorkGrid Studio app shell. Default state: Welcome screen with a "New
-// Connection" action. On successful connect, the explorer tree switches to
-// the real IPC-backed TreeBackend (databases → tables → columns from Rust).
-
+// WorkGrid Studio app shell.
 const PLACEHOLDER_SESSIONS: ActivityBarItem[] = [
   { id: "s1", icon: "database", title: "s1", group: "sessions" },
   { id: "s2", icon: "server", title: "s2", group: "sessions" },
@@ -39,7 +36,7 @@ const ACTIVITY_ITEMS: ActivityBarItem[] = [
   { id: "credentials", icon: "key", title: "Credentials", viewContainerId: "credentials" },
   { id: "providers", icon: "hubot", title: "Providers", viewContainerId: "providers" },
   ...PLACEHOLDER_SESSIONS,
-  { id: "settings", icon: "settings-gear", title: "Settings", viewContainerId: "settings" },
+  { id: "settings", icon: "settings-gear", title: "Settings", viewContainerId: "settings", group: "bottom" },
 ];
 
 const PANEL_TABS: PanelTab[] = [
@@ -64,7 +61,7 @@ const PANEL_TABS: PanelTab[] = [
 ];
 
 function App() {
-  const [activeView, setActiveView] = useState("explorer");
+  const [activeView, setActiveView] = useState("dashboard");
   const [connectOpen, setConnectOpen] = useState(false);
   const [connection, setConnection] = useState<ConnectionHandle | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -89,7 +86,6 @@ function App() {
     setConnection(null);
   };
 
-  // Build the welcome tab (shown when not connected, or alongside).
   const welcomeTab: EditorGroup = {
     id: "g1",
     orientation: "horizontal",
@@ -114,70 +110,68 @@ function App() {
     ],
   };
 
-  const sidebar: ViewPaneContainerDescriptor =
-    activeView === "explorer"
-      ? connection
-        ? {
-            id: "explorer",
-            title: "Explorer",
-            icon: "files",
-            panes: [
-              {
-                id: "connections",
-                title: connection.profileId,
-                tree: createWorkbenchBackend(connection.profileId).tree,
-              },
-            ],
-          }
-        : {
-            id: "explorer",
-            title: "Explorer",
-            icon: "files",
-            panes: [
-              {
-                id: "empty",
-                title: "No Connection",
-                render: () => (
-                  <div style={{ padding: 12, color: "var(--wg-descriptionForeground)", fontSize: 12 }}>
-                    No database connected. Click <strong>New Connection</strong> to get started.
-                  </div>
-                ),
-              },
-            ],
-          }
-      : {
-          id: activeView,
-          title:
-            activeView === "dashboard"
-              ? "Dashboard"
-              : activeView === "servers"
-                ? "Servers"
-                : activeView === "ssh"
-                  ? "SSH"
-                  : activeView === "credentials"
-                    ? "Credentials"
-                    : activeView === "providers"
-                      ? "Providers"
-                      : activeView === "settings"
-                        ? "Settings"
-                        : "Sessions",
-          icon: "info",
+  const sidebar: ViewPaneContainerDescriptor = activeView === "explorer"
+    ? connection
+      ? {
+          id: "explorer",
+          title: connection.profileId,
+          icon: "files",
           panes: [
             {
-              id: `${activeView}-placeholder`,
-              title: "Coming soon",
+              id: "connections",
+              title: connection.profileId,
+              tree: createWorkbenchBackend(connection.profileId).tree,
+            },
+          ],
+        }
+      : {
+          id: "explorer",
+          title: "Explorer",
+          icon: "files",
+          panes: [
+            {
+              id: "empty",
+              title: "No Connection",
               render: () => (
                 <div style={{ padding: 12, color: "var(--wg-descriptionForeground)", fontSize: 12 }}>
-                  {activeView === "providers"
-                    ? "AI features are disabled until an AI provider is configured."
-                    : "This view is a placeholder."}
+                  No database connected. Click <strong>New Connection</strong> to get started.
                 </div>
               ),
             },
           ],
-        };
+        }
+    : {
+        id: activeView,
+        title:
+          activeView === "dashboard"
+            ? "Dashboard"
+            : activeView === "servers"
+              ? "Servers"
+              : activeView === "ssh"
+                ? "SSH"
+                : activeView === "credentials"
+                  ? "Credentials"
+                  : activeView === "providers"
+                    ? "Providers"
+                    : activeView === "settings"
+                      ? "Settings"
+                      : "Sessions",
+        icon: "info",
+        panes: [
+          {
+            id: `${activeView}-placeholder`,
+            title: "Coming soon",
+            render: () => (
+              <div style={{ padding: 12, color: "var(--wg-descriptionForeground)", fontSize: 12 }}>
+                {activeView === "providers"
+                  ? "AI features are disabled until an AI provider is configured."
+                  : "This view is a placeholder."}
+              </div>
+            ),
+          },
+        ],
+      };
 
-  // Status bar reflects connection state.
   const statusBarItems: StatusBarItem[] = connection
     ? [
         { id: "s1", text: "", icon: "remote", alignment: "left", priority: 1, tooltip: "Connected" },
@@ -195,7 +189,6 @@ function App() {
   return (
     <>
       <Workbench
-        title={`WorkGrid Studio${connection ? ` — ${connection.profileId}` : ""}`}
         activityItems={ACTIVITY_ITEMS}
         activeViewContainerId={activeView}
         onActivitySelect={(item) => setActiveView(item.viewContainerId ?? activeView)}
