@@ -20,7 +20,15 @@ import {
   createCredentialsTreeBackend,
 } from "@/wg";
 import { dbDisconnect } from "@/wg";
-import { credentialsCreateFolder, credentialsCopyNode, credentialsDeleteNode, credentialsMoveNode, credentialsRenameNode } from "@/wg/backend/ipc";
+import { credentialsCreateFolder, credentialsCopyNode, credentialsDeleteNode, credentialsMoveNode, credentialsRenameNode, credentialsGetTree, credentialsUpsertEntry } from "@/wg/backend/ipc";
+import { Tree, type TreeEditingState } from "@/wg/shell/Tree";
+import {
+  resolveVaultCreatePath,
+  findFolderChild,
+  childrenOf,
+  findNodeById,
+  nextUnusedFolderName,
+} from "@/wg/shell/credentials/vaultNaming";
 import "./App.css";
 import { codiconClass } from "@/wg/shell/icon";
 
@@ -88,6 +96,8 @@ function App() {
   const [credentialsCreating, setCredentialsCreating] = useState(false);
   const [credentialsCtxMenu, setCredentialsCtxMenu] = useState<{ anchor: { x: number; y: number }; node: CredentialsTreeNode } | null>(null);
   const [credentialsClipboard, setCredentialsClipboard] = useState<{ nodeId: string; mode: 'copy' | 'cut' } | null>(null);
+  const [credentialsEditing, setCredentialsEditing] = useState<TreeEditingState | null>(null);
+  const [credentialsCollapseKey, setCredentialsCollapseKey] = useState(0);
 
 
   useEffect(() => {
@@ -126,22 +136,92 @@ function App() {
   );
 
   const handleNewCredential = useCallback(() => {
-    setCredentialsEntryId(null);
-    setCredentialsCreating(true);
+    // VS Code-style "New File": prefill `.store` so a credential entry is
+    // created inline. The user can also type a path like `folder/hello.store`
+    // to nest it under (creating the folder too).
+    setCredentialsEditing({ mode: 'create', parentId: null, initialValue: '.store' });
   }, []);
 
 
   const handleRefreshCredentials = useCallback(() => {
     setCredentialsRefreshKey((k) => k + 1);
   }, []);
-  const handleNewFolder = useCallback(async () => {
-    const name = window.prompt("Folder name");
-    if (!name?.trim()) return;
+  const handleNewFolder = useCallback(() => {
+    setCredentialsEditing({ mode: 'create', parentId: null, initialValue: '' });
+  }, []);
+  const handleCollapseAll = useCallback(() => {
+    setCredentialsCollapseKey((k) => k + 1);
+  }, []);
+
+  // Resolve the inline create. Type comes from the final name segment
+  // (`.store` → entry, else folder). A path like `folder/hello.store` creates
+  // the intermediate folder `folder` (reusing it if it already exists) and
+  // then the entry `hello.store` inside it. Empty input auto-resolves to an
+  // "Untitled" folder at the target parent.
+  const handleCommitCreate = useCallback(async (name: string, parentId: string | null) => {
     try {
-      await credentialsCreateFolder(null, name.trim());
+      const tree = await credentialsGetTree();
+      const plan = resolveVaultCreatePath(name, tree, parentId);
+      if (!plan) {
+        setCredentialsEditing(null);
+        return;
+      }
+
+      // Walk intermediate folder segments: reuse an existing same-named
+      // folder, or create it (disambiguating if the name is taken by an
+      // entry). Each step re-fetches the tree so newly-created folders are
+      // visible for the next segment.
+      let currentParentId = plan.startParentId;
+      let currentTree = tree;
+      for (const seg of plan.folderSegments) {
+        const parent = currentParentId === null ? null : findNodeById(currentTree, currentParentId) ?? null;
+        const siblings = parent ? childrenOf(parent) : currentTree;
+        const existingFolder = findFolderChild(siblings, seg);
+        if (existingFolder) {
+          currentParentId = existingFolder.id;
+          continue;
+        }
+        const folderName = nextUnusedFolderName(seg, siblings);
+        const created = await credentialsCreateFolder(currentParentId, folderName);
+        currentParentId = created.id;
+        // Refresh the tree view for the next iteration's collision checks.
+        currentTree = await credentialsGetTree();
+      }
+
+      // Create the final item under the resolved parent.
+      const finalName = plan.finalItem.name;
+      if (plan.finalItem.type === 'folder') {
+        await credentialsCreateFolder(currentParentId, finalName);
+      } else {
+        // `.store` entry: create with default login kind, then open the editor
+        // so the user fills in username/password/etc.
+        const entry = await credentialsUpsertEntry({
+          id: null,
+          parentId: currentParentId,
+          kind: 'login',
+          name: finalName,
+          fields: {},
+          description: null,
+        });
+        setCredentialsEntryId(entry.id);
+        setCredentialsCreating(true);
+      }
       setCredentialsRefreshKey((k) => k + 1);
     } catch (e) {
       window.alert(e instanceof Error ? e.message : String(e));
+    } finally {
+      setCredentialsEditing(null);
+    }
+  }, []);
+
+  const handleCommitRename = useCallback(async (nodeId: string, newName: string) => {
+    try {
+      await credentialsRenameNode(nodeId, newName);
+      setCredentialsRefreshKey((k) => k + 1);
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : String(e));
+    } finally {
+      setCredentialsEditing(null);
     }
   }, []);
 
@@ -236,27 +316,39 @@ function IconButton({ icon, title, onClick }: { icon: string; title: string; onC
               },
             ],
           }
-      : activeView === "credentials"
+        : activeView === "credentials"
         ? {
             id: "credentials",
             title: "Credentials",
             icon: Codicon.key.id,
             headerActions: (
               <div style={{ display: "flex", gap: 6 }}>
-                <IconButton icon="add" title="New Credential" onClick={handleNewCredential} />
+                <IconButton icon="new-file" title="New File" onClick={handleNewCredential} />
                 <IconButton icon="new-folder" title="New Folder" onClick={handleNewFolder} />
-                <IconButton icon="refresh" title="Refresh Vault" onClick={handleRefreshCredentials} />
+                <IconButton icon="refresh" title="Refresh" onClick={handleRefreshCredentials} />
+                <IconButton icon="collapse-all" title="Collapse" onClick={handleCollapseAll} />
               </div>
             ),
             panes: [
               {
                 id: "credentials-tree",
                 title: "Vault",
-                tree: credentialsTree,
+                render: () => (
+                  <Tree
+                    backend={credentialsTree}
+                    editing={credentialsEditing}
+                    collapseAllKey={credentialsCollapseKey}
+                    onCommitCreate={handleCommitCreate}
+                    onCommitRename={handleCommitRename}
+                    onCancelEdit={() => setCredentialsEditing(null)}
+                  />
+                ),
                 headerActions: (
                   <div style={{ display: "flex", gap: 6 }}>
-                    <IconButton icon="add" title="New Credential" onClick={handleNewCredential} />
-                    <IconButton icon="refresh" title="Refresh Vault" onClick={handleRefreshCredentials} />
+                    <IconButton icon="new-file" title="New File" onClick={handleNewCredential} />
+                    <IconButton icon="new-folder" title="New Folder" onClick={handleNewFolder} />
+                    <IconButton icon="refresh" title="Refresh" onClick={handleRefreshCredentials} />
+                    <IconButton icon="collapse-all" title="Collapse" onClick={handleCollapseAll} />
                   </div>
                 ),
               },
@@ -309,11 +401,9 @@ function IconButton({ icon, title, onClick }: { icon: string; title: string; onC
     if (!node) return;
     try {
       if (item.id === 'new-folder') {
-        const name = window.prompt('Folder name');
-        if (name?.trim()) await credentialsCreateFolder(node.id, name.trim());
+        setCredentialsEditing({ mode: 'create', parentId: node.id, initialValue: '' });
       } else if (item.id === 'new-credential') {
-        setCredentialsEntryId(null);
-        setCredentialsCreating(true);
+        setCredentialsEditing({ mode: 'create', parentId: node.id, initialValue: '.store' });
       } else if (item.id === 'open') {
         setCredentialsEntryId(node.id);
         setCredentialsCreating(false);
@@ -328,17 +418,24 @@ function IconButton({ icon, title, onClick }: { icon: string; title: string; onC
           await credentialsMoveNode(credentialsClipboard.nodeId, node.id);
           setCredentialsClipboard(null);
         }
+        setCredentialsRefreshKey((k) => k + 1);
       } else if (item.id === 'duplicate') {
         await credentialsCopyNode(node.id, node.id);
+        setCredentialsRefreshKey((k) => k + 1);
       } else if (item.id === 'rename') {
-        const current = node.label || '';
-        const name = window.prompt('New name', current);
-        if (name?.trim()) await credentialsRenameNode(node.id, name.trim());
+        setCredentialsEditing({
+          mode: 'rename',
+          nodeId: node.id,
+          parentId: node.data?.parentId ?? null,
+          initialValue: node.label,
+        });
       } else if (item.id === 'delete') {
         const ok = window.confirm('Delete this item?');
-        if (ok) await credentialsDeleteNode(node.id);
+        if (ok) {
+          await credentialsDeleteNode(node.id);
+          setCredentialsRefreshKey((k) => k + 1);
+        }
       }
-      setCredentialsRefreshKey((k) => k + 1);
       setCredentialsCtxMenu(null);
     } catch (e) {
       window.alert(e instanceof Error ? e.message : String(e));
@@ -363,7 +460,7 @@ function IconButton({ icon, title, onClick }: { icon: string; title: string; onC
         />
       ) : (
         <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--wg-descriptionForeground)", fontSize: 12 }}>
-          Select an entry from the vault, or click <strong style={{ margin: "0 4px" }}>New Credential</strong>.
+          Select an entry from the vault, or click <strong style={{ margin: "0 4px" }}>New File</strong>.
         </div>
       )
     ) : undefined;

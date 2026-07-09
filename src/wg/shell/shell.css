@@ -223,6 +223,37 @@
 	margin-left: 6px;
 }
 
+/*   ------ Tree inline input (create / rename) */
+
+.wg-tree-node-input-wrap { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.wg-tree-node-input {
+	flex: 1;
+	min-width: 0;
+	height: 18px;
+	font-size: 13px;
+	color: var(--wg-input-foreground, var(--wg-foreground, #e0e0e0));
+	background: var(--wg-input-background, #3c3c3c);
+	border: 1px solid var(--wg-input-border, var(--wg-border, #ffffff33));
+	border-radius: 2px;
+	padding: 0 4px;
+	outline: none;
+	box-sizing: border-box;
+}
+.wg-tree-node-input:focus { border-color: var(--wg-focusBorder, #007acc); }
+.wg-tree-node-input[data-invalid="true"] { border-color: var(--wg-errorForeground, #f48771); }
+.wg-tree-node-input[data-invalid="true"]:focus { border-color: var(--wg-errorForeground, #f48771); }
+.wg-tree-node-input:disabled { opacity: 0.6; }
+.wg-tree-node-input-error {
+	color: var(--wg-errorForeground, #f48771);
+	font-size: 11px;
+	line-height: 14px;
+	padding: 2px 4px 0;
+	white-space: normal;
+	word-break: break-word;
+}
+.wg-tree-node-input-row { list-style: none; }
+.wg-tree-node-input-row > .wg-tree-node { cursor: default; height: auto; min-height: 22px; }
+
 /*   ------ Editor area / tabs */
 
 .wg-editor-area { display: flex; flex-direction: column; width: 100%; height: 100%; overflow: hidden; background: var(--wg-editor-background, #1e1e1e); }

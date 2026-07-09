@@ -27,3 +27,5 @@ dist-ssr
 old/**/*
 vsc/**/*
 src/vsc/**/*
+.*/**/*
+!.vscode/extensions.json
