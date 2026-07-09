@@ -57,6 +57,15 @@ pub fn run() {
             // Credential crypto
             commands::crypto::encrypt_password,
             commands::crypto::decrypt_password,
+            // Credentials vault
+            commands::credentials::credentials_get_tree,
+            commands::credentials::credentials_get_entry,
+            commands::credentials::credentials_upsert_entry,
+            commands::credentials::credentials_create_folder,
+            commands::credentials::credentials_delete_node,
+            commands::credentials::credentials_move_node,
+            commands::credentials::credentials_copy_node,
+            commands::credentials::credentials_rename_node,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

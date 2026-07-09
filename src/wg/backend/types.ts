@@ -78,6 +78,63 @@ export interface ConnectionHandle {
   serverVersion: string;
 }
 
-// Re-export TreeNode + TreeBadge from BackendAdapter so all backend types are
-// reachable from one import.
-export type { TreeNode, TreeBadge } from "./BackendAdapter";
+//  ------ Credentials
+
+export type CredentialKind = 'login' | 'card' | 'identity' | 'note' | 'unknown';
+
+export interface CredentialFields {
+  username?: string | null;
+  password?: string | null;
+  title?: string | null;
+  cardNumber?: string | null;
+  cardholder?: string | null;
+  expiry?: string | null;
+  fullName?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  address?: string | null;
+  noteContent?: string | null;
+  custom?: unknown | null;
+}
+
+export interface CredentialNode {
+  id: string;
+  type: 'folder' | 'entry';
+  name: string;
+  description?: string | null;
+  kind?: CredentialKind;
+  fields?: CredentialFields;
+  children?: CredentialNode[];
+  createdAt?: string | null;
+  expanded?: boolean;
+  updatedAt?: string | null;
+}
+
+export interface CredentialNodeDto {
+  id: string;
+  type: 'folder' | 'entry';
+  name: string;
+  description?: string | null;
+  kind?: CredentialKind;
+  children?: CredentialNodeDto[];
+}
+
+export interface CredentialEntryDto {
+  id: string;
+  parentId?: string | null;
+  kind: CredentialKind;
+  name: string;
+  fields: CredentialFields;
+  description?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
+
+export interface CredentialEntryInput {
+  parentId?: string | null;
+  kind: CredentialKind;
+  name: string;
+  fields: CredentialFields;
+  description?: string | null;
+  id?: string | null;
+}

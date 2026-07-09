@@ -111,6 +111,12 @@ impl From<keyring::Error> for AppError {
     }
 }
 
+impl From<std::string::FromUtf8Error> for AppError {
+    fn from(value: std::string::FromUtf8Error) -> Self {
+        Self::new("external", value.to_string())
+    }
+}
+
 impl<T> From<std::sync::PoisonError<T>> for AppError {
     fn from(value: std::sync::PoisonError<T>) -> Self {
         Self::state(value.to_string())

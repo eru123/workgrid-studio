@@ -3,4 +3,5 @@
 
 pub mod connection;
 pub mod crypto;
+pub mod credentials;
 pub mod files;

@@ -158,3 +158,127 @@ pub struct ConnectionHandle {
 
 /// Opaque session id (a pinned connection for cross-command affinity).
 pub type SessionId = String;
+
+//  ------ Credentials store
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CredentialKind {
+    Login,
+    Card,
+    Identity,
+    Note,
+    Unknown,
+}
+
+impl std::fmt::Display for CredentialKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
+impl std::str::FromStr for CredentialKind {
+    type Err = ();
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s {
+            "login" => CredentialKind::Login,
+            "card" => CredentialKind::Card,
+            "identity" => CredentialKind::Identity,
+            "note" => CredentialKind::Note,
+            _ => CredentialKind::Unknown,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct CredentialFields {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub card_number: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cardholder: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expiry: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub full_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phone: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub address: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note_content: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum CredentialNode {
+    Folder {
+        id: String,
+        parent_id: Option<String>,
+        name: String,
+        description: Option<String>,
+        #[serde(default)]
+        expanded: bool,
+        #[serde(default)]
+        children: Vec<CredentialNode>,
+    },
+    Entry {
+        id: String,
+        parent_id: Option<String>,
+        kind: CredentialKind,
+        name: String,
+        fields: CredentialFields,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        description: Option<String>,
+        created_at: Option<String>,
+        updated_at: Option<String>,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CredentialNodeDto {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub node_type: String,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub kind: Option<String>,
+    #[serde(default)]
+    pub children: Option<Vec<CredentialNodeDto>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CredentialEntryDto {
+    pub id: String,
+    pub parent_id: Option<String>,
+    pub kind: String,
+    pub name: String,
+    pub fields: CredentialFields,
+    pub description: Option<String>,
+    pub created_at: Option<String>,
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CredentialEntryInput {
+    pub parent_id: Option<String>,
+    pub kind: String,
+    pub name: String,
+    pub fields: CredentialFields,
+    pub description: Option<String>,
+}

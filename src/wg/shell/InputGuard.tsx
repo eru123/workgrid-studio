@@ -14,6 +14,9 @@ export interface InputGuardProps {
 	disableContextMenu?: boolean;
 	/** Disable browser/web shortcuts globally. Default: true */
 	disableBrowserShortcuts?: boolean;
+	/** Allow context menu only inside these CSS selectors. When provided,
+		right-click is permitted when the event target matches any selector. */
+	allowedContextMenuSelectors?: readonly string[];
 }
 
 const EXEMPT_COMPONENTS = ["INPUT", "TEXTAREA"];
@@ -26,7 +29,12 @@ const EDITOR_SELECTORS = [
 	".tiptap",
 ];
 
-function isInteractive(target: EventTarget | null): boolean {
+function matchesAnySelector(target: HTMLElement | null, selectors: readonly string[] | undefined): boolean {
+		if (!selectors || selectors.length === 0) return false;
+		return selectors.some((sel) => target?.closest(sel));
+	}
+
+	function isInteractive(target: EventTarget | null): boolean {
 	if (!(target instanceof HTMLElement)) {
 		return false;
 	}
@@ -91,6 +99,7 @@ function isNavigationalShortcut(e: KeyboardEvent): boolean {
 export function InputGuard({
 	disableContextMenu = true,
 	disableBrowserShortcuts = true,
+	allowedContextMenuSelectors,
 }: InputGuardProps) {
 	const caretakerRef = useRef<HTMLDivElement | null>(null);
 
@@ -100,6 +109,9 @@ export function InputGuard({
 				return;
 			}
 			if (isInteractive(event.target)) {
+				return;
+			}
+			if (matchesAnySelector(event.target as HTMLElement, props.allowedContextMenuSelectors)) {
 				return;
 			}
 

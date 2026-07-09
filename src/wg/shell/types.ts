@@ -37,6 +37,8 @@ export interface ViewPaneDescriptor {
 	/** Optional custom render (host provides React nodes for non-tree panes). */
 	readonly render?: () => import('react').ReactNode;
 	readonly initiallyCollapsed?: boolean;
+	/** Optional toolbar actions rendered in the pane header. */
+	readonly headerActions?: import('react').ReactNode;
 }
 
 //  ------ Editor area / tabs

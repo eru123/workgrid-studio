@@ -81,6 +81,9 @@ export type { StatusBarProps } from './shell/StatusBar.js';
 export { Panel } from './shell/Panel.js';
 export type { PanelProps } from './shell/Panel.js';
 
+export { CredentialsEditor } from './shell/credentials/CredentialsEditor.js';
+export type { CredentialsEditorProps } from './shell/credentials/CredentialsEditor.js';
+
 export { CommandPalette } from './shell/CommandPalette.js';
 export type { CommandPaletteProps } from './shell/CommandPalette.js';
 
@@ -137,3 +140,8 @@ export type {
 	ConnectParams,
 	ConnectionHandle,
 } from './backend/types.js';
+
+export {
+	createCredentialsTreeBackend,
+} from './backend/credentialsTreeBackend.js';
+export { createWorkbenchBackend } from './backend/workbenchBackend.js';

@@ -16,9 +16,12 @@ export function ViewPane({ pane, defaultCollapsed }: ViewPaneProps) {
 	const [collapsed, setCollapsed] = useState(defaultCollapsed ?? pane.initiallyCollapsed ?? false);
 	return (
 		<div className="wg-viewpane" data-collapsed={collapsed}>
-			<div className="wg-viewpane-header" onClick={() => setCollapsed((c) => !c)}>
+			<div className="wg-viewpane-header" onClick={(e) => { if (!(e.target as HTMLElement).closest('.wg-viewpane-actions')) setCollapsed((c) => !c); }}>
 				<span className={`wg-twisty ${codiconClass(collapsed ? 'chevron-right' : 'chevron-down')}`} />
 				<span>{pane.title}</span>
+				{pane.headerActions ? (
+					<div className="wg-viewpane-actions" style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>{pane.headerActions}</div>
+				) : null}
 			</div>
 			<div className="wg-viewpane-body">
 				{pane.render ? pane.render() : pane.tree ? <Tree backend={pane.tree} /> : null}

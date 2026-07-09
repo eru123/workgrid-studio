@@ -37,10 +37,17 @@ export interface WorkbenchProps {
 	sidebarHeaderActions?: ReactNode;
 	defaultSidebarWidth?: number;
 
-	/** Editor area root group. */
+	/** Editor area root group. When undefined and editorOverride is set, the override is rendered instead. */
 	editorGroup?: EditorGroup;
 	onActivateTab?: (groupId: string, tabId: string) => void;
 	onCloseTab?: (groupId: string, tabId: string) => void;
+
+	/**
+	 * Optional fixed editor override rendered in place of the standard tabbed
+	 * editor area. Useful for views like Credentials that need full-width,
+	 * tab-less content.
+	 */
+	editorOverride?: ReactNode;
 
 	/** Bottom panel tabs; undefined/empty hides the panel. */
 	panelTabs?: readonly PanelTab[];
@@ -76,7 +83,7 @@ export function Workbench(props: WorkbenchProps) {
 		setPanelHeight((h) => Math.max(80, Math.min(600, h - delta)));
 	}, []);
 
-	const disableContextMenu = true;
+	const disableContextMenu = false;
 	const disableBrowserShortcuts = true;
 
 	return (
@@ -119,7 +126,9 @@ export function Workbench(props: WorkbenchProps) {
 				) : null}
 
 				<div className="wg-editor">
-					{props.editorGroup ? (
+					{props.editorOverride ? (
+						props.editorOverride
+					) : props.editorGroup ? (
 						<EditorArea
 							group={props.editorGroup}
 							onActivateTab={props.onActivateTab}
