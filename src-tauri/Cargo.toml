@@ -30,6 +30,16 @@ async-trait = "0.1"
 # Database drivers
 mysql_async = { version = "0.36", default-features = false, features = ["default-rustls"] }
 
+# PostgreSQL driver
+tokio-postgres = { version = "0.7", features = ["with-serde_json-1", "runtime"] }
+deadpool-postgres = "0.12"
+
+# SQLite driver (bundled C compile; needs MSVC on Windows)
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# SQL Server (MSSQL) driver
+tiberius = { version = "0.12", default-features = false, features = ["tokio", "rustls"] }
+
 # SSH tunneling (russh bundles key handling via russh::keys since 0.50)
 russh = "0.61"
 
@@ -42,4 +52,6 @@ keyring = "3"
 # Misc
 uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
+tokio-util = { version = "0.7", features = ["compat"] }
+futures-util = "0.3"
 
