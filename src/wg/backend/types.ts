@@ -116,6 +116,7 @@ export interface CredentialNodeDto {
   name: string;
   description?: string | null;
   kind?: CredentialKind;
+  parentId?: string | null;
   children?: CredentialNodeDto[];
 }
 

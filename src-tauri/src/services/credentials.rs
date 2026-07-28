@@ -31,29 +31,33 @@ pub struct CredentialNodeRedacted {
     pub description: Option<String>,
     #[serde(default)]
     pub kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<String>,
     #[serde(default)]
     pub children: Option<Vec<CredentialNodeRedacted>>,
 }
 
 impl CredentialNodeRedacted {
-    fn folder(id: String, name: String) -> Self {
+    fn folder(id: String, parent_id: Option<String>, name: String) -> Self {
         Self {
             id,
             node_type: "folder".to_string(),
             name,
             description: None,
             kind: None,
+            parent_id,
             children: Some(vec![]),
         }
     }
 
-    fn entry(id: String, kind: String, name: String, description: Option<String>) -> Self {
+    fn entry(id: String, parent_id: Option<String>, kind: String, name: String, description: Option<String>) -> Self {
         Self {
             id,
             node_type: "entry".to_string(),
             name,
             description,
             kind: Some(kind),
+            parent_id,
             children: Some(vec![]),
         }
     }
@@ -222,8 +226,9 @@ impl FlatStore {
             children: vec![],
         };
         self.nodes.insert(id.clone(), folder);
-        self.children.entry(target_parent).or_default().push(id.clone());
-        Ok(CredentialNodeRedacted::folder(id, trimmed))
+        self.children.entry(target_parent.clone()).or_default().push(id.clone());
+        let parent_id = if target_parent == "root" { None } else { Some(target_parent.clone()) };
+        Ok(CredentialNodeRedacted::folder(id, parent_id, trimmed))
     }
 
     fn move_node(&mut self, id: &str, target_parent: &str) -> AppResult<()> {
@@ -235,6 +240,11 @@ impl FlatStore {
         }
         if !self.nodes.contains_key(target_parent) {
             return Err(AppError::validation("target folder not found"));
+        }
+        // Cycle guard: refuse to move a folder into itself or any of its
+        // descendants (would orphan the moved subtree).
+        if id == target_parent || self.is_descendant(target_parent, id) {
+            return Err(AppError::validation("cannot move a folder into itself or its descendant"));
         }
 
         fn detach(children: &mut HashMap<String, Vec<String>>, target: &str) -> bool {
@@ -259,6 +269,75 @@ impl FlatStore {
 
         self.children.entry(target_parent.to_string()).or_default().push(id.to_string());
         Ok(())
+    }
+
+    /// Reorder (and optionally reparent) a node under `target_parent`,
+    /// inserting it before `before_id` when supplied, or appending to the end.
+    /// `before_id: None` means append at the end. Validates the target parent
+    /// exists, the node is not root, and `before_id` is a direct child of the
+    /// target parent when given.
+    fn reorder_node(&mut self, id: &str, target_parent: &str, before_id: Option<&str>) -> AppResult<()> {
+        if id == "root" {
+            return Err(AppError::validation("cannot reorder root"));
+        }
+        if !self.nodes.contains_key(id) {
+            return Err(AppError::validation("node not found"));
+        }
+        if !self.nodes.contains_key(target_parent) {
+            return Err(AppError::validation("target folder not found"));
+        }
+        if id == target_parent || self.is_descendant(target_parent, id) {
+            return Err(AppError::validation("cannot move a folder into itself or its descendant"));
+        }
+        if let Some(before) = before_id {
+            let is_child = self.children.get(target_parent)
+                .map(|list| list.iter().any(|x| x == before))
+                .unwrap_or(false);
+            if !is_child {
+                return Err(AppError::validation("before_id is not a child of the target parent"));
+            }
+        }
+
+        // Detach from current parent (or its current slot).
+        if let Some(list) = self.children.values_mut().find(|list| list.iter().any(|x| *x == id)) {
+            list.retain(|x| x != id);
+        }
+
+        if let Some(node) = self.nodes.get_mut(id) {
+            match node {
+                CredentialNode::Folder { parent_id, .. } => *parent_id = Some(target_parent.to_string()),
+                CredentialNode::Entry { parent_id, .. } => *parent_id = Some(target_parent.to_string()),
+            }
+        }
+
+        let list = self.children.entry(target_parent.to_string()).or_default();
+        match before_id {
+            Some(before) => {
+                if let Some(pos) = list.iter().position(|x| x == before) {
+                    list.insert(pos, id.to_string());
+                } else {
+                    list.push(id.to_string());
+                }
+            }
+            None => list.push(id.to_string()),
+        }
+        Ok(())
+    }
+
+    /// True when `candidate` is a descendant of `ancestor` (transitive).
+    fn is_descendant(&self, candidate: &str, ancestor: &str) -> bool {
+        let mut stack = vec![ancestor.to_string()];
+        while let Some(current) = stack.pop() {
+            if let Some(child_ids) = self.children.get(&current) {
+                for child_id in child_ids {
+                    if child_id == candidate {
+                        return true;
+                    }
+                    stack.push(child_id.clone());
+                }
+            }
+        }
+        false
     }
 
     fn copy_node(&mut self, id: &str, target_parent: &str) -> AppResult<CredentialNodeRedacted> {
@@ -310,10 +389,11 @@ impl FlatStore {
         self.children.entry(target_parent.to_string()).or_default().push(copy_id.clone());
         self.nodes.insert(copy_id.clone(), copy.clone());
 
+        let parent_id = if target_parent == "root" { None } else { Some(target_parent.to_string()) };
         Ok(match copy {
-            CredentialNode::Folder { id, name, .. } => CredentialNodeRedacted::folder(id.clone(), name.clone()),
+            CredentialNode::Folder { id, name, .. } => CredentialNodeRedacted::folder(id.clone(), parent_id, name.clone()),
             CredentialNode::Entry { id, kind, name, description, .. } => {
-                CredentialNodeRedacted::entry(id.clone(), kind.to_string(), name.clone(), description.clone())
+                CredentialNodeRedacted::entry(id.clone(), parent_id, kind.to_string(), name.clone(), description.clone())
             }
         })
     }
@@ -333,9 +413,13 @@ impl FlatStore {
             CredentialNode::Entry { name, .. } => *name = trimmed.to_string(),
         }
         Ok(match node {
-            CredentialNode::Folder { id, name, .. } => CredentialNodeRedacted::folder(id.clone(), name.clone()),
-            CredentialNode::Entry { id, kind, name, description, .. } => {
-                CredentialNodeRedacted::entry(id.clone(), kind.to_string(), name.clone(), description.clone())
+            CredentialNode::Folder { id, parent_id, name, .. } => {
+                let pid = parent_id.as_ref().filter(|p| p.as_str() != "root").cloned();
+                CredentialNodeRedacted::folder(id.clone(), pid, name.clone())
+            }
+            CredentialNode::Entry { id, parent_id, kind, name, description, .. } => {
+                let pid = parent_id.as_ref().filter(|p| p.as_str() != "root").cloned();
+                CredentialNodeRedacted::entry(id.clone(), pid, kind.to_string(), name.clone(), description.clone())
             }
         })
     }
@@ -344,20 +428,23 @@ impl FlatStore {
         if id == "root" {
             return Err(AppError::validation("cannot delete root"));
         }
+        if !self.nodes.contains_key(id) {
+            return Err(AppError::validation("node not found"));
+        }
+        // Depth-first removal via the flat children map. The previous impl
+        // recursed through CredentialNode::Folder.children, which is unused in
+        // the flat store, so subfolders were never deleted.
         let mut stack: Vec<String> = vec![id.to_string()];
         while let Some(current) = stack.pop() {
-            if let Some(node) = self.nodes.get(current.as_str()) {
-                if let CredentialNode::Folder { children, .. } = node {
-                    for child in children {
-                        if let CredentialNode::Folder { id, .. } = child {
-                            stack.push(id.clone());
-                        }
-                    }
+            if let Some(child_ids) = self.children.get(&current).cloned() {
+                for child_id in child_ids {
+                    stack.push(child_id);
                 }
             }
-            self.nodes.remove(current.as_str());
+            self.children.remove(&current);
+            self.nodes.remove(&current);
         }
-
+        // Detach the top-level id from any remaining children lists.
         self.children.values_mut().for_each(|list| {
             list.retain(|x| x != id);
         });
@@ -370,14 +457,17 @@ impl FlatStore {
             if let Some(ids) = children.get(id) {
                 for child_id in ids {
                     if let Some(node) = nodes.get(child_id) {
+                        // Roots (direct children of "root") report no parent so
+                        // the frontend can place them at the top level.
+                        let parent_id = if id == "root" { None } else { Some(id.to_string()) };
                         match node {
                             CredentialNode::Folder { id, name, .. } => {
-                                let mut dto = CredentialNodeRedacted::folder(id.clone(), name.clone());
+                                let mut dto = CredentialNodeRedacted::folder(id.clone(), parent_id, name.clone());
                                 dto.children = Some(redact(nodes, children, id));
                                 out.push(dto);
                             }
                             CredentialNode::Entry { id, kind, name, description, .. } => {
-                                out.push(CredentialNodeRedacted::entry(id.clone(), kind.to_string(), name.clone(), description.clone()));
+                                out.push(CredentialNodeRedacted::entry(id.clone(), parent_id, kind.to_string(), name.clone(), description.clone()));
                             }
                         }
                     }
@@ -595,6 +685,16 @@ impl CredentialService {
     pub async fn move_node(&self, id: &str, target_parent: &str) -> AppResult<()> {
         let mut store = self.store.write().await;
         store.move_node(id, target_parent)?;
+        drop(store);
+        self.persist().await?;
+        Ok(())
+    }
+
+    /// Reorder a node under `target_parent`, inserting before `before_id`
+    /// (when `Some`) or appending at the end (when `None`).
+    pub async fn reorder_node(&self, id: &str, target_parent: &str, before_id: Option<&str>) -> AppResult<()> {
+        let mut store = self.store.write().await;
+        store.reorder_node(id, target_parent, before_id)?;
         drop(store);
         self.persist().await?;
         Ok(())

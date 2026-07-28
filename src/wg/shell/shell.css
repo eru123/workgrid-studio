@@ -254,6 +254,23 @@
 .wg-tree-node-input-row { list-style: none; }
 .wg-tree-node-input-row > .wg-tree-node { cursor: default; height: auto; min-height: 22px; }
 
+/* Multi-selection (Ctrl/Shift-click). The anchor/active node keeps the active
+   background; additional selected nodes use the inactive selection color. */
+.wg-tree-node[data-selected] { background: var(--wg-list-inactiveSelectionBackground, #37373d); }
+.wg-tree-node[data-active="true"][data-selected] {
+	background: var(--wg-list-activeSelectionBackground, #094771);
+	color: var(--wg-list-activeSelectionForeground, #ffffff);
+}
+
+/* Drag-and-drop drop indicators. before/after draw an insertion line at the
+   top/bottom edge; into outlines the folder as a drop target. */
+.wg-tree-node[data-dropping="before"] { box-shadow: inset 0 2px 0 0 var(--wg-focusBorder, #007acc); }
+.wg-tree-node[data-dropping="after"] { box-shadow: inset 0 -2px 0 0 var(--wg-focusBorder, #007acc); }
+.wg-tree-node[data-dropping="into"] { outline: 1px solid var(--wg-focusBorder, #007acc); outline-offset: -1px; }
+.wg-tree[data-drag-over-root] { outline: 1px dashed var(--wg-focusBorder, #007acc); outline-offset: -2px; }
+.wg-tree-node[draggable="true"] { cursor: grab; }
+.wg-tree-node[draggable="true"]:active { cursor: grabbing; }
+
 /*   ------ Editor area / tabs */
 
 .wg-editor-area { display: flex; flex-direction: column; width: 100%; height: 100%; overflow: hidden; background: var(--wg-editor-background, #1e1e1e); }

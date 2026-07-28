@@ -51,6 +51,19 @@ pub async fn credentials_move_node(
     store.move_node(&id, &target_parent).await
 }
 
+/// Reorder a node under `target_parent`, inserting it before `before_id`
+/// (when supplied) or appending at the end. Reparents when the target parent
+/// differs from the current one.
+#[tauri::command]
+pub async fn credentials_reorder_node(
+    store: State<'_, CredentialService>,
+    id: String,
+    target_parent: String,
+    before_id: Option<String>,
+) -> AppResult<()> {
+    store.reorder_node(&id, &target_parent, before_id.as_deref()).await
+}
+
 /// Copy a node to a new parent folder.
 #[tauri::command]
 pub async fn credentials_copy_node(

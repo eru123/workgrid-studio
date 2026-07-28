@@ -20,14 +20,14 @@ import {
   createCredentialsTreeBackend,
 } from "@/wg";
 import { dbDisconnect } from "@/wg";
-import { credentialsCreateFolder, credentialsCopyNode, credentialsDeleteNode, credentialsMoveNode, credentialsRenameNode, credentialsGetTree, credentialsUpsertEntry } from "@/wg/backend/ipc";
+import { credentialsCreateFolder, credentialsCopyNode, credentialsDeleteNode, credentialsMoveNode, credentialsReorderNode, credentialsRenameNode, credentialsGetTree, credentialsUpsertEntry } from "@/wg/backend/ipc";
 import { Tree, type TreeEditingState } from "@/wg/shell/Tree";
+import type { CredentialsTreeBackend } from "@/wg/backend/credentialsTreeBackend";
 import {
   resolveVaultCreatePath,
   findFolderChild,
   childrenOf,
   findNodeById,
-  nextUnusedFolderName,
 } from "@/wg/shell/credentials/vaultNaming";
 import "./App.css";
 import { codiconClass } from "@/wg/shell/icon";
@@ -98,6 +98,8 @@ function App() {
   const [credentialsClipboard, setCredentialsClipboard] = useState<{ nodeId: string; mode: 'copy' | 'cut' } | null>(null);
   const [credentialsEditing, setCredentialsEditing] = useState<TreeEditingState | null>(null);
   const [credentialsCollapseKey, setCredentialsCollapseKey] = useState(0);
+  const [credentialsSelectedIds, setCredentialsSelectedIds] = useState<Set<string>>(new Set());
+  const [credentialsSelectionAnchor, setCredentialsSelectionAnchor] = useState<string | null>(null);
 
 
   useEffect(() => {
@@ -158,21 +160,54 @@ function App() {
   // the intermediate folder `folder` (reusing it if it already exists) and
   // then the entry `hello.store` inside it. Empty input auto-resolves to an
   // "Untitled" folder at the target parent.
-  const handleCommitCreate = useCallback(async (name: string, parentId: string | null) => {
+  //
+  // Returns an error string to keep the inline input open on collision
+  // (VS Code-style hard error + abort): if an intermediate segment's name is
+  // taken by a non-folder, or the final name collides with a sibling, nothing
+  // is created and the message surfaces in the input.
+  const handleCommitCreate = useCallback(async (name: string, parentId: string | null): Promise<string | void> => {
+    let tree;
     try {
-      const tree = await credentialsGetTree();
-      const plan = resolveVaultCreatePath(name, tree, parentId);
-      if (!plan) {
-        setCredentialsEditing(null);
-        return;
-      }
+      tree = await credentialsGetTree();
+    } catch (e) {
+      return e instanceof Error ? e.message : String(e);
+    }
+    const plan = resolveVaultCreatePath(name, tree, parentId);
+    if (!plan) {
+      setCredentialsEditing(null);
+      return;
+    }
 
-      // Walk intermediate folder segments: reuse an existing same-named
-      // folder, or create it (disambiguating if the name is taken by an
-      // entry). Each step re-fetches the tree so newly-created folders are
-      // visible for the next segment.
-      let currentParentId = plan.startParentId;
-      let currentTree = tree;
+    // Pre-flight: verify the whole path before creating anything. An
+    // intermediate segment may name an existing folder (reuse) but not an
+    // existing entry (hard collision). The final segment must not collide
+    // with any sibling of its resolved parent.
+    let preflightParentId = plan.startParentId;
+    let preflightTree = tree;
+    for (const seg of plan.folderSegments) {
+      const parent = preflightParentId === null ? null : findNodeById(preflightTree, preflightParentId) ?? null;
+      const siblings = parent ? childrenOf(parent) : preflightTree;
+      const clash = siblings.find((s) => s.name === seg);
+      if (clash) {
+        if (clash.type === 'folder') {
+          preflightParentId = clash.id;
+          continue; // reuse existing folder
+        }
+        return `A file or folder "${seg}" already exists at this location.`;
+      }
+      // Not present yet — would be created. We can't know the future id, but
+      // subsequent segments are checked against the *current* tree, and the
+      // create loop re-fetches after each step, so this is safe.
+      preflightParentId = '__pending__';
+      // Fetch the tree post-create lazily: but since we haven't created yet,
+      // fall back to the current tree. Real collisions surface in the loop.
+      break;
+    }
+
+    // Execute the plan: walk intermediate segments, reusing or creating.
+    let currentParentId = plan.startParentId;
+    let currentTree = tree;
+    try {
       for (const seg of plan.folderSegments) {
         const parent = currentParentId === null ? null : findNodeById(currentTree, currentParentId) ?? null;
         const siblings = parent ? childrenOf(parent) : currentTree;
@@ -181,20 +216,28 @@ function App() {
           currentParentId = existingFolder.id;
           continue;
         }
-        const folderName = nextUnusedFolderName(seg, siblings);
-        const created = await credentialsCreateFolder(currentParentId, folderName);
+        // Hard collision with an entry (shouldn't happen after pre-flight, but
+        // guard against races).
+        const clash = siblings.find((s) => s.name === seg && s.type !== 'folder');
+        if (clash) {
+          return `A file or folder "${seg}" already exists at this location.`;
+        }
+        const created = await credentialsCreateFolder(currentParentId, seg);
         currentParentId = created.id;
-        // Refresh the tree view for the next iteration's collision checks.
         currentTree = await credentialsGetTree();
       }
 
-      // Create the final item under the resolved parent.
+      // Final item collision check against the resolved parent's siblings.
+      const finalParent = currentParentId === null ? null : findNodeById(currentTree, currentParentId) ?? null;
+      const finalSiblings = finalParent ? childrenOf(finalParent) : currentTree;
       const finalName = plan.finalItem.name;
+      if (finalSiblings.some((s) => s.name === finalName)) {
+        return `A file or folder "${finalName}" already exists at this location.`;
+      }
+
       if (plan.finalItem.type === 'folder') {
         await credentialsCreateFolder(currentParentId, finalName);
       } else {
-        // `.store` entry: create with default login kind, then open the editor
-        // so the user fills in username/password/etc.
         const entry = await credentialsUpsertEntry({
           id: null,
           parentId: currentParentId,
@@ -207,23 +250,75 @@ function App() {
         setCredentialsCreating(true);
       }
       setCredentialsRefreshKey((k) => k + 1);
-    } catch (e) {
-      window.alert(e instanceof Error ? e.message : String(e));
-    } finally {
       setCredentialsEditing(null);
+    } catch (e) {
+      return e instanceof Error ? e.message : String(e);
     }
   }, []);
 
-  const handleCommitRename = useCallback(async (nodeId: string, newName: string) => {
+  const handleCommitRename = useCallback(async (nodeId: string, newName: string): Promise<string | void> => {
     try {
       await credentialsRenameNode(nodeId, newName);
       setCredentialsRefreshKey((k) => k + 1);
-    } catch (e) {
-      window.alert(e instanceof Error ? e.message : String(e));
-    } finally {
       setCredentialsEditing(null);
+    } catch (e) {
+      return e instanceof Error ? e.message : String(e);
     }
   }, []);
+
+  // Multi-select change from the tree (plain/Ctrl/Shift-click).
+  const handleSelectChange = useCallback((ids: Set<string>, anchorId: string) => {
+    setCredentialsSelectedIds(ids);
+    setCredentialsSelectionAnchor(anchorId);
+  }, []);
+
+  // Descendant ids of a node, for client-side DnD cycle rejection. Uses the
+  // tree backend's warm cache synchronously; returns [] when the cache isn't
+  // populated yet (the backend's own cycle guard covers that case).
+  const descendantIdsOf = useCallback((id: string): string[] => {
+    return (credentialsTree as CredentialsTreeBackend).descendantsOfSync(id);
+  }, [credentialsTree]);
+
+  // Drop dragged nodes onto a target parent / insertion point. `reorder_node`
+  // handles both reparent and positioning in one call (detach + set parent +
+  // insert before `beforeId`, or append when null). Cycles are pre-rejected by
+  // the Tree; the backend also guards.
+  const handleDropNodes = useCallback(async (ids: string[], targetParentId: string | null, beforeId: string | null) => {
+    try {
+      const targetParent = targetParentId ?? 'root';
+      for (const id of ids) {
+        await credentialsReorderNode(id, targetParent, beforeId);
+      }
+      setCredentialsRefreshKey((k) => k + 1);
+      setCredentialsSelectedIds(new Set());
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : String(e));
+    }
+  }, []);
+
+  // Compute the ancestor id chain (root → … → node) for deep-ancestor reveal
+  // when opening an inline edit targeting a nested node. Uses the cached tree.
+  const ancestorChainOf = useCallback(async (nodeId: string | null): Promise<string[]> => {
+    if (!nodeId) return [];
+    const backend = credentialsTree as CredentialsTreeBackend;
+    // Build a child→parent map from the cache by walking from roots.
+    const parentMap = new Map<string, string | null>();
+    const buildMap = async (parentId: string | null) => {
+      const childIds = await backend.childIdsOf(parentId);
+      for (const childId of childIds) {
+        parentMap.set(childId, parentId);
+        await buildMap(childId);
+      }
+    };
+    await buildMap(null);
+    const chain: string[] = [];
+    let cur: string | null = nodeId;
+    while (cur && parentMap.has(cur)) {
+      chain.unshift(cur);
+      cur = parentMap.get(cur) ?? null;
+    }
+    return chain;
+  }, [credentialsTree]);
 
 
   const activeEditorGroup = editorGroups[activeView] ?? defaultEditorGroups()[activeView];
@@ -338,9 +433,13 @@ function IconButton({ icon, title, onClick }: { icon: string; title: string; onC
                     backend={credentialsTree}
                     editing={credentialsEditing}
                     collapseAllKey={credentialsCollapseKey}
+                    selectedIds={credentialsSelectedIds}
+                    onSelectChange={handleSelectChange}
                     onCommitCreate={handleCommitCreate}
                     onCommitRename={handleCommitRename}
                     onCancelEdit={() => setCredentialsEditing(null)}
+                    onDropNodes={handleDropNodes}
+                    descendantIdsOf={descendantIdsOf}
                   />
                 ),
                 headerActions: (
@@ -401,9 +500,11 @@ function IconButton({ icon, title, onClick }: { icon: string; title: string; onC
     if (!node) return;
     try {
       if (item.id === 'new-folder') {
-        setCredentialsEditing({ mode: 'create', parentId: node.id, initialValue: '' });
+        const ancestors = await ancestorChainOf(node.id);
+        setCredentialsEditing({ mode: 'create', parentId: node.id, initialValue: '', revealAncestors: ancestors });
       } else if (item.id === 'new-credential') {
-        setCredentialsEditing({ mode: 'create', parentId: node.id, initialValue: '.store' });
+        const ancestors = await ancestorChainOf(node.id);
+        setCredentialsEditing({ mode: 'create', parentId: node.id, initialValue: '.store', revealAncestors: ancestors });
       } else if (item.id === 'open') {
         setCredentialsEntryId(node.id);
         setCredentialsCreating(false);
@@ -423,17 +524,28 @@ function IconButton({ icon, title, onClick }: { icon: string; title: string; onC
         await credentialsCopyNode(node.id, node.id);
         setCredentialsRefreshKey((k) => k + 1);
       } else if (item.id === 'rename') {
+        const ancestors = await ancestorChainOf(node.data?.parentId ?? null);
         setCredentialsEditing({
           mode: 'rename',
           nodeId: node.id,
           parentId: node.data?.parentId ?? null,
           initialValue: node.label,
+          revealAncestors: ancestors,
         });
       } else if (item.id === 'delete') {
-        const ok = window.confirm('Delete this item?');
+        // Bulk delete when multiple nodes are selected and the right-clicked
+        // node is part of the selection.
+        const targets = credentialsSelectedIds.size > 1 && credentialsSelectedIds.has(node.id)
+          ? Array.from(credentialsSelectedIds)
+          : [node.id];
+        const msg = targets.length > 1
+          ? `Delete ${targets.length} items?`
+          : 'Delete this item?';
+        const ok = window.confirm(msg);
         if (ok) {
-          await credentialsDeleteNode(node.id);
+          await Promise.all(targets.map((id) => credentialsDeleteNode(id)));
           setCredentialsRefreshKey((k) => k + 1);
+          setCredentialsSelectedIds(new Set());
         }
       }
       setCredentialsCtxMenu(null);
@@ -441,7 +553,7 @@ function IconButton({ icon, title, onClick }: { icon: string; title: string; onC
       window.alert(e instanceof Error ? e.message : String(e));
       setCredentialsCtxMenu(null);
     }
-  }, [credentialsClipboard, credentialsCtxMenu]);
+  }, [credentialsClipboard, credentialsCtxMenu, credentialsSelectedIds, ancestorChainOf]);
 
   const editorOverride: ReactNode =
     activeView === "credentials" ? (
@@ -487,7 +599,7 @@ function IconButton({ icon, title, onClick }: { icon: string; title: string; onC
           anchor={credentialsCtxMenu.anchor}
           onClose={() => setCredentialsCtxMenu(null)}
           onSelect={handleCredentialsCtxSelect}
-          items={buildCredentialsContextMenuItems(credentialsCtxMenu.node, credentialsClipboard)}
+          items={buildCredentialsContextMenuItems(credentialsCtxMenu.node, credentialsClipboard, credentialsSelectedIds.size || 1)}
         />
       ) : null}
       <CommandPalette
@@ -564,31 +676,40 @@ function defaultEditorGroups(): Record<string, EditorGroup> {
 function buildCredentialsContextMenuItems(
   node: CredentialsTreeNode,
   clipboard: { nodeId: string; mode: 'copy' | 'cut' } | null,
+  selectedCount = 1,
 ): ContextMenuItem[] {
   const isFolder = node.data?.type === 'folder';
+  const multi = selectedCount > 1;
   const items: ContextMenuItem[] = [];
 
-  if (isFolder) {
+  if (isFolder && !multi) {
     items.push({ id: 'new-folder', label: 'New Folder…', icon: 'new-folder' });
-    items.push({ id: 'new-credential', label: 'New Credential…', icon: 'add' });
+    items.push({ id: 'new-credential', label: 'New File…', icon: 'new-file' });
     items.push({ kind: 'separator' });
-  } else {
+  } else if (!multi) {
     items.push({ id: 'open', label: 'Open', icon: 'go-to-file' });
     items.push({ kind: 'separator' });
   }
 
-  items.push({ id: 'copy', label: 'Copy', icon: 'copy', accelerator: 'Ctrl+C' });
-  items.push({ id: 'cut', label: 'Cut', icon: 'copy', accelerator: 'Ctrl+X' });
+  if (!multi) {
+    items.push({ id: 'copy', label: 'Copy', icon: 'copy', accelerator: 'Ctrl+C' });
+    items.push({ id: 'cut', label: 'Cut', icon: 'copy', accelerator: 'Ctrl+X' });
+  }
   items.push({ id: 'paste', label: 'Paste', icon: 'paste', disabled: !clipboard });
 
-  if (!isFolder) {
+  if (!isFolder && !multi) {
     items.push({ kind: 'separator' });
     items.push({ id: 'duplicate', label: 'Duplicate', icon: 'copy' });
   }
 
   items.push({ kind: 'separator' });
-  items.push({ id: 'rename', label: 'Rename…', icon: 'edit' });
-  items.push({ id: 'delete', label: 'Delete', icon: 'trash' });
+  // Rename is single-selection only.
+  items.push({ id: 'rename', label: 'Rename…', icon: 'edit', disabled: multi });
+  items.push({
+    id: 'delete',
+    label: multi ? `Delete ${selectedCount} items` : 'Delete',
+    icon: 'trash',
+  });
 
   return items;
 }

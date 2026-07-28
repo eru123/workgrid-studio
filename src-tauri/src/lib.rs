@@ -64,6 +64,7 @@ pub fn run() {
             commands::credentials::credentials_create_folder,
             commands::credentials::credentials_delete_node,
             commands::credentials::credentials_move_node,
+            commands::credentials::credentials_reorder_node,
             commands::credentials::credentials_copy_node,
             commands::credentials::credentials_rename_node,
         ])

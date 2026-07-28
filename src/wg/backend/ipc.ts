@@ -126,6 +126,15 @@ export function credentialsMoveNode(id: string, targetParent: string): Promise<v
   return invoke<void>('credentials_move_node', { id, targetParent });
 }
 
+/**
+ * Reorder a node under `targetParent`, inserting before `beforeId` (when
+ * supplied) or appending at the end. Reparents when the target parent differs
+ * from the current one.
+ */
+export function credentialsReorderNode(id: string, targetParent: string, beforeId?: string | null): Promise<void> {
+  return invoke<void>('credentials_reorder_node', { id, targetParent, beforeId: beforeId ?? null });
+}
+
 
 export function credentialsRenameNode(id: string, newName: string): Promise<CredentialNodeDto> {
   return invoke<CredentialNodeDto>('credentials_rename_node', { id, newName });

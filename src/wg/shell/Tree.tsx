@@ -5,11 +5,11 @@
 // remain available (base/browser/ui/tree) for hosts that need their
 // virtualization/features — import them directly.
 //
-// Inline create/rename editing (VS Code explorer style) is opt-in via the
-// `editing` / `onCommitCreate` / `onCommitRename` / `onCancelEdit` props. When
-// `editing` is omitted the tree renders read-only, exactly as before.
+// Inline create/rename editing (VS Code explorer style), multi-select,
+// drag-and-drop reparent/reorder, and deep-ancestor reveal are opt-in via the
+// matching props. When omitted the tree renders read-only, exactly as before.
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { TreeBackend, TreeNode } from '../backend/BackendAdapter.js';
 import { codiconClass } from './icon.js';
 import { validateVaultItemName } from './credentials/vaultNaming.js';
@@ -26,12 +26,25 @@ export interface TreeProps {
 	 * only changes to it fire the collapse.
 	 */
 	collapseAllKey?: number;
-	/** Commit a create (inline input submitted). Resolve type from the name. */
-	onCommitCreate?: (name: string, parentId: string | null) => Promise<void> | void;
-	/** Commit a rename (inline input submitted). */
-	onCommitRename?: (nodeId: string, newName: string) => Promise<void> | void;
+	/** Currently selected node ids (multi-select). Omit for single-select-by-click. */
+	selectedIds?: ReadonlySet<string>;
+	/** Selection changed (plain click replaces; Ctrl toggles; Shift ranges). */
+	onSelectChange?: (ids: Set<string>, anchorId: string) => void;
+	/** Commit a create (inline input submitted). A returned string is an error
+	 *  message shown in the input without closing it; `void`/`undefined` closes. */
+	onCommitCreate?: (name: string, parentId: string | null) => Promise<string | void> | string | void;
+	/** Commit a rename (inline input submitted). Same error-string contract. */
+	onCommitRename?: (nodeId: string, newName: string) => Promise<string | void> | string | void;
 	/** Cancel the active edit (Escape). */
 	onCancelEdit?: () => void;
+	/** Drop dragged nodes. `beforeId` inserts before that sibling; null appends. */
+	onDropNodes?: (ids: string[], targetParentId: string | null, beforeId: string | null) => Promise<void> | void;
+	/**
+	 * Returns the ids of a node's descendants (for DnD cycle rejection).
+	 * Optional; when omitted DnD still works but cycles are only caught by the
+	 * backend's own guard. Recommended to supply for instant UI rejection.
+	 */
+	descendantIdsOf?: (id: string) => string[];
 }
 
 /** Describes an inline edit session in the tree. */
@@ -43,6 +56,12 @@ export interface TreeEditingState {
 	parentId: string | null;
 	/** Initial input value (e.g. '' for a new folder, '.store' for a new entry). */
 	initialValue?: string;
+	/**
+	 * Ancestor ids (root → … → parent) to expand + lazy-load in sequence so a
+	 * deeply-nested inline edit is revealed even when all ancestors are
+	 * collapsed. Optional; only needed for non-root targets.
+	 */
+	revealAncestors?: string[];
 }
 
 interface NodeState {
@@ -51,10 +70,29 @@ interface NodeState {
 	loading: boolean;
 }
 
-export function Tree({ backend, rootNodes, editing, collapseAllKey, onCommitCreate, onCommitRename, onCancelEdit }: TreeProps) {
+/** Drop position computed from the pointer Y within a node row. */
+type DropPos = 'before' | 'into' | 'after';
+
+const DRAG_MIME = 'application/x-wg-tree-ids';
+
+export function Tree({
+	backend,
+	rootNodes,
+	editing,
+	collapseAllKey,
+	selectedIds,
+	onSelectChange,
+	onCommitCreate,
+	onCommitRename,
+	onCancelEdit,
+	onDropNodes,
+	descendantIdsOf,
+}: TreeProps) {
 	const [roots, setRoots] = useState<readonly TreeNode[]>(rootNodes ?? []);
 	const [states, setStates] = useState<Map<string, NodeState>>(new Map());
 	const [activeId, setActiveId] = useState<string | undefined>();
+	const [dragOver, setDragOver] = useState<{ id: string | null; pos: DropPos } | null>(null);
+	const selectionAnchor = useRef<string | null>(null);
 
 	useEffect(() => {
 		if (rootNodes) {
@@ -70,6 +108,21 @@ export function Tree({ backend, rootNodes, editing, collapseAllKey, onCommitCrea
 		return () => { cancelled = true; };
 	}, [backend, rootNodes]);
 
+	// Lazy-load children for a node id (used by toggle + reveal). Resolves the
+	// parent TreeNode from the current rendered tree so the backend seam works.
+	const loadChildren = useCallback(async (parentId: string) => {
+		if (!backend) return;
+		const parent = findRenderedNode(roots, states, parentId);
+		if (!parent) return;
+		const children = await Promise.resolve(backend.getChildren(parent));
+		setStates((p) => {
+			const n = new Map(p);
+			const existing = n.get(parentId) ?? { expanded: false, children: [], loading: false };
+			n.set(parentId, { ...existing, children, loading: false, expanded: true });
+			return n;
+		});
+	}, [backend, roots, states]);
+
 	const toggle = useCallback((node: TreeNode) => {
 		if (!node.collapsible) {
 			return;
@@ -78,7 +131,6 @@ export function Tree({ backend, rootNodes, editing, collapseAllKey, onCommitCrea
 			const next = new Map(prev);
 			const cur = next.get(node.id) ?? { expanded: false, children: [], loading: false };
 			const willExpand = !cur.expanded;
-			next.set(node.id, { ...cur, expanded: willExpand });
 			if (willExpand && cur.children.length === 0 && backend) {
 				next.set(node.id, { ...cur, expanded: true, loading: true });
 				Promise.resolve(backend.getChildren(node)).then((children) => {
@@ -89,50 +141,42 @@ export function Tree({ backend, rootNodes, editing, collapseAllKey, onCommitCrea
 						return n;
 					});
 				});
+			} else {
+				next.set(node.id, { ...cur, expanded: willExpand });
 			}
 			return next;
 		});
 	}, [backend]);
 
-	const handleActivate = useCallback((node: TreeNode) => {
-		setActiveId(node.id);
-		backend?.onActivate?.(node);
-	}, [backend]);
-
-	// Auto-expand + lazy-load the parent of an inline create so the input row
-	// is visible. Runs when `editing` starts targeting a non-root parent.
+	// Deep-ancestor reveal: expand + lazy-load the full chain in order so an
+	// inline edit targeting a deeply-nested collapsed folder is visible.
 	useEffect(() => {
-		if (!editing || editing.mode !== 'create' || editing.parentId === null) {
+		if (!editing || !editing.revealAncestors || editing.revealAncestors.length === 0) {
 			return;
 		}
-		const parentId = editing.parentId;
-		setStates((prev) => {
-			const cur = prev.get(parentId);
-			if (!cur || cur.expanded) {
-				return prev; // already expanded (or unknown — nothing to do here)
-			}
-			const next = new Map(prev);
-			next.set(parentId, { ...cur, expanded: true, loading: cur.children.length === 0 });
-			if (cur.children.length === 0 && backend) {
-				const parent = roots.find((r) => r.id === parentId);
-				if (parent) {
-					Promise.resolve(backend.getChildren(parent)).then((children) => {
-						setStates((p) => {
-							const n = new Map(p);
-							const existing = n.get(parentId)!;
-							n.set(parentId, { ...existing, children, loading: false });
-							return n;
-						});
-					});
+		let cancelled = false;
+		(async () => {
+			for (const ancestorId of editing.revealAncestors!) {
+				if (cancelled) return;
+				const cur = states.get(ancestorId);
+				if (cur && cur.expanded && cur.children.length > 0) {
+					continue;
 				}
+				// Expand synchronously (optimistic) then load.
+				setStates((prev) => {
+					const n = new Map(prev);
+					const existing = n.get(ancestorId) ?? { expanded: false, children: [], loading: false };
+					n.set(ancestorId, { ...existing, expanded: true, loading: existing.children.length === 0 });
+					return n;
+				});
+				await loadChildren(ancestorId);
 			}
-			return next;
-		});
-	}, [editing, backend, roots]);
+		})();
+		return () => { cancelled = true; };
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [editing?.revealAncestors]);
 
-	// Collapse every expanded node when `collapseAllKey` changes. The key is
-	// only a trigger — its value is meaningless; a change clears all expansion
-	// state (children are dropped so a re-expand lazy-loads them again).
+	// Collapse every expanded node when `collapseAllKey` changes.
 	useEffect(() => {
 		if (collapseAllKey === undefined) {
 			return;
@@ -166,20 +210,138 @@ export function Tree({ backend, rootNodes, editing, collapseAllKey, onCommitCrea
 		return names;
 	}, [roots, states]);
 
+	// Flattened visible node order (for Shift-click range selection).
+	const visibleOrder = useMemo(() => collectVisibleIds(roots, states), [roots, states]);
+
+	const handleNodeClick = useCallback((node: TreeNode, e: React.MouseEvent) => {
+		if (node.collapsible && !(e.metaKey || e.ctrlKey || e.shiftKey)) {
+			toggle(node);
+		}
+		setActiveId(node.id);
+		backend?.onActivate?.(node);
+		if (!onSelectChange) return;
+		if (e.shiftKey && selectionAnchor.current) {
+			const a = visibleOrder.indexOf(selectionAnchor.current);
+			const b = visibleOrder.indexOf(node.id);
+			if (a >= 0 && b >= 0) {
+				const [lo, hi] = a < b ? [a, b] : [b, a];
+				const range = new Set(visibleOrder.slice(lo, hi + 1));
+				onSelectChange(range, selectionAnchor.current);
+			} else {
+				onSelectChange(new Set([node.id]), node.id);
+				selectionAnchor.current = node.id;
+			}
+		} else if (e.metaKey || e.ctrlKey) {
+			const next = new Set(selectedIds ?? []);
+			if (next.has(node.id)) next.delete(node.id); else next.add(node.id);
+			onSelectChange(next, node.id);
+			selectionAnchor.current = node.id;
+		} else {
+			onSelectChange(new Set([node.id]), node.id);
+			selectionAnchor.current = node.id;
+		}
+	}, [backend, toggle, onSelectChange, selectedIds, visibleOrder]);
+
+	// ---- Drag & drop -------------------------------------------------------
+	const handleDragStart = useCallback((e: React.DragEvent, node: TreeNode) => {
+		// Drag the current selection if it includes the dragged node, else just
+		// the dragged node.
+		const sel = selectedIds && selectedIds.has(node.id) && selectedIds.size > 0
+			? Array.from(selectedIds)
+			: [node.id];
+		e.dataTransfer.setData(DRAG_MIME, JSON.stringify(sel));
+		e.dataTransfer.effectAllowed = 'move';
+	}, [selectedIds]);
+
+	const computeDropPos = (e: React.DragEvent, el: HTMLElement): DropPos => {
+		const rect = el.getBoundingClientRect();
+		const y = e.clientY - rect.top;
+		const h = rect.height;
+		if (y < h * 0.25) return 'before';
+		if (y > h * 0.75) return 'after';
+		return 'into';
+	};
+
+	const handleDragOver = useCallback((e: React.DragEvent, node: TreeNode | null) => {
+		if (!onDropNodes) return;
+		e.preventDefault();
+		e.dataTransfer.dropEffect = 'move';
+		const el = (e.currentTarget as HTMLElement);
+		const pos: DropPos = node === null ? 'after' : computeDropPos(e, el);
+		const id = node?.id ?? null;
+		setDragOver((prev) => (prev && prev.id === id && prev.pos === pos) ? prev : { id, pos });
+	}, [onDropNodes]);
+
+	const handleDragLeave = useCallback(() => {
+		setDragOver(null);
+	}, []);
+
+	const resolveDrop = useCallback((node: TreeNode | null, pos: DropPos): { targetParentId: string | null; beforeId: string | null } => {
+		if (node === null) {
+			// Root drop (empty space).
+			return { targetParentId: null, beforeId: null };
+		}
+		if (pos === 'into' && node.collapsible) {
+			return { targetParentId: node.id, beforeId: null };
+		}
+		// before/after: sibling of the node, under the node's parent.
+		const parentId = (node.data as { parentId?: string | null } | undefined)?.parentId ?? null;
+		const siblings = parentId === null ? roots : (states.get(parentId)?.children ?? []);
+		const idx = siblings.findIndex((s) => s.id === node.id);
+		const beforeId = pos === 'after'
+			? (idx + 1 < siblings.length ? siblings[idx + 1].id : null)
+			: node.id;
+		return { targetParentId: parentId, beforeId };
+	}, [roots, states]);
+
+	const handleDrop = useCallback(async (e: React.DragEvent, node: TreeNode | null) => {
+		if (!onDropNodes) return;
+		e.preventDefault();
+		e.stopPropagation();
+		setDragOver(null);
+		const raw = e.dataTransfer.getData(DRAG_MIME);
+		if (!raw) return;
+		let ids: string[];
+		try { ids = JSON.parse(raw) as string[]; } catch { return; }
+		if (ids.length === 0) return;
+		const pos: DropPos = node === null ? 'after' : computeDropPos(e, e.currentTarget as HTMLElement);
+		const { targetParentId, beforeId } = resolveDrop(node, pos);
+		// Cycle rejection: drop is invalid if the target parent is a descendant
+		// of (or equal to) any dragged node.
+		if (targetParentId !== null && descendantIdsOf) {
+			for (const draggedId of ids) {
+				const desc = descendantIdsOf(draggedId);
+				if (draggedId === targetParentId || desc.includes(targetParentId)) {
+					return; // reject silently; backend also guards
+				}
+			}
+		}
+		await Promise.resolve(onDropNodes(ids, targetParentId, beforeId));
+	}, [onDropNodes, resolveDrop, descendantIdsOf]);
+
 	const renderNode = (node: TreeNode, depth: number): React.ReactNode => {
 		const state = states.get(node.id);
 		const expanded = state?.expanded ?? false;
 		const children = state?.children ?? [];
 		const loading = state?.loading ?? false;
 		const isRenaming = editing?.mode === 'rename' && editing.nodeId === node.id;
+		const isSelected = selectedIds?.has(node.id) ?? false;
+		const dropHint = dragOver?.id === node.id ? dragOver.pos : null;
 		return (
 			<li key={node.id} role="treeitem" aria-expanded={node.collapsible ? expanded : undefined}>
 				<div
 					className="wg-tree-node"
 					data-active={activeId === node.id}
+					data-selected={isSelected || undefined}
+					data-dropping={dropHint ?? undefined}
+					draggable={!!onDropNodes}
 					style={{ paddingLeft: 8 + depth * 12 }}
-					onClick={() => { if (node.collapsible) toggle(node); handleActivate(node); }}
+					onClick={(e) => handleNodeClick(node, e)}
 					onContextMenu={(e) => { e.preventDefault(); backend?.onContextMenu?.(node, { x: e.clientX, y: e.clientY }); }}
+					onDragStart={onDropNodes ? (e) => handleDragStart(e, node) : undefined}
+					onDragOver={onDropNodes ? (e) => handleDragOver(e, node) : undefined}
+					onDragLeave={onDropNodes ? handleDragLeave : undefined}
+					onDrop={onDropNodes ? (e) => { void handleDrop(e, node); } : undefined}
 					title={node.tooltip}
 				>
 					<span className="wg-tree-node-twisty" data-empty={!node.collapsible}>
@@ -221,7 +383,14 @@ export function Tree({ backend, rootNodes, editing, collapseAllKey, onCommitCrea
 	};
 
 	return (
-		<ul className="wg-tree" role="tree" style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+		<ul
+			className="wg-tree"
+			role="tree"
+			data-drag-over-root={dragOver?.id === null ? '' : undefined}
+			style={{ listStyle: 'none', padding: 0, margin: 0, minHeight: 24 }}
+			onDragOver={onDropNodes ? (e) => handleDragOver(e, null) : undefined}
+			onDrop={onDropNodes ? (e) => { void handleDrop(e, null); } : undefined}
+		>
 			{editing && editing.mode === 'create' && editing.parentId === null ? (
 				<InlineInputRow
 					depth={0}
@@ -237,6 +406,45 @@ export function Tree({ backend, rootNodes, editing, collapseAllKey, onCommitCrea
 }
 
 // ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/** Find a rendered TreeNode by id (searches roots + expanded children). */
+function findRenderedNode(
+	roots: readonly TreeNode[],
+	states: Map<string, NodeState>,
+	id: string,
+): TreeNode | undefined {
+	const search = (nodes: readonly TreeNode[]): TreeNode | undefined => {
+		for (const n of nodes) {
+			if (n.id === id) return n;
+			const kids = states.get(n.id)?.children;
+			if (kids) {
+				const found = search(kids);
+				if (found) return found;
+			}
+		}
+		return undefined;
+	};
+	return search(roots);
+}
+
+/** Flatten the currently-visible (expanded) nodes into an ordered id list. */
+function collectVisibleIds(roots: readonly TreeNode[], states: Map<string, NodeState>): string[] {
+	const out: string[] = [];
+	const walk = (nodes: readonly TreeNode[]) => {
+		for (const n of nodes) {
+			out.push(n.id);
+			if (states.get(n.id)?.expanded) {
+				walk(states.get(n.id)?.children ?? []);
+			}
+		}
+	};
+	walk(roots);
+	return out;
+}
+
+// ---------------------------------------------------------------------------
 // Inline input (create + rename share this control)
 // ---------------------------------------------------------------------------
 
@@ -245,7 +453,7 @@ interface InlineInputProps {
 	siblingNames: ReadonlySet<string>;
 	/** For rename: the node's own current name (skipped during collision check). */
 	excludeName?: string;
-	onSubmit: (name: string) => Promise<void> | void;
+	onSubmit: (name: string) => Promise<string | void> | string | void;
 	onCancel?: () => void;
 }
 
@@ -276,7 +484,12 @@ function InlineInput({ initialValue, siblingNames, excludeName, onSubmit, onCanc
 		}
 		setSubmitting(true);
 		try {
-			await onSubmit(value.trim());
+			const result = await onSubmit(value.trim());
+			// A returned string is a host-side error (e.g. path collision):
+			// surface it and keep the input open. `void`/`undefined` closes it.
+			if (typeof result === 'string') {
+				setError(result);
+			}
 		} finally {
 			setSubmitting(false);
 		}
