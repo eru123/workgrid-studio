@@ -11,6 +11,9 @@ import type {
   CredentialEntryDto,
   CredentialEntryInput,
   CredentialNodeDto,
+  SshServerDto,
+  SshServerInput,
+  SshTestResult,
   DatabaseInfo,
   QueryResultSet,
   TableInfo,
@@ -146,4 +149,23 @@ export function credentialsSetExpanded(id: string, expanded: boolean): Promise<v
 
 export function credentialsCopyNode(id: string, targetParent: string): Promise<CredentialNodeDto> {
   return invoke<CredentialNodeDto>('credentials_copy_node', { id, targetParent });
+}
+
+//  ------ SSH servers
+
+export function sshServersList(): Promise<SshServerDto[]> {
+  return invoke<SshServerDto[]>('ssh_servers_list');
+}
+
+export function sshUpsertServer(input: SshServerInput): Promise<SshServerDto> {
+  return invoke<SshServerDto>('ssh_upsert_server', { input });
+}
+
+export function sshDeleteServer(id: string): Promise<void> {
+  return invoke<void>('ssh_delete_server', { id });
+}
+
+/** Test a server definition (works on unsaved form input). */
+export function sshTestConnection(input: SshServerInput): Promise<SshTestResult> {
+  return invoke<SshTestResult>('ssh_test_connection', { input });
 }

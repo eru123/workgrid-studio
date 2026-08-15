@@ -5,6 +5,7 @@ pub mod connection;
 pub mod crypto;
 pub mod credentials;
 pub mod query;
+pub mod ssh_servers;
 pub mod schema;
 pub mod tree;
 

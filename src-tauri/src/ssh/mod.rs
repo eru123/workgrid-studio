@@ -61,10 +61,24 @@ pub fn save_known_hosts(hosts: &HashMap<String, String>) -> AppResult<()> {
 
 //  ------ russh client handler (TOFU)
 
-struct SshClientHandler {
-    ssh_host: String,
-    ssh_port: u16,
-    strict: bool,
+pub(crate) struct SshClientHandler {
+    pub(crate) ssh_host: String,
+    pub(crate) ssh_port: u16,
+    pub(crate) strict: bool,
+    /// Where check_server_key reports the accepted fingerprint (shared with
+    /// the caller so Test Connection can show it).
+    pub(crate) fingerprint_out: Arc<std::sync::Mutex<Option<String>>>,
+}
+
+impl SshClientHandler {
+    pub(crate) fn new(ssh_host: String, ssh_port: u16, strict: bool) -> Self {
+        Self {
+            ssh_host,
+            ssh_port,
+            strict,
+            fingerprint_out: Arc::new(std::sync::Mutex::new(None)),
+        }
+    }
 }
 
 impl client::Handler for SshClientHandler {
@@ -79,16 +93,16 @@ impl client::Handler for SshClientHandler {
 
         let mut known = load_known_hosts();
 
-        match known.get(&host_id) {
+        let accepted = match known.get(&host_id) {
             Some(stored) if stored == &fingerprint => {
                 // Key matches — trust.
-                Ok(true)
+                true
             }
             Some(stored) if !stored.starts_with("SHA256:") => {
                 // Legacy hex-format entry — migrate to SHA256 automatically.
-                known.insert(host_id, fingerprint);
+                known.insert(host_id, fingerprint.clone());
                 let _ = save_known_hosts(&known);
-                Ok(true)
+                true
             }
             Some(stored) => {
                 // Key changed — potential MITM.
@@ -101,21 +115,24 @@ impl client::Handler for SshClientHandler {
                     &fingerprint[..std::cmp::min(23, fingerprint.len())]
                 );
                 if self.strict {
-                    Err(AppError::ssh(msg))
-                } else {
-                    // Non-strict: proceed despite mismatch.
-                    known.insert(host_id, fingerprint);
-                    let _ = save_known_hosts(&known);
-                    Ok(true)
+                    return Err(AppError::ssh(msg));
                 }
+                // Non-strict: proceed despite mismatch.
+                known.insert(host_id, fingerprint.clone());
+                let _ = save_known_hosts(&known);
+                true
             }
             None => {
                 // First time seeing this host — trust and store (TOFU).
-                known.insert(host_id, fingerprint);
+                known.insert(host_id, fingerprint.clone());
                 let _ = save_known_hosts(&known);
-                Ok(true)
+                true
             }
+        };
+        if accepted {
+            *self.fingerprint_out.lock().unwrap() = Some(fingerprint);
         }
+        Ok(accepted)
     }
 }
 
@@ -159,11 +176,7 @@ pub async fn establish_ssh_tunnel(
         inactivity_timeout: Some(std::time::Duration::from_secs(30)),
         ..Default::default()
     });
-    let handler = SshClientHandler {
-        ssh_host: ssh_host.clone(),
-        ssh_port,
-        strict: params.ssh_strict_key_checking,
-    };
+    let handler = SshClientHandler::new(ssh_host.clone(), ssh_port, params.ssh_strict_key_checking);
 
     let mut session = client::connect(config, (ssh_host.as_str(), ssh_port), handler)
         .await

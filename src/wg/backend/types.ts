@@ -140,3 +140,67 @@ export interface CredentialEntryInput {
   description?: string | null;
   id?: string | null;
 }
+
+//  ------ SSH servers
+
+export interface SshServerRecord {
+  id: string;
+  name: string;
+  host: string;
+  port?: number | null;
+  /** Vault identity used for user/key/password material. */
+  identityId?: string | null;
+  /** Overrides the identity's user for this server (and its jumps). */
+  user?: string | null;
+  /** Direct private-key path bypassing the vault. */
+  privateKeyPath?: string | null;
+  /** ProxyJump chain — comma-separated user@host:port hops. */
+  proxyJump?: string | null;
+  /** Raw ProxyCommand; %h and %p are substituted before execution. */
+  proxyCommand?: string | null;
+  connectTimeoutSecs?: number | null;
+  keepaliveIntervalSecs?: number | null;
+  keepaliveCount?: number | null;
+  compression?: boolean | null;
+  /** "accept-new" (TOFU, default) | "yes" (strict) | "no" (accept any). */
+  strictHostKey?: string | null;
+  /** Arbitrary extra OpenSSH options, stored verbatim. */
+  extraOptions?: Record<string, unknown> | null;
+  notes?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
+
+export type SshServerDto = SshServerRecord;
+
+/** Create/update payload — `id: null` creates, an id updates in place. */
+export interface SshServerInput {
+  id?: string | null;
+  name: string;
+  host: string;
+  port?: number | null;
+  identityId?: string | null;
+  user?: string | null;
+  privateKeyPath?: string | null;
+  proxyJump?: string | null;
+  proxyCommand?: string | null;
+  connectTimeoutSecs?: number | null;
+  keepaliveIntervalSecs?: number | null;
+  keepaliveCount?: number | null;
+  compression?: boolean | null;
+  strictHostKey?: string | null;
+  extraOptions?: Record<string, unknown> | null;
+  notes?: string | null;
+}
+
+export interface SshTestResult {
+  ok: boolean;
+  message: string;
+  latencyMs?: number | null;
+  /** "publickey" | "password" */
+  authUsed?: string | null;
+  /** SHA256 fingerprint of the server host key. */
+  hostFingerprint?: string | null;
+  /** Human-readable description of the connection path taken. */
+  hops: string[];
+}

@@ -207,6 +207,7 @@
 	padding: 0 8px;
 	cursor: pointer;
 	white-space: nowrap;
+	overflow: hidden;
 }
 .wg-tree-node:hover { background: var(--wg-list-hoverBackground, #2a2d2e); }
 .wg-tree-node[data-active="true"] { background: var(--wg-list-inactiveSelectionBackground, #37373d); }
@@ -214,9 +215,21 @@
 .wg-tree-node-indent { display: inline-block; width: 8px; }
 .wg-tree-node-twisty { width: 16px; text-align: center; color: var(--wg-icon-foreground, #c5c5c5); font-size: 16px; }
 .wg-tree-node-twisty[data-empty="true"] { visibility: hidden; }
-.wg-tree-node-icon { width: 16px; margin-right: 6px; color: var(--wg-icon-foreground, #c5c5c5); font-size: 16px; }
-.wg-tree-node-label { flex: 1; overflow: hidden; text-overflow: ellipsis; }
-.wg-tree-node-description { color: var(--wg-descriptionForeground, #cccccc99); font-size: 12px; margin-left: 8px; }
+.wg-tree-node-icon {
+	width: 16px;
+	margin-right: 6px;
+	color: var(--wg-icon-foreground, #c5c5c5);
+	font-size: 16px;
+	/* Codicons render 16px/1 with the baseline at the box bottom, so their
+	   visual mass sits ~1px above the label's x-height center (visible in
+	   WebKitGTK). Nudge down to line up with the text. */
+	transform: translateY(1px);
+}
+/* Label + description hug each other (VS Code explorer style): the label
+   shrinks with ellipsis when long, the description follows immediately
+   instead of being pushed to the row's right edge. */
+.wg-tree-node-label { flex: 0 1 auto; min-width: 3ch; overflow: hidden; text-overflow: ellipsis; }
+.wg-tree-node-description { color: var(--wg-descriptionForeground, #cccccc99); font-size: 12px; margin-left: 8px; flex: 0 0 auto; }
 .wg-tree-node-badge {
 	background: var(--wg-badge-background, #4d4d4d);
 	color: var(--wg-badge-foreground, #ffffff);

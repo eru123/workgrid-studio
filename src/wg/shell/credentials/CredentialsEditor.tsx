@@ -88,6 +88,15 @@ export function CredentialsEditor({ entryId, parentId, onSaved, onCancel, onDirt
     onDirtyChange?.(dirty);
   }, [dirty, onDirtyChange, entryId]);
 
+  // Reset the host's dirty flag on unmount — save closes the editor before
+  // the dirty effect re-runs (the snapshot is a ref, no re-render), and a
+  // stale `true` would wrongly prompt "Discard?" on the next open.
+  useEffect(() => {
+    return () => {
+      onDirtyChange?.(false);
+    };
+  }, [onDirtyChange]);
+
   // Load an existing identity by id (with secrets unsealed) when editing.
   useEffect(() => {
     const resetTo = (values: {

@@ -20,11 +20,13 @@ import {
   createCredentialsTreeBackend,
 } from "@/wg";
 import { dbDisconnect } from "@/wg";
-import { credentialsCreateFolder, credentialsCopyNode, credentialsDeleteNode, credentialsMoveNode, credentialsReorderNode, credentialsRenameNode, credentialsGetTree, credentialsUpsertEntry, credentialsSetExpanded } from "@/wg/backend/ipc";
-import type { CredentialNodeDto } from "@/wg/backend/types";
+import { credentialsCreateFolder, credentialsCopyNode, credentialsDeleteNode, credentialsMoveNode, credentialsReorderNode, credentialsRenameNode, credentialsGetTree, credentialsUpsertEntry, credentialsSetExpanded, sshServersList, sshUpsertServer, sshDeleteServer } from "@/wg/backend/ipc";
+import type { CredentialNodeDto, SshServerDto } from "@/wg/backend/types";
 import { Tree, TREE_DRAG_MIME, type TreeEditingState } from "@/wg/shell/Tree";
 import type { TreeNode } from "@/wg/backend/BackendAdapter";
 import { iconForKind, type CredentialsTreeBackend, type CredentialsTreeNode } from "@/wg/backend/credentialsTreeBackend";
+import { createSshServerBackend, type SshServerTreeNode } from "@/wg/backend/sshServerBackend";
+import { SshServerEditor } from "@/wg/shell/ssh/SshServerEditor";
 import {
   resolveVaultCreatePath,
   findFolderChild,
@@ -123,6 +125,16 @@ function App() {
   // must not depend on it and re-create the backend) can still guard against
   // silently discarding unsaved changes.
   const credentialsDirtyRef = useRef(false);
+
+  // ---- SSH servers -----------------------------------------------------------
+  const [sshRefreshKey, setSshRefreshKey] = useState(0);
+  const [sshServerId, setSshServerId] = useState<string | null>(null);
+  const [sshCreating, setSshCreating] = useState(false);
+  const [sshAutoTest, setSshAutoTest] = useState(false);
+  const [sshCtxMenu, setSshCtxMenu] = useState<{ anchor: { x: number; y: number }; node: SshServerTreeNode } | null>(null);
+  const [sshServers, setSshServers] = useState<SshServerDto[]>([]);
+  const [sshLoaded, setSshLoaded] = useState(false);
+  const sshDirtyRef = useRef(false);
 
 
   useEffect(() => {
@@ -582,6 +594,104 @@ function App() {
   }, [credentialsEditing, credentialsSelectedIds, credentialsTree, credentialsClipboard, ancestorChainOf, openVaultEntry, revealVaultNode, topMostSelected]);
 
 
+  // -------------------------------------------------------------------------
+  // SSH servers
+  // -------------------------------------------------------------------------
+
+  const openSshServer = useCallback((id: string, autoTest = false) => {
+    if (sshDirtyRef.current && !window.confirm('The server has unsaved changes. Discard them?')) return;
+    setSshServerId(id);
+    setSshAutoTest(autoTest);
+    setSshCreating(false);
+  }, []);
+
+  const handleSshDirtyChange = useCallback((dirty: boolean) => {
+    sshDirtyRef.current = dirty;
+  }, []);
+
+  const handleNewSshServer = useCallback(() => {
+    if (sshDirtyRef.current && !window.confirm('The server has unsaved changes. Discard them?')) return;
+    setSshServerId(null);
+    setSshAutoTest(false);
+    setSshCreating(true);
+  }, []);
+
+  const handleRefreshSsh = useCallback(() => {
+    setSshRefreshKey((k) => k + 1);
+  }, []);
+
+  // Registry snapshot for the empty state + duplicate. Re-read per mutation.
+  useEffect(() => {
+    let cancelled = false;
+    sshServersList()
+      .then((servers) => {
+        if (cancelled) return;
+        setSshServers(servers);
+        setSshLoaded(true);
+      })
+      .catch(() => {
+        if (!cancelled) setSshLoaded(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [sshRefreshKey]);
+
+  const sshTree = useMemo(
+    () =>
+      createSshServerBackend(
+        (server) => openSshServer(server.id),
+        (node, anchor) => setSshCtxMenu({ anchor, node }),
+      ),
+    [sshRefreshKey, openSshServer],
+  );
+
+  const handleSshCtxSelect = useCallback(async (item: ContextMenuItem) => {
+    const node = sshCtxMenu?.node;
+    if (!node) return;
+    const server = node.data as SshServerDto;
+    try {
+      if (item.id === 'test') {
+        openSshServer(server.id, true);
+      } else if (item.id === 'edit') {
+        openSshServer(server.id);
+      } else if (item.id === 'duplicate') {
+        await sshUpsertServer({
+          id: null,
+          name: `${server.name} (copy)`,
+          host: server.host,
+          port: server.port,
+          identityId: server.identityId,
+          user: server.user,
+          privateKeyPath: server.privateKeyPath,
+          proxyJump: server.proxyJump,
+          proxyCommand: server.proxyCommand,
+          connectTimeoutSecs: server.connectTimeoutSecs,
+          keepaliveIntervalSecs: server.keepaliveIntervalSecs,
+          keepaliveCount: server.keepaliveCount,
+          compression: server.compression,
+          strictHostKey: server.strictHostKey,
+          extraOptions: server.extraOptions,
+          notes: server.notes,
+        });
+        setSshRefreshKey((k) => k + 1);
+      } else if (item.id === 'delete') {
+        if (window.confirm(`Delete server "${server.name}"?`)) {
+          await sshDeleteServer(server.id);
+          if (sshServerId === server.id) {
+            setSshServerId(null);
+            setSshCreating(false);
+          }
+          setSshRefreshKey((k) => k + 1);
+        }
+      }
+      setSshCtxMenu(null);
+    } catch (e) {
+      window.alert(errorMessageOf(e));
+      setSshCtxMenu(null);
+    }
+  }, [sshCtxMenu, sshServerId, openSshServer]);
+
   const activeEditorGroup = editorGroups[activeView] ?? defaultEditorGroups()[activeView];
 
   const persistEditorGroup = useCallback((view: string, group: EditorGroup) => {
@@ -832,6 +942,77 @@ function IconButton({ icon, title, onClick }: { icon: string; title: string; onC
               },
             ],
           }
+        : activeView === "ssh"
+        ? {
+            id: "ssh",
+            title: "SSH",
+            icon: Codicon.remote.id,
+            headerActions: (
+              <div style={{ display: "flex", gap: 6 }}>
+                <IconButton icon="add" title="New Server" onClick={handleNewSshServer} />
+                <IconButton icon="refresh" title="Refresh" onClick={handleRefreshSsh} />
+              </div>
+            ),
+            panes: [
+              {
+                id: "ssh-servers",
+                title: "Servers",
+                render: () => (
+                  <div
+                    tabIndex={0}
+                    style={{ height: '100%', minHeight: '100%', display: 'flex', flexDirection: 'column', overflowY: 'auto', outline: 'none' }}
+                  >
+                    {sshLoaded && sshServers.length === 0 && !sshCreating && sshServerId === null ? (
+                      <div
+                        style={{
+                          height: '100%',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: 8,
+                          color: 'var(--wg-descriptionForeground)',
+                          fontSize: 12,
+                          padding: 24,
+                          textAlign: 'center',
+                        }}
+                      >
+                        <span className={codiconClass('remote')} style={{ fontSize: 28, opacity: 0.6 }} />
+                        <div>No SSH servers yet</div>
+                        <div style={{ opacity: 0.8 }}>
+                          Servers authenticate with vault identities and support proxy jumps, ProxyCommand and extra OpenSSH options.
+                        </div>
+                        <button
+                          type="button"
+                          onClick={handleNewSshServer}
+                          style={{
+                            background: 'var(--wg-button-background, #0e639c)',
+                            color: 'var(--wg-foreground)',
+                            border: 'none',
+                            borderRadius: 4,
+                            padding: '6px 12px',
+                            fontSize: 12,
+                            cursor: 'pointer',
+                            marginTop: 4,
+                          }}
+                        >
+                          New server
+                        </button>
+                      </div>
+                    ) : (
+                      <Tree backend={sshTree} />
+                    )}
+                  </div>
+                ),
+                headerActions: (
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <IconButton icon="add" title="New Server" onClick={handleNewSshServer} />
+                    <IconButton icon="refresh" title="Refresh" onClick={handleRefreshSsh} />
+                  </div>
+                ),
+              },
+            ],
+          }
         : {
             id: activeView,
             title: toTitle(activeView),
@@ -944,13 +1125,39 @@ function IconButton({ icon, title, onClick }: { icon: string; title: string; onC
   }, [credentialsClipboard, credentialsCtxMenu, credentialsSelectedIds, ancestorChainOf, openVaultEntry, revealVaultNode, topMostSelected]);
 
   const editorOverride: ReactNode =
-    activeView === "credentials" ? (
+    activeView === "ssh" ? (
+      sshServerId || sshCreating ? (
+        <SshServerEditor
+          serverId={sshServerId}
+          autoTest={sshAutoTest}
+          onSaved={(savedId) => {
+            // Save closes the editor, matching the vault behavior; the
+            // context-menu Test Connection re-opens it with results.
+            sshDirtyRef.current = false;
+            setSshRefreshKey((k) => k + 1);
+            setSshServerId(null);
+            setSshCreating(false);
+          }}
+          onCancel={() => {
+            if (sshDirtyRef.current && !window.confirm('Discard unsaved changes?')) return;
+            setSshServerId(null);
+            setSshCreating(false);
+          }}
+          onDirtyChange={handleSshDirtyChange}
+        />
+      ) : (
+        <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--wg-descriptionForeground)", fontSize: 12 }}>
+          Select a server from the list, or click <strong style={{ margin: "0 4px" }}>New Server</strong>.
+        </div>
+      )
+    ) : activeView === "credentials" ? (
       credentialsEntryId || credentialsCreating ? (
         <CredentialsEditor
           entryId={credentialsEntryId}
           onSaved={() => {
             // Save closes the file, VS Code-style: the tree refreshes and
             // the editor area returns to the empty prompt.
+            credentialsDirtyRef.current = false;
             setCredentialsRefreshKey((k) => k + 1);
             setCredentialsEntryId(null);
             setCredentialsCreating(false);
@@ -992,6 +1199,20 @@ function IconButton({ icon, title, onClick }: { icon: string; title: string; onC
           onClose={() => setCredentialsCtxMenu(null)}
           onSelect={handleCredentialsCtxSelect}
           items={buildCredentialsContextMenuItems(credentialsCtxMenu.node, credentialsClipboard, credentialsSelectedIds.size || 1)}
+        />
+      ) : null}
+      {sshCtxMenu ? (
+        <ContextMenu
+          anchor={sshCtxMenu.anchor}
+          onClose={() => setSshCtxMenu(null)}
+          onSelect={handleSshCtxSelect}
+          items={[
+            { id: 'test', label: 'Test Connection…', icon: 'play' },
+            { id: 'edit', label: 'Edit…', icon: 'edit' },
+            { kind: 'separator' },
+            { id: 'duplicate', label: 'Duplicate', icon: 'copy' },
+            { id: 'delete', label: 'Delete', icon: 'trash' },
+          ]}
         />
       ) : null}
       <CommandPalette

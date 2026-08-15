@@ -282,3 +282,136 @@ pub struct CredentialEntryInput {
     pub fields: CredentialFields,
     pub description: Option<String>,
 }
+
+//  ------ SSH servers
+
+/// A saved SSH server definition. Authentication delegates to a vault
+/// identity (SSHIdentity entry); the record itself holds no secrets, so the
+/// whole connection setup is reproducible from vault + server record.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SshServerRecord {
+    pub id: String,
+    pub name: String,
+    pub host: String,
+    #[serde(default)]
+    pub port: Option<u16>,
+    /// Vault identity used for user/key/password material.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity_id: Option<String>,
+    /// Overrides the identity's user for this server (and its jumps).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user: Option<String>,
+    /// Direct private-key path bypassing the vault (legacy setups).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub private_key_path: Option<String>,
+    /// ProxyJump chain — comma-separated `host` / `user@host` / `host:port`
+    /// / `user@host:port` hops, applied in order.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proxy_jump: Option<String>,
+    /// Raw ProxyCommand; `%h` and `%p` are substituted before execution.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proxy_command: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connect_timeout_secs: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keepalive_interval_secs: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keepalive_count: Option<u32>,
+    /// Stored for completeness; russh does not negotiate compression.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compression: Option<bool>,
+    /// "accept-new" (TOFU, default) | "yes" (strict) | "no" (accept any).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strict_host_key: Option<String>,
+    /// Arbitrary extra OpenSSH options (name → value), stored verbatim so
+    /// complicated setups keep every parameter in one place.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extra_options: Option<serde_json::Map<String, serde_json::Value>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notes: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<String>,
+}
+
+pub type SshServerDto = SshServerRecord;
+
+/// Create/update payload. `id: None` creates; a supplied id updates in place.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SshServerInput {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    pub name: String,
+    pub host: String,
+    #[serde(default)]
+    pub port: Option<u16>,
+    #[serde(default)]
+    pub identity_id: Option<String>,
+    #[serde(default)]
+    pub user: Option<String>,
+    #[serde(default)]
+    pub private_key_path: Option<String>,
+    #[serde(default)]
+    pub proxy_jump: Option<String>,
+    #[serde(default)]
+    pub proxy_command: Option<String>,
+    #[serde(default)]
+    pub connect_timeout_secs: Option<u64>,
+    #[serde(default)]
+    pub keepalive_interval_secs: Option<u64>,
+    #[serde(default)]
+    pub keepalive_count: Option<u32>,
+    #[serde(default)]
+    pub compression: Option<bool>,
+    #[serde(default)]
+    pub strict_host_key: Option<String>,
+    #[serde(default)]
+    pub extra_options: Option<serde_json::Map<String, serde_json::Value>>,
+    #[serde(default)]
+    pub notes: Option<String>,
+}
+
+impl From<&SshServerRecord> for SshServerInput {
+    fn from(r: &SshServerRecord) -> Self {
+        Self {
+            id: Some(r.id.clone()),
+            name: r.name.clone(),
+            host: r.host.clone(),
+            port: r.port,
+            identity_id: r.identity_id.clone(),
+            user: r.user.clone(),
+            private_key_path: r.private_key_path.clone(),
+            proxy_jump: r.proxy_jump.clone(),
+            proxy_command: r.proxy_command.clone(),
+            connect_timeout_secs: r.connect_timeout_secs,
+            keepalive_interval_secs: r.keepalive_interval_secs,
+            keepalive_count: r.keepalive_count,
+            compression: r.compression,
+            strict_host_key: r.strict_host_key.clone(),
+            extra_options: r.extra_options.clone(),
+            notes: r.notes.clone(),
+        }
+    }
+}
+
+/// Outcome of a Test Connection run.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SshTestResult {
+    pub ok: bool,
+    pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latency_ms: Option<u64>,
+    /// Which authentication method succeeded ("publickey" | "password").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_used: Option<String>,
+    /// SHA256 fingerprint of the server host key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host_fingerprint: Option<String>,
+    /// Human-readable description of the connection path taken.
+    #[serde(default)]
+    pub hops: Vec<String>,
+}

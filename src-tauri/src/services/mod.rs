@@ -5,3 +5,4 @@ pub mod connection;
 pub mod crypto;
 pub mod credentials;
 pub mod files;
+pub mod ssh_servers;

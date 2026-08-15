@@ -59,3 +59,35 @@ body,
   border: 1px solid var(--wg-widget-border, #454545);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
 }
+
+/* Native <select>s render with the platform (white) style in WebKitGTK and
+   their default box metrics don't match the form inputs — theme them and
+   match input proportions (13px font, ~30px tall, same padding/radius). */
+.wg-form-select {
+  box-sizing: border-box;
+  min-height: 30px;
+  padding: 4px 8px;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--wg-dropdown-foreground, var(--wg-foreground, #cccccc));
+  background: var(--wg-dropdown-background, #3c3c3c);
+  border: 1px solid var(--wg-dropdown-border, var(--wg-border, #ffffff33));
+  border-radius: 4px;
+  outline: none;
+}
+
+.wg-form-select option {
+  color: var(--wg-dropdown-foreground, #cccccc);
+  background: var(--wg-dropdown-background, #3c3c3c);
+}
+
+/* WgSelect popup options (custom dropdown — the native popup is unreachable
+   from CSS on WebKitGTK, see WgSelect.tsx). */
+.wg-select-option:hover {
+  background: var(--wg-list-hoverBackground, #2a2d2e);
+}
+
+.wg-select-option[data-selected='true'] {
+  background: var(--wg-list-activeSelectionBackground, #094771);
+  color: var(--wg-list-activeSelectionForeground, #ffffff);
+}
