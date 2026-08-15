@@ -89,6 +89,56 @@ impl ConnectionManager {
         Ok(handle)
     }
 
+    /// Connect with a pre-resolved address and (optionally) a pre-built
+    /// tunnel — used by the db-servers feature, which resolves docker /
+    /// ssh targets itself before handing the driver a plain host:port.
+    pub async fn connect_resolved(
+        &self,
+        params: &ConnectParams,
+        tunnel: Option<TunnelHandle>,
+    ) -> AppResult<ConnectionHandle> {
+        let profile_id = params.profile_id.clone();
+
+        let cancel = Arc::new(AtomicBool::new(false));
+        {
+            let mut tokens = self.cancel_tokens.write().await;
+            tokens.insert(profile_id.clone(), cancel.clone());
+        }
+
+        self.disconnect_internal(&profile_id).await;
+
+        if let Some(tunnel) = tunnel {
+            let mut tunnels = self.tunnels.write().await;
+            tunnels.insert(profile_id.clone(), tunnel);
+        }
+
+        let db_type = DbType::from_str(&params.db_type);
+        let driver = create_driver(db_type);
+        let handle = match driver.connect(params).await {
+            Ok(handle) => handle,
+            Err(e) => {
+                // Tear the fresh tunnel back down so nothing leaks.
+                self.disconnect_internal(&profile_id).await;
+                {
+                    let mut tokens = self.cancel_tokens.write().await;
+                    tokens.remove(&profile_id);
+                }
+                return Err(e);
+            }
+        };
+
+        {
+            let mut drivers = self.drivers.write().await;
+            drivers.insert(profile_id.clone(), driver);
+        }
+        {
+            let mut tokens = self.cancel_tokens.write().await;
+            tokens.remove(&profile_id);
+        }
+
+        Ok(handle)
+    }
+
     /// Disconnect a profile: end sessions, drop the driver (and its pool), tear
     /// down the SSH tunnel.
     pub async fn disconnect(&self, profile_id: &str) -> AppResult<()> {

@@ -204,3 +204,66 @@ export interface SshTestResult {
   /** Human-readable description of the connection path taken. */
   hops: string[];
 }
+
+//  ------ Database servers
+
+export type DbConnectionType = 'tcp' | 'docker' | 'ssh' | 'sshDocker';
+
+export interface DbServerRecord {
+  id: string;
+  name: string;
+  connectionType: DbConnectionType;
+  /** mysql | postgres | sqlite | mssql */
+  dbType: string;
+  /** tcp: DB host. ssh: DB host as reachable from the SSH host. Unused for docker types. */
+  host?: string | null;
+  /** DB port; for docker types the container-internal port. */
+  port?: number | null;
+  database?: string | null;
+  user?: string | null;
+  password?: string | null;
+  ssl?: boolean | null;
+  /** docker / sshDocker: container name or id. */
+  dockerContainer?: string | null;
+  /** ssh / sshDocker: registered SSH server id. */
+  sshServerId?: string | null;
+  notes?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
+
+export type DbServerDto = DbServerRecord;
+
+/** Create/update payload — `id: null` creates, an id updates in place. */
+export interface DbServerInput {
+  id?: string | null;
+  name: string;
+  connectionType: DbConnectionType;
+  dbType: string;
+  host?: string | null;
+  port?: number | null;
+  database?: string | null;
+  user?: string | null;
+  password?: string | null;
+  ssl?: boolean | null;
+  dockerContainer?: string | null;
+  sshServerId?: string | null;
+  notes?: string | null;
+}
+
+export interface DbServerTestResult {
+  ok: boolean;
+  message: string;
+  latencyMs?: number | null;
+  /** Address the driver dialed (post tunnel/docker resolution). */
+  resolvedAddress?: string | null;
+  serverVersion?: string | null;
+  /** Human-readable connection path (docker lookups, ssh hops, tunnels). */
+  path: string[];
+}
+
+/** A container entry from `docker ps` (local or over SSH). */
+export interface DockerContainerDto {
+  name: string;
+  image: string;
+}

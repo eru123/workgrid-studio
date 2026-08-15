@@ -20,13 +20,15 @@ import {
   createCredentialsTreeBackend,
 } from "@/wg";
 import { dbDisconnect } from "@/wg";
-import { credentialsCreateFolder, credentialsCopyNode, credentialsDeleteNode, credentialsMoveNode, credentialsReorderNode, credentialsRenameNode, credentialsGetTree, credentialsUpsertEntry, credentialsSetExpanded, sshServersList, sshUpsertServer, sshDeleteServer } from "@/wg/backend/ipc";
-import type { CredentialNodeDto, SshServerDto } from "@/wg/backend/types";
+import { credentialsCreateFolder, credentialsCopyNode, credentialsDeleteNode, credentialsMoveNode, credentialsReorderNode, credentialsRenameNode, credentialsGetTree, credentialsUpsertEntry, credentialsSetExpanded, sshServersList, sshUpsertServer, sshDeleteServer, dbServersList, dbUpsertServer, dbDeleteServer, dbConnectServer } from "@/wg/backend/ipc";
+import type { CredentialNodeDto, SshServerDto, DbServerDto } from "@/wg/backend/types";
 import { Tree, TREE_DRAG_MIME, type TreeEditingState } from "@/wg/shell/Tree";
 import type { TreeNode } from "@/wg/backend/BackendAdapter";
 import { iconForKind, type CredentialsTreeBackend, type CredentialsTreeNode } from "@/wg/backend/credentialsTreeBackend";
 import { createSshServerBackend, type SshServerTreeNode } from "@/wg/backend/sshServerBackend";
+import { createDbServerBackend, type DbServerTreeNode } from "@/wg/backend/dbServerBackend";
 import { SshServerEditor } from "@/wg/shell/ssh/SshServerEditor";
+import { DbServerEditor } from "@/wg/shell/db/DbServerEditor";
 import {
   resolveVaultCreatePath,
   findFolderChild,
@@ -135,6 +137,17 @@ function App() {
   const [sshServers, setSshServers] = useState<SshServerDto[]>([]);
   const [sshLoaded, setSshLoaded] = useState(false);
   const sshDirtyRef = useRef(false);
+
+  // ---- Database servers ------------------------------------------------------
+  const [dbRefreshKey, setDbRefreshKey] = useState(0);
+  const [dbServerId, setDbServerId] = useState<string | null>(null);
+  const [dbCreating, setDbCreating] = useState(false);
+  const [dbAutoTest, setDbAutoTest] = useState(false);
+  const [dbCtxMenu, setDbCtxMenu] = useState<{ anchor: { x: number; y: number }; node: DbServerTreeNode } | null>(null);
+  const [dbServers, setDbServers] = useState<DbServerDto[]>([]);
+  const [dbLoaded, setDbLoaded] = useState(false);
+  const [dbConnecting, setDbConnecting] = useState<string | null>(null);
+  const dbDirtyRef = useRef(false);
 
 
   useEffect(() => {
@@ -692,6 +705,125 @@ function App() {
     }
   }, [sshCtxMenu, sshServerId, openSshServer]);
 
+  // -------------------------------------------------------------------------
+  // Database servers
+  // -------------------------------------------------------------------------
+
+  const openDbServer = useCallback((id: string, autoTest = false) => {
+    if (dbDirtyRef.current && !window.confirm('The server has unsaved changes. Discard them?')) return;
+    setDbServerId(id);
+    setDbAutoTest(autoTest);
+    setDbCreating(false);
+  }, []);
+
+  const handleDbDirtyChange = useCallback((dirty: boolean) => {
+    dbDirtyRef.current = dirty;
+  }, []);
+
+  const handleNewDbServer = useCallback(() => {
+    if (dbDirtyRef.current && !window.confirm('The server has unsaved changes. Discard them?')) return;
+    setDbServerId(null);
+    setDbAutoTest(false);
+    setDbCreating(true);
+  }, []);
+
+  const handleRefreshDb = useCallback(() => {
+    setDbRefreshKey((k) => k + 1);
+  }, []);
+
+  const handleConnectDbServer = useCallback(async (id: string) => {
+    setDbConnecting(id);
+    try {
+      const handle = await dbConnectServer(id);
+      setConnection(handle);
+      // Jump to the explorer so the fresh connection is immediately useful.
+      setActiveView('dashboard');
+    } catch (e) {
+      window.alert(errorMessageOf(e));
+    } finally {
+      setDbConnecting(null);
+    }
+  }, []);
+
+  // Registry snapshot for the empty state + duplicate. Re-read per mutation.
+  useEffect(() => {
+    let cancelled = false;
+    dbServersList()
+      .then((servers) => {
+        if (cancelled) return;
+        setDbServers(servers);
+        setDbLoaded(true);
+      })
+      .catch(() => {
+        if (!cancelled) setDbLoaded(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [dbRefreshKey]);
+
+  const sshNameOf = useCallback(
+    (id: string) => sshServers.find((s) => s.id === id)?.name,
+    [sshServers],
+  );
+
+  const dbTree = useMemo(
+    () =>
+      createDbServerBackend(
+        (server) => openDbServer(server.id),
+        (node, anchor) => setDbCtxMenu({ anchor, node }),
+        sshNameOf,
+      ),
+    [dbRefreshKey, openDbServer, sshNameOf],
+  );
+
+  const handleDbCtxSelect = useCallback(async (item: ContextMenuItem) => {
+    const node = dbCtxMenu?.node;
+    if (!node) return;
+    const server = node.data as DbServerDto;
+    try {
+      if (item.id === 'connect') {
+        setDbCtxMenu(null);
+        await handleConnectDbServer(server.id);
+        return;
+      } else if (item.id === 'test') {
+        openDbServer(server.id, true);
+      } else if (item.id === 'edit') {
+        openDbServer(server.id);
+      } else if (item.id === 'duplicate') {
+        await dbUpsertServer({
+          id: null,
+          name: `${server.name} (copy)`,
+          connectionType: server.connectionType,
+          dbType: server.dbType,
+          host: server.host,
+          port: server.port,
+          database: server.database,
+          user: server.user,
+          password: server.password,
+          ssl: server.ssl,
+          dockerContainer: server.dockerContainer,
+          sshServerId: server.sshServerId,
+          notes: server.notes,
+        });
+        setDbRefreshKey((k) => k + 1);
+      } else if (item.id === 'delete') {
+        if (window.confirm(`Delete server "${server.name}"?`)) {
+          await dbDeleteServer(server.id);
+          if (dbServerId === server.id) {
+            setDbServerId(null);
+            setDbCreating(false);
+          }
+          setDbRefreshKey((k) => k + 1);
+        }
+      }
+      setDbCtxMenu(null);
+    } catch (e) {
+      window.alert(errorMessageOf(e));
+      setDbCtxMenu(null);
+    }
+  }, [dbCtxMenu, dbServerId, openDbServer, handleConnectDbServer]);
+
   const activeEditorGroup = editorGroups[activeView] ?? defaultEditorGroups()[activeView];
 
   const persistEditorGroup = useCallback((view: string, group: EditorGroup) => {
@@ -942,6 +1074,77 @@ function IconButton({ icon, title, onClick }: { icon: string; title: string; onC
               },
             ],
           }
+        : activeView === "servers"
+        ? {
+            id: "servers",
+            title: "Servers",
+            icon: Codicon.server.id,
+            headerActions: (
+              <div style={{ display: "flex", gap: 6 }}>
+                <IconButton icon="add" title="New Server" onClick={handleNewDbServer} />
+                <IconButton icon="refresh" title="Refresh" onClick={handleRefreshDb} />
+              </div>
+            ),
+            panes: [
+              {
+                id: "db-servers",
+                title: "Database Servers",
+                render: () => (
+                  <div
+                    tabIndex={0}
+                    style={{ height: '100%', minHeight: '100%', display: 'flex', flexDirection: 'column', overflowY: 'auto', outline: 'none' }}
+                  >
+                    {dbLoaded && dbServers.length === 0 && !dbCreating && dbServerId === null ? (
+                      <div
+                        style={{
+                          height: '100%',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: 8,
+                          color: 'var(--wg-descriptionForeground)',
+                          fontSize: 12,
+                          padding: 24,
+                          textAlign: 'center',
+                        }}
+                      >
+                        <span className={codiconClass('database')} style={{ fontSize: 28, opacity: 0.6 }} />
+                        <div>No database servers yet</div>
+                        <div style={{ opacity: 0.8 }}>
+                          Save connection recipes: direct TCP, local Docker, SSH tunnel or SSH + remote Docker.
+                        </div>
+                        <button
+                          type="button"
+                          onClick={handleNewDbServer}
+                          style={{
+                            background: 'var(--wg-button-background, #0e639c)',
+                            color: 'var(--wg-foreground)',
+                            border: 'none',
+                            borderRadius: 4,
+                            padding: '6px 12px',
+                            fontSize: 12,
+                            cursor: 'pointer',
+                            marginTop: 4,
+                          }}
+                        >
+                          New server
+                        </button>
+                      </div>
+                    ) : (
+                      <Tree backend={dbTree} />
+                    )}
+                  </div>
+                ),
+                headerActions: (
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <IconButton icon="add" title="New Server" onClick={handleNewDbServer} />
+                    <IconButton icon="refresh" title="Refresh" onClick={handleRefreshDb} />
+                  </div>
+                ),
+              },
+            ],
+          }
         : activeView === "ssh"
         ? {
             id: "ssh",
@@ -1125,7 +1328,30 @@ function IconButton({ icon, title, onClick }: { icon: string; title: string; onC
   }, [credentialsClipboard, credentialsCtxMenu, credentialsSelectedIds, ancestorChainOf, openVaultEntry, revealVaultNode, topMostSelected]);
 
   const editorOverride: ReactNode =
-    activeView === "ssh" ? (
+    activeView === "servers" ? (
+      dbServerId || dbCreating ? (
+        <DbServerEditor
+          serverId={dbServerId}
+          autoTest={dbAutoTest}
+          onSaved={() => {
+            dbDirtyRef.current = false;
+            setDbRefreshKey((k) => k + 1);
+            setDbServerId(null);
+            setDbCreating(false);
+          }}
+          onCancel={() => {
+            if (dbDirtyRef.current && !window.confirm('Discard unsaved changes?')) return;
+            setDbServerId(null);
+            setDbCreating(false);
+          }}
+          onDirtyChange={handleDbDirtyChange}
+        />
+      ) : (
+        <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--wg-descriptionForeground)", fontSize: 12 }}>
+          Select a server from the list, or click <strong style={{ margin: "0 4px" }}>New Server</strong>.
+        </div>
+      )
+    ) : activeView === "ssh" ? (
       sshServerId || sshCreating ? (
         <SshServerEditor
           serverId={sshServerId}
@@ -1207,6 +1433,21 @@ function IconButton({ icon, title, onClick }: { icon: string; title: string; onC
           onClose={() => setSshCtxMenu(null)}
           onSelect={handleSshCtxSelect}
           items={[
+            { id: 'test', label: 'Test Connection…', icon: 'play' },
+            { id: 'edit', label: 'Edit…', icon: 'edit' },
+            { kind: 'separator' },
+            { id: 'duplicate', label: 'Duplicate', icon: 'copy' },
+            { id: 'delete', label: 'Delete', icon: 'trash' },
+          ]}
+        />
+      ) : null}
+      {dbCtxMenu ? (
+        <ContextMenu
+          anchor={dbCtxMenu.anchor}
+          onClose={() => setDbCtxMenu(null)}
+          onSelect={handleDbCtxSelect}
+          items={[
+            { id: 'connect', label: dbConnecting === dbCtxMenu.node.data?.id ? 'Connecting…' : 'Connect', icon: 'plug' },
             { id: 'test', label: 'Test Connection…', icon: 'play' },
             { id: 'edit', label: 'Edit…', icon: 'edit' },
             { kind: 'separator' },

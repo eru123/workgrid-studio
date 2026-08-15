@@ -11,6 +11,10 @@ import type {
   CredentialEntryDto,
   CredentialEntryInput,
   CredentialNodeDto,
+  DbServerDto,
+  DbServerInput,
+  DbServerTestResult,
+  DockerContainerDto,
   SshServerDto,
   SshServerInput,
   SshTestResult,
@@ -168,4 +172,38 @@ export function sshDeleteServer(id: string): Promise<void> {
 /** Test a server definition (works on unsaved form input). */
 export function sshTestConnection(input: SshServerInput): Promise<SshTestResult> {
   return invoke<SshTestResult>('ssh_test_connection', { input });
+}
+
+//  ------ Database servers
+
+export function dbServersList(): Promise<DbServerDto[]> {
+  return invoke<DbServerDto[]>('db_servers_list');
+}
+
+export function dbUpsertServer(input: DbServerInput): Promise<DbServerDto> {
+  return invoke<DbServerDto>('db_upsert_server', { input });
+}
+
+export function dbDeleteServer(id: string): Promise<void> {
+  return invoke<void>('db_delete_server', { id });
+}
+
+/** Resolve + dial a server definition (works on unsaved form input). */
+export function dbServerTest(input: DbServerInput): Promise<DbServerTestResult> {
+  return invoke<DbServerTestResult>('db_server_test', { input });
+}
+
+/** Connect a saved server; profile id is `srv-<id>`. */
+export function dbConnectServer(id: string): Promise<ConnectionHandle> {
+  return invoke<ConnectionHandle>('db_connect_server', { id });
+}
+
+/** `docker ps` on the local daemon (Docker Internal Host picker). */
+export function dockerListContainers(): Promise<DockerContainerDto[]> {
+  return invoke<DockerContainerDto[]>('docker_list_containers');
+}
+
+/** `docker ps` on a remote host over a registered SSH server. */
+export function sshDockerListContainers(sshServerId: string): Promise<DockerContainerDto[]> {
+  return invoke<DockerContainerDto[]>('ssh_docker_list_containers', { sshServerId });
 }

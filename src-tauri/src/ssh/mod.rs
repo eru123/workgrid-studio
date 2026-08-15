@@ -289,3 +289,82 @@ pub async fn establish_ssh_tunnel(
         task: Some(task),
     })
 }
+
+//  ------ registry-based tunnels (db servers)
+
+/// What a registry-based tunnel forwards to.
+pub enum TunnelTarget {
+    /// `channel_open_direct_tcpip` to host:port as reachable from the SSH host.
+    Direct { host: String, port: u16 },
+    /// `docker exec` proxy running inside a container on the SSH host.
+    Docker { container: String, port: u16 },
+}
+
+/// Establish a tunnel through a registered SSH server (vault identity,
+/// proxy jumps and ProxyCommand all honored). Binds 127.0.0.1:<ephemeral>
+/// and forwards each accepted connection to the target.
+pub async fn establish_registry_tunnel(
+    ssh_input: &crate::models::SshServerInput,
+    vault: &crate::services::credentials::CredentialService,
+    target: TunnelTarget,
+) -> AppResult<TunnelHandle> {
+    let connected =
+        crate::services::ssh_servers::connect_session(ssh_input, vault).await?;
+    let session = connected.session;
+
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .map_err(|e| AppError::ssh(format!("failed to bind local tunnel port: {e}")))?;
+    let local_port = listener
+        .local_addr()
+        .map_err(|e| AppError::ssh(format!("failed to get local port: {e}")))?
+        .port();
+
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let shutdown_clone = shutdown.clone();
+
+    let task = tokio::spawn(async move {
+        loop {
+            if shutdown_clone.load(Ordering::Relaxed) {
+                break;
+            }
+
+            let (mut local_stream, _peer) = match listener.accept().await {
+                Ok(s) => s,
+                Err(_) => break,
+            };
+            if shutdown_clone.load(Ordering::Relaxed) {
+                break;
+            }
+
+            let channel = match target {
+                TunnelTarget::Docker { ref container, port } => {
+                    let ch = match session.channel_open_session().await {
+                        Ok(ch) => ch,
+                        Err(_) => continue,
+                    };
+                    if ch.exec(true, docker_proxy_cmd(container, port).as_str()).await.is_err() {
+                        continue;
+                    }
+                    ch
+                }
+                TunnelTarget::Direct { ref host, port } => {
+                    match session
+                        .channel_open_direct_tcpip(host.as_str(), port as u32, "127.0.0.1", 0u32)
+                        .await
+                    {
+                        Ok(ch) => ch,
+                        Err(_) => continue,
+                    }
+                }
+            };
+
+            let mut ssh_stream = channel.into_stream();
+            tokio::spawn(async move {
+                let _ = tokio::io::copy_bidirectional(&mut local_stream, &mut ssh_stream).await;
+            });
+        }
+    });
+
+    Ok(TunnelHandle { local_port, shutdown, task: Some(task) })
+}

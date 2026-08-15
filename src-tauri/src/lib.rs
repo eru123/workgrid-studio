@@ -26,6 +26,7 @@ pub mod ssh;
 pub use error::{AppError, AppResult};
 pub use services::connection::ConnectionManager;
 pub use services::credentials::CredentialService;
+pub use services::db_servers::DbServerService;
 pub use services::ssh_servers::SshServerService;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -41,12 +42,17 @@ pub fn run() {
         eprintln!("workgrid: failed to load SSH server registry: {e}; starting empty");
         SshServerService::default()
     });
+    let db_servers = tauri::async_runtime::block_on(DbServerService::new()).unwrap_or_else(|e| {
+        eprintln!("workgrid: failed to load database server registry: {e}; starting empty");
+        DbServerService::default()
+    });
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(ConnectionManager::new())
         .manage(credentials)
         .manage(ssh_servers)
+        .manage(db_servers)
         .invoke_handler(tauri::generate_handler![
             // Connection lifecycle
             commands::connection::db_connect,
@@ -87,6 +93,14 @@ pub fn run() {
             commands::ssh_servers::ssh_upsert_server,
             commands::ssh_servers::ssh_delete_server,
             commands::ssh_servers::ssh_test_connection,
+            // Database servers
+            commands::db_servers::db_servers_list,
+            commands::db_servers::db_upsert_server,
+            commands::db_servers::db_delete_server,
+            commands::db_servers::db_server_test,
+            commands::db_servers::db_connect_server,
+            commands::db_servers::docker_list_containers,
+            commands::db_servers::ssh_docker_list_containers,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

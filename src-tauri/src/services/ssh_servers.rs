@@ -160,24 +160,24 @@ fn atomic_write(path: std::path::PathBuf, bytes: Vec<u8>) -> AppResult<()> {
     Ok(())
 }
 
-// ---------------------------------------------------------- - test connection
+// ------------------------------------------------- - shared connection machinery
 
 /// Authentication material resolved from a vault identity + server overrides.
 #[derive(Clone)]
-struct AuthMaterial {
-    user: String,
-    private_key: Option<PrivateKey>,
-    password: Option<String>,
+pub(crate) struct AuthMaterial {
+    pub(crate) user: String,
+    pub(crate) private_key: Option<PrivateKey>,
+    pub(crate) password: Option<String>,
 }
 
 /// One ProxyJump hop: `user@host:port` (user/port optional).
-struct Hop {
-    user: Option<String>,
-    host: String,
-    port: u16,
+pub(crate) struct Hop {
+    pub(crate) user: Option<String>,
+    pub(crate) host: String,
+    pub(crate) port: u16,
 }
 
-fn parse_hops(spec: &str) -> AppResult<Vec<Hop>> {
+pub(crate) fn parse_hops(spec: &str) -> AppResult<Vec<Hop>> {
     let mut hops = vec![];
     for raw in spec.split(',') {
         let raw = raw.trim();
@@ -208,7 +208,7 @@ fn parse_hops(spec: &str) -> AppResult<Vec<Hop>> {
     Ok(hops)
 }
 
-async fn resolve_auth(input: &SshServerInput, vault: &CredentialService) -> AppResult<AuthMaterial> {
+pub(crate) async fn resolve_auth(input: &SshServerInput, vault: &CredentialService) -> AppResult<AuthMaterial> {
     if let Some(identity_id) = input.identity_id.as_deref().filter(|id| !id.is_empty()) {
         let entry = vault.full_entry(identity_id).await?;
         let user = input
@@ -248,7 +248,7 @@ async fn resolve_auth(input: &SshServerInput, vault: &CredentialService) -> AppR
 }
 
 /// `~/…` / `~` → `$HOME/…` (Windows `%USERPROFILE%` tolerated via HOME).
-fn expand_tilde(path: &str) -> String {
+pub(crate) fn expand_tilde(path: &str) -> String {
     if path == "~" {
         return std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
     }
@@ -262,7 +262,7 @@ fn expand_tilde(path: &str) -> String {
 
 /// Authenticate a connected session: publickey first, then password.
 /// Returns the method that succeeded.
-async fn authenticate(session: &mut client::Handle<SshClientHandler>, auth: &AuthMaterial) -> AppResult<String> {
+pub(crate) async fn authenticate(session: &mut client::Handle<SshClientHandler>, auth: &AuthMaterial) -> AppResult<String> {
     if let Some(key) = auth.private_key.as_ref() {
         let key = PrivateKeyWithHashAlg::new(Arc::new(key.clone()), None);
         let result = session
@@ -287,7 +287,7 @@ async fn authenticate(session: &mut client::Handle<SshClientHandler>, auth: &Aut
     ))
 }
 
-fn client_config(input: &SshServerInput) -> Arc<client::Config> {
+pub(crate) fn client_config(input: &SshServerInput) -> Arc<client::Config> {
     Arc::new(client::Config {
         inactivity_timeout: Some(Duration::from_secs(input.connect_timeout_secs.unwrap_or(30))),
         keepalive_interval: input
@@ -298,12 +298,12 @@ fn client_config(input: &SshServerInput) -> Arc<client::Config> {
     })
 }
 
-fn is_strict(input: &SshServerInput) -> bool {
+pub(crate) fn is_strict(input: &SshServerInput) -> bool {
     matches!(input.strict_host_key.as_deref(), Some("yes") | Some("true"))
 }
 
 /// A duplex stream over a spawned ProxyCommand's stdin/stdout.
-struct ChildStream {
+pub(crate) struct ChildStream {
     child: tokio::process::Child,
 }
 
@@ -340,62 +340,69 @@ impl Drop for ChildStream {
     }
 }
 
-/// Full Test Connection run against the (possibly unsaved) form input.
-pub async fn test_connection(
+/// A transport to an SSH host: a plain TCP socket, a ProxyCommand child
+/// process (stdin/stdout), or a direct-tcpip channel tunnelled through a
+/// jump session. All implement AsyncRead + AsyncWrite for connect_stream.
+pub(crate) enum Transport {
+    Tcp(tokio::net::TcpStream),
+    Child(ChildStream),
+    Channel(russh::ChannelStream<russh::client::Msg>),
+}
+impl AsyncRead for Transport {
+    fn poll_read(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>, buf: &mut ReadBuf<'_>) -> std::task::Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            Transport::Tcp(s) => Pin::new(s).poll_read(cx, buf),
+            Transport::Child(c) => Pin::new(c).poll_read(cx, buf),
+            Transport::Channel(c) => Pin::new(c).poll_read(cx, buf),
+        }
+    }
+}
+impl AsyncWrite for Transport {
+    fn poll_write(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>, buf: &[u8]) -> std::task::Poll<std::io::Result<usize>> {
+        match self.get_mut() {
+            Transport::Tcp(s) => Pin::new(s).poll_write(cx, buf),
+            Transport::Child(c) => Pin::new(c).poll_write(cx, buf),
+            Transport::Channel(c) => Pin::new(c).poll_write(cx, buf),
+        }
+    }
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            Transport::Tcp(s) => Pin::new(s).poll_flush(cx),
+            Transport::Child(c) => Pin::new(c).poll_flush(cx),
+            Transport::Channel(c) => Pin::new(c).poll_flush(cx),
+        }
+    }
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            Transport::Tcp(s) => Pin::new(s).poll_shutdown(cx),
+            Transport::Child(c) => Pin::new(c).poll_shutdown(cx),
+            Transport::Channel(c) => Pin::new(c).poll_shutdown(cx),
+        }
+    }
+}
+
+/// A live, authenticated SSH session (the final host, possibly behind jumps).
+pub(crate) struct SshSession {
+    pub(crate) session: client::Handle<SshClientHandler>,
+    pub(crate) auth_used: String,
+    pub(crate) fingerprint: Option<String>,
+    pub(crate) hops: Vec<String>,
+}
+
+/// Connect + authenticate to the SSH server described by `input`, walking the
+/// ProxyJump chain / ProxyCommand as needed. Shared by Test Connection, the
+/// DB tunnel and remote docker listings.
+pub(crate) async fn connect_session(
     input: &SshServerInput,
     vault: &CredentialService,
-) -> AppResult<SshTestResult> {
-    let started = Instant::now();
+) -> AppResult<SshSession> {
     let mut hops: Vec<String> = vec![];
-
     let auth = resolve_auth(input, vault).await?;
     let config = client_config(input);
     let connect_timeout = Duration::from_secs(input.connect_timeout_secs.unwrap_or(15));
 
     let final_host = input.host.trim().to_string();
     let final_port = input.port.unwrap_or(22);
-
-    // ---- build the transport to the final host --------------------------------
-    // Three transports: a plain TCP socket, a ProxyCommand child process
-    // (stdin/stdout), or a direct-tcpip channel tunnelled through a jump
-    // session. All implement AsyncRead + AsyncWrite for connect_stream.
-    enum Transport {
-        Tcp(tokio::net::TcpStream),
-        Child(ChildStream),
-        Channel(russh::ChannelStream<russh::client::Msg>),
-    }
-    impl AsyncRead for Transport {
-        fn poll_read(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>, buf: &mut ReadBuf<'_>) -> std::task::Poll<std::io::Result<()>> {
-            match self.get_mut() {
-                Transport::Tcp(s) => Pin::new(s).poll_read(cx, buf),
-                Transport::Child(c) => Pin::new(c).poll_read(cx, buf),
-                Transport::Channel(c) => Pin::new(c).poll_read(cx, buf),
-            }
-        }
-    }
-    impl AsyncWrite for Transport {
-        fn poll_write(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>, buf: &[u8]) -> std::task::Poll<std::io::Result<usize>> {
-            match self.get_mut() {
-                Transport::Tcp(s) => Pin::new(s).poll_write(cx, buf),
-                Transport::Child(c) => Pin::new(c).poll_write(cx, buf),
-                Transport::Channel(c) => Pin::new(c).poll_write(cx, buf),
-            }
-        }
-        fn poll_flush(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<std::io::Result<()>> {
-            match self.get_mut() {
-                Transport::Tcp(s) => Pin::new(s).poll_flush(cx),
-                Transport::Child(c) => Pin::new(c).poll_flush(cx),
-                Transport::Channel(c) => Pin::new(c).poll_flush(cx),
-            }
-        }
-        fn poll_shutdown(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<std::io::Result<()>> {
-            match self.get_mut() {
-                Transport::Tcp(s) => Pin::new(s).poll_shutdown(cx),
-                Transport::Child(c) => Pin::new(c).poll_shutdown(cx),
-                Transport::Channel(c) => Pin::new(c).poll_shutdown(cx),
-            }
-        }
-    }
 
     let mut active: Option<client::Handle<SshClientHandler>> = None;
 
@@ -487,11 +494,13 @@ pub async fn test_connection(
             .channel_open_direct_tcpip(&final_host, final_port as u32, "127.0.0.1", 0)
             .await
             .map_err(|e| {
-                AppError::ssh(format!("last jump refused forwarding to {final_host}:{final_port}: {e}"))
+                AppError::ssh(format!(
+                    "last jump refused forwarding to {final_host}:{final_port}: {e}"
+                ))
             })?;
-        let _ = session
-            .disconnect(russh::Disconnect::ByApplication, "workgrid test complete", "")
-            .await;
+        // Keep the jump session's connection alive — the final session runs
+        // over this channel, so the jump Handle is simply dropped (the russh
+        // event loop stays up while the channel lives).
         Transport::Channel(channel.into_stream())
     } else if let Some(cmd) = input.proxy_command.as_deref().filter(|c| !c.trim().is_empty()) {
         let substituted = cmd.replace("%h", &final_host).replace("%p", &final_port.to_string());
@@ -535,11 +544,27 @@ pub async fn test_connection(
     let mut session = client::connect_stream(config, final_transport, handler)
         .await
         .map_err(|e| {
-            AppError::ssh(format!("SSH handshake with {}:{} failed: {e}", input.host.trim(), final_port))
+            AppError::ssh(format!(
+                "SSH handshake with {}:{} failed: {e}",
+                input.host.trim(),
+                final_port
+            ))
         })?;
     let auth_used = authenticate(&mut session, &auth).await?;
-    let latency = started.elapsed().as_millis() as u64;
     let fingerprint = fingerprint_slot.lock().unwrap().clone();
+
+    Ok(SshSession { session, auth_used, fingerprint, hops })
+}
+
+/// Full Test Connection run against the (possibly unsaved) form input.
+pub async fn test_connection(
+    input: &SshServerInput,
+    vault: &CredentialService,
+) -> AppResult<SshTestResult> {
+    let started = Instant::now();
+    let connected = connect_session(input, vault).await?;
+    let session = connected.session;
+    let latency = started.elapsed().as_millis() as u64;
 
     let _ = session
         .disconnect(russh::Disconnect::ByApplication, "workgrid test complete", "")
@@ -548,17 +573,72 @@ pub async fn test_connection(
     Ok(SshTestResult {
         ok: true,
         message: format!(
-            "Connected to {}:{} as {} in {} ms",
+            "Connected to {}:{} as requested in {} ms",
             input.host.trim(),
-            final_port,
-            auth.user,
+            input.port.unwrap_or(22),
             latency
         ),
         latency_ms: Some(latency),
-        auth_used: Some(auth_used),
-        host_fingerprint: fingerprint,
-        hops,
+        auth_used: Some(connected.auth_used),
+        host_fingerprint: connected.fingerprint,
+        hops: connected.hops,
     })
+}
+
+/// Run `docker ps` over an authenticated SSH session and parse name/image
+/// pairs. Used by the DB server editor to pick containers on remote hosts.
+pub(crate) async fn list_remote_containers(
+    input: &SshServerInput,
+    vault: &CredentialService,
+) -> AppResult<Vec<crate::models::DockerContainerDto>> {
+    let connected = connect_session(input, vault).await?;
+    let session = connected.session;
+    let channel = session
+        .channel_open_session()
+        .await
+        .map_err(|e| AppError::ssh(format!("could not open exec channel: {e}")))?;
+    channel
+        .exec(
+            true,
+            "docker ps --format '{{.Names}}\t{{.Image}}'",
+        )
+        .await
+        .map_err(|e| AppError::ssh(format!("docker ps failed to start: {e}")))?;
+    let mut stream = channel.into_stream();
+    let mut out = Vec::new();
+    tokio::time::timeout(Duration::from_secs(15), tokio::io::AsyncReadExt::read_to_end(&mut stream, &mut out))
+        .await
+        .map_err(|_| AppError::ssh("docker ps on the remote host timed out after 15s"))?
+        .map_err(|e| AppError::ssh(format!("docker ps output error: {e}")))?;
+    let _ = session
+        .disconnect(russh::Disconnect::ByApplication, "workgrid done", "")
+        .await;
+    parse_container_lines(&String::from_utf8_lossy(&out))
+}
+
+/// Parse `docker ps --format '{{.Names}}\t{{.Image}}'` output lines.
+pub(crate) fn parse_container_lines(text: &str) -> AppResult<Vec<crate::models::DockerContainerDto>> {
+    let mut containers = vec![];
+    for line in text.lines() {
+        let line = line.trim_end_matches('\r');
+        if line.trim().is_empty() {
+            continue;
+        }
+        match line.split_once('\t') {
+            Some((name, image)) if !name.is_empty() => {
+                containers.push(crate::models::DockerContainerDto {
+                    name: name.trim().to_string(),
+                    image: image.trim().to_string(),
+                });
+            }
+            _ => {
+                return Err(AppError::ssh(format!(
+                    "unexpected docker ps output: {line:?} — is docker installed on that host?"
+                )))
+            }
+        }
+    }
+    Ok(containers)
 }
 
 // --------------------------------------------------------------- - tests

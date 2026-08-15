@@ -415,3 +415,171 @@ pub struct SshTestResult {
     #[serde(default)]
     pub hops: Vec<String>,
 }
+
+//  ------ Database servers
+
+/// How a database server is reached.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DbConnectionType {
+    /// Direct TCP to host:port.
+    #[default]
+    #[serde(rename = "tcp")]
+    Tcp,
+    /// Container on the local Docker daemon; address resolved via
+    /// `docker port` / `docker inspect` at connect time.
+    #[serde(rename = "docker")]
+    Docker,
+    /// Database reachable from a registered SSH server (direct-tcpip tunnel).
+    #[serde(rename = "ssh")]
+    Ssh,
+    /// Container on a remote Docker daemon, reached by `docker exec` over a
+    /// registered SSH server.
+    #[serde(rename = "sshDocker")]
+    SshDocker,
+}
+
+impl std::fmt::Display for DbConnectionType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            DbConnectionType::Tcp => "tcp",
+            DbConnectionType::Docker => "docker",
+            DbConnectionType::Ssh => "ssh",
+            DbConnectionType::SshDocker => "sshDocker",
+        };
+        f.write_str(s)
+    }
+}
+
+impl DbConnectionType {
+    /// Case-insensitive parse, tolerating "ssh_docker"/"ssh-docker" aliases.
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "tcp" | "direct" => Some(DbConnectionType::Tcp),
+            "docker" | "docker-local" => Some(DbConnectionType::Docker),
+            "ssh" => Some(DbConnectionType::Ssh),
+            "sshdocker" | "ssh_docker" | "ssh-docker" | "docker-ssh" => {
+                Some(DbConnectionType::SshDocker)
+            }
+            _ => None,
+        }
+    }
+}
+
+/// A saved database server. The record stores the connection recipe per
+/// connection type; the DB password is stored only inside the encrypted
+/// registry file (same AES-256-GCM envelope as the rest of the data dir).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DbServerRecord {
+    pub id: String,
+    pub name: String,
+    pub connection_type: DbConnectionType,
+    /// mysql | postgres | sqlite | mssql (DbType string).
+    pub db_type: String,
+    /// TCP: DB host. SSH: DB host as reachable from the SSH host
+    /// (defaults to 127.0.0.1). Unused for docker types.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+    /// DB port. For docker types this is the container-internal port.
+    #[serde(default)]
+    pub port: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub database: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ssl: Option<bool>,
+    /// docker / sshDocker: container name or id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub docker_container: Option<String>,
+    /// ssh / sshDocker: registered SSH server (SshServerRecord id).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ssh_server_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notes: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<String>,
+}
+
+pub type DbServerDto = DbServerRecord;
+
+/// Create/update payload. `id: None` creates; a supplied id updates in place.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DbServerInput {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    pub name: String,
+    #[serde(default)]
+    pub connection_type: DbConnectionType,
+    #[serde(default)]
+    pub db_type: String,
+    #[serde(default)]
+    pub host: Option<String>,
+    #[serde(default)]
+    pub port: Option<u16>,
+    #[serde(default)]
+    pub database: Option<String>,
+    #[serde(default)]
+    pub user: Option<String>,
+    #[serde(default)]
+    pub password: Option<String>,
+    #[serde(default)]
+    pub ssl: Option<bool>,
+    #[serde(default)]
+    pub docker_container: Option<String>,
+    #[serde(default)]
+    pub ssh_server_id: Option<String>,
+    #[serde(default)]
+    pub notes: Option<String>,
+}
+
+impl From<&DbServerRecord> for DbServerInput {
+    fn from(r: &DbServerRecord) -> Self {
+        Self {
+            id: Some(r.id.clone()),
+            name: r.name.clone(),
+            connection_type: r.connection_type,
+            db_type: r.db_type.clone(),
+            host: r.host.clone(),
+            port: r.port,
+            database: r.database.clone(),
+            user: r.user.clone(),
+            password: r.password.clone(),
+            ssl: r.ssl,
+            docker_container: r.docker_container.clone(),
+            ssh_server_id: r.ssh_server_id.clone(),
+            notes: r.notes.clone(),
+        }
+    }
+}
+
+/// Outcome of a database server test / connect.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DbServerTestResult {
+    pub ok: bool,
+    pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latency_ms: Option<u64>,
+    /// The address the driver actually dialed (post tunnel/docker resolution).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved_address: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_version: Option<String>,
+    /// Human-readable connection path (jumps, docker lookups, tunnels).
+    #[serde(default)]
+    pub path: Vec<String>,
+}
+
+/// A container entry as listed by `docker ps` (local or remote).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DockerContainerDto {
+    pub name: String,
+    pub image: String,
+}
