@@ -1,0 +1,6 @@
+# Resource guardrail: the host has 8 cores / 19 GiB RAM and full-parallel
+# cargo builds (default: one rustc per core) saturate it. Cap rustc
+# parallelism at 2 so builds stay in the background even without the
+# throttled wrapper (scripts/cargo-throttled.sh enforces the hard 20% cap).
+[build]
+jobs = 2

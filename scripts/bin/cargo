@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# PATH shim: intercepts the `cargo` invocations that `pnpm tauri dev/build`
+# spawns and runs them under the hard ~20% system cap (160% of 8 cores,
+# ~3.9 GiB RAM). The tauri CLI ignores the CARGO env var but resolves cargo
+# via PATH, so package.json prepends scripts/bin to PATH.
+# rustc and the dev app spawned under `cargo run` inherit the scope.
+set -euo pipefail
+
+real_cargo=""
+for candidate in "$HOME/.cargo/bin/cargo" /usr/local/bin/cargo /usr/bin/cargo; do
+  if [[ -x "$candidate" && "$candidate" != "$0" ]]; then
+    real_cargo="$candidate"
+    break
+  fi
+done
+if [[ -z "$real_cargo" ]]; then
+  echo "cargo shim: no real cargo found" >&2
+  exit 1
+fi
+
+exec systemd-run --user --scope --quiet \
+  -p CPUQuota=160% \
+  -p MemoryMax=3900M \
+  nice -n 19 ionice -c 3 \
+  "$real_cargo" "$@"
