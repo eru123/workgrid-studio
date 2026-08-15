@@ -1,7 +1,8 @@
 // WorkGrid Studio backend entry point.
 //
 // Architecture (VS Code-style service registry):
-//   - AppState holds singleton services (ConnectionManager).
+//   - Services are singletons (ConnectionManager, CredentialService),
+//     each registered with `.manage()` so commands resolve them via State<T>.
 //   - Drivers implement the DbDriver trait (MySQL working; PG/SQLite/MSSQL stubs).
 //   - Commands are thin handlers that resolve services via State<T> and delegate.
 //
@@ -10,10 +11,9 @@
 //   - models:    serde data structs (camelCase, matching TS interfaces)
 //   - sql:       split_sql_statements + timeout helpers
 //   - drivers:   DbDriver trait + MySQL/PG/SQLite/MSSQL impls
-//   - services:  ConnectionManager (sessions), crypto, files
+//   - services:  ConnectionManager (sessions), credentials vault, crypto, files
 //   - ssh:       russh tunnel + TOFU host keys
 //   - commands:  Tauri #[command] handlers
-//   - state:     AppState service container
 
 pub mod commands;
 pub mod drivers;
@@ -22,17 +22,25 @@ pub mod models;
 pub mod services;
 pub mod sql;
 pub mod ssh;
-pub mod state;
 
 pub use error::{AppError, AppResult};
 pub use services::connection::ConnectionManager;
-pub use state::AppState;
+pub use services::credentials::CredentialService;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Load the persisted vault (or start empty when no file exists yet).
+    // A corrupt file falls back to an empty vault rather than aborting
+    // startup; the error is logged so the failure is visible.
+    let credentials = tauri::async_runtime::block_on(CredentialService::new()).unwrap_or_else(|e| {
+        eprintln!("workgrid: failed to load credentials vault: {e}; starting with an empty vault");
+        CredentialService::default()
+    });
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .manage(AppState::new())
+        .manage(ConnectionManager::new())
+        .manage(credentials)
         .invoke_handler(tauri::generate_handler![
             // Connection lifecycle
             commands::connection::db_connect,
@@ -67,6 +75,7 @@ pub fn run() {
             commands::credentials::credentials_reorder_node,
             commands::credentials::credentials_copy_node,
             commands::credentials::credentials_rename_node,
+            commands::credentials::credentials_set_expanded,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

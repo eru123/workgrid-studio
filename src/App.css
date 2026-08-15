@@ -12,3 +12,50 @@ body,
   background: var(--wg-editor-background, #1e1e1e);
   color: var(--wg-foreground, #cccccc);
 }
+
+/* Credentials editor scroll region — WebKit overlay scrollbars are invisible
+   at rest, which made the long form look truncated ("buttons cropped").
+   Give the region an always-drawn scrollbar so overflow is discoverable. */
+.wg-cred-editor::-webkit-scrollbar {
+  width: 10px;
+}
+
+.wg-cred-editor::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.wg-cred-editor::-webkit-scrollbar-thumb {
+  background: rgba(121, 121, 121, 0.4);
+  border-radius: 5px;
+}
+
+.wg-cred-editor::-webkit-scrollbar-thumb:hover {
+  background: rgba(121, 121, 121, 0.7);
+}
+
+/* Icon-button tooltips — the native `title` attribute is unreliable in the
+   WebKitGTK webview, so draw our own on hover. The pane headers uppercase
+   their content; tooltips must not inherit that. */
+[data-wg-tip] {
+  position: relative;
+}
+
+[data-wg-tip]:hover::after {
+  content: attr(data-wg-tip);
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 100;
+  padding: 3px 8px;
+  border-radius: 3px;
+  font-size: 11px;
+  font-weight: normal;
+  text-transform: none;
+  letter-spacing: normal;
+  white-space: nowrap;
+  pointer-events: none;
+  color: var(--wg-foreground, #cccccc);
+  background: var(--wg-editorWidget-background, #252526);
+  border: 1px solid var(--wg-widget-border, #454545);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+}

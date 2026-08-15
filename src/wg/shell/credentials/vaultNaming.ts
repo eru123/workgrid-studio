@@ -1,22 +1,35 @@
 // Vault item naming + collision detection for the Credentials explorer.
 //
 // Mirrors VS Code's explorer naming behaviour, adapted to the WorkGrid Studio
-// vault model (backend uses `'folder' | 'entry'`, not the spec's `'file' |
-// 'folder'`; here `'entry'` ≡ the spec's `'file'`). Type is resolved from the
-// name on create: a `.store` suffix produces a credential entry, anything else
-// is a folder. Empty input falls back to an auto-incrementing "Untitled"
-// folder. These are pure helpers — no React, no IPC.
+// vault model (backend uses `'folder' | 'entry'`; `'entry'` ≡ the spec's
+// `'file'`).
 //
-// Paths are supported VS Code-style: typing `folder/hello.store` creates the
-// intermediate folder `folder` and the entry `hello.store` inside it. Existing
-// intermediate folders are reused rather than duplicated.
+// Naming rules (type comes from the ACTION, never the name):
+//  - The `.store` suffix marks a credential entry ON DISK but is HIDDEN in
+//    the explorer: an entry stored as `bastion.store` displays `bastion`.
+//  - Creating a file always stores `<name>.store` — one suffix, never
+//    doubled (`file.store` stays `file.store`, `note.txt` becomes
+//    `note.txt.store` and still displays `note.txt`).
+//  - Creating a folder never appends or strips anything — a folder named
+//    `x.store` is a folder.
+//  - `/` in the input nests: `test/test2/file` → folder `test`, folder
+//    `test2` inside it, entry `file.store` inside that. The last segment is
+//    the created item; intermediates are folders (created or reused).
+//  - Empty input auto-resolves to an auto-incremented "Untitled" item.
+//
+// Collision checks run in DISPLAY space (entries hide `.store`), so a new
+// file `hello` collides with a stored `hello.store`. These are pure helpers —
+// no React, no IPC.
 
 import type { CredentialNodeDto } from '../../backend/types.js';
 
 /** The two item kinds the vault stores. */
 export type VaultItemType = 'folder' | 'entry';
 
-/** Suffix that marks a name as a credential entry rather than a folder. */
+/** Which create action an inline input belongs to (decides the item type). */
+export type VaultCreateKind = 'file' | 'folder';
+
+/** Suffix that marks a credential entry on disk. Hidden in the explorer. */
 export const STORE_SUFFIX = '.store';
 
 /** Path separator accepted in create/rename input. */
@@ -29,9 +42,21 @@ export interface ResolvedVaultItem {
   parentId: string | null;
 }
 
+/** Entry name as shown in the explorer (`bastion.store` → `bastion`). */
+export function displayNameOf(node: { type: string; name: string }): string {
+  return node.type === 'entry' && node.name.toLowerCase().endsWith(STORE_SUFFIX)
+    ? node.name.slice(0, -STORE_SUFFIX.length)
+    : node.name;
+}
+
+/** Entry name as stored on disk — exactly one `.store`, never doubled. */
+export function ensureStoreSuffix(name: string): string {
+  return name.toLowerCase().endsWith(STORE_SUFFIX) ? name : `${name}${STORE_SUFFIX}`;
+}
+
 /**
  * Split a typed path into non-empty segments on `/`. Trailing/leading slashes
- * and blanks are dropped. `folder/hello.store` → `['folder', 'hello.store']`.
+ * and blanks are dropped. `folder/hello` → `['folder', 'hello']`.
  */
 export function splitVaultPath(input: string): string[] {
   return input
@@ -57,53 +82,52 @@ export function childrenOf(node: CredentialNodeDto | null | undefined): readonly
   return node?.children ?? [];
 }
 
+/** First free name among `taken`: "Untitled", "Untitled (2)", "Untitled (3)"… */
+export function firstFreeName(base: string, taken: ReadonlySet<string>): string {
+  if (!taken.has(base)) {
+    return base;
+  }
+  let counter = 2;
+  // Cap the search to avoid pathological loops; 1000 is well beyond any real vault.
+  while (counter < 1000) {
+    const candidate = `${base} (${counter})`;
+    if (!taken.has(candidate)) {
+      return candidate;
+    }
+    counter++;
+  }
+  return `${base} (${counter})`;
+}
+
 /**
- * Auto-incrementing default folder name: "Untitled", "Untitled (2)", "Untitled (3)", ...
- * VS Code semantics — the first free name wins.
+ * Auto-incrementing default folder name, checked against sibling DISPLAY
+ * names (an entry stored `Untitled.store` displays `Untitled` and blocks the
+ * name for folders too).
  */
 export function generateDefaultFolderName(
   existingItems: readonly CredentialNodeDto[],
   parentId: string | null = null,
 ): string {
-  const baseName = 'Untitled';
-  const existingNames = new Set(
-    existingItems.filter((item) => (item.parentId ?? null) === parentId).map((item) => item.name),
-  );
-
-  if (!existingNames.has(baseName)) {
-    return baseName;
-  }
-
-  let counter = 2;
-  // Cap the search to avoid pathological loops; 1000 is well beyond any real vault.
-  while (counter < 1000) {
-    const candidate = `${baseName} (${counter})`;
-    if (!existingNames.has(candidate)) {
-      return candidate;
-    }
-    counter++;
-  }
-  // Extremely unlikely fallback — keeps the function total.
-  return `${baseName} (${counter})`;
+  const siblings = existingItems.filter((item) => (item.parentId ?? null) === parentId);
+  return firstFreeName('Untitled', new Set(siblings.map(displayNameOf)));
 }
 
-/** Resolve the item type from a typed name: `.store` suffix → entry, else folder. */
-export function resolveVaultItemType(name: string): VaultItemType {
-  return name.endsWith(STORE_SUFFIX) ? 'entry' : 'folder';
+/** Default entry name ("Untitled") against sibling display names. The stored
+ *  name gains the `.store` suffix at create time (see `ensureStoreSuffix`). */
+export function generateDefaultEntryName(siblings: readonly CredentialNodeDto[]): string {
+  return firstFreeName('Untitled', new Set(siblings.map(displayNameOf)));
 }
 
 /**
- * Validate a typed name against existing siblings.
+ * Validate a typed name against existing siblings (DISPLAY names).
  *
  * Returns an error message string when the name is rejected, or `null` when it
  * is acceptable. Rules:
  *  - Empty/whitespace → `null` (allowed while typing; auto-resolved to
  *    "Untitled" on submit).
  *  - A path with only blank segments (`/` , ` / `) → error (no real name).
- *  - A path whose final segment already exists as a sibling → collision error
- *    (matches VS Code: `folder/hello.store` collides if `hello.store` already
- *    sits beside the target parent). For a plain (slash-less) name this is a
- *    direct sibling check.
+ *  - A path whose final segment already exists as a sibling → collision error.
+ *    For a plain (slash-less) name this is a direct sibling check.
  *  - `excludeName` lets a rename skip the node's own current name.
  *
  * Intermediate path segments are not validated here: they are created (or
@@ -135,27 +159,6 @@ export function validateVaultItemName(
 }
 
 /**
- * Apply the WorkGrid naming rules to user input and produce the item to create:
- *  1. Empty input  → auto-incrementing "Untitled" folder.
- *  2. `.store` suffix → credential entry (name kept as-typed, incl. suffix).
- *  3. Anything else → folder.
- */
-export function handleCreateVaultItem(
-  inputName: string | undefined,
-  existingItems: readonly CredentialNodeDto[],
-  parentId: string | null = null,
-): ResolvedVaultItem {
-  const trimmed = inputName?.trim() ?? '';
-
-  if (!trimmed) {
-    // Rules 1 & 3: empty defaults to a folder with auto-incremented name.
-    return { name: generateDefaultFolderName(existingItems, parentId), type: 'folder', parentId };
-  }
-
-  return { name: trimmed, type: resolveVaultItemType(trimmed), parentId };
-}
-
-/**
  * A resolved create plan with path support. `folderSegments` lists the
  * intermediate folders to create-or-reuse (in order, starting under
  * `startParentId`); `finalItem` is the leaf item created last. When there is
@@ -166,42 +169,39 @@ export interface ResolvedVaultPath {
   startParentId: string | null;
   /** Intermediate folder names, in nesting order. Created-or-reused. */
   folderSegments: string[];
-  /** The leaf item to create. */
+  /** The leaf item to create. `name` is the DISPLAY name; the caller stores
+   *  `ensureStoreSuffix(name)` for files. */
   finalItem: ResolvedVaultItem;
 }
 
 /**
  * Resolve a (possibly pathed) input into a create plan against the current
- * vault tree. Intermediate folders that already exist are reused (their id is
- * returned so the caller chains into them); missing ones are flagged for
- * creation. Empty input resolves to an "Untitled" folder at the start parent.
- *
- * The returned `finalItem.parentId` is filled in by the caller after walking
- * the segments (see `handleCommitCreate` in App.tsx), since creating an
- * intermediate folder yields its id from the backend.
+ * vault tree. The item TYPE comes from `kind` (the create action), never from
+ * the name. Intermediate folders that already exist are reused. Empty input
+ * resolves to an auto-incremented "Untitled" item of the requested kind.
  *
  * @param existing the full nested vault tree (roots).
  * @param startParentId the parent the inline input targets (`null` = root).
+ * @param kind which create action opened the input.
  * @returns the resolved path, or `null` if the input is only slashes/blanks.
  */
 export function resolveVaultCreatePath(
   inputName: string | undefined,
   existing: readonly CredentialNodeDto[],
   startParentId: string | null,
+  kind: VaultCreateKind,
 ): ResolvedVaultPath | null {
   const trimmed = inputName?.trim() ?? '';
   const segments = splitVaultPath(trimmed);
+  const siblings = siblingsUnder(existing, startParentId);
 
   if (segments.length === 0) {
-    // Empty input: a single "Untitled" folder at the start parent. Reuse the
-    // flat resolver to get the auto-incremented name relative to that parent.
-    const siblings = siblingsUnder(existing, startParentId);
     return {
       startParentId,
       folderSegments: [],
       finalItem: {
-        name: generateDefaultFolderName(siblings, startParentId),
-        type: 'folder',
+        name: kind === 'folder' ? generateDefaultFolderName(siblings) : generateDefaultEntryName(siblings),
+        type: kind === 'folder' ? 'folder' : 'entry',
         parentId: startParentId,
       },
     };
@@ -214,7 +214,7 @@ export function resolveVaultCreatePath(
     folderSegments,
     finalItem: {
       name: finalSegment,
-      type: resolveVaultItemType(finalSegment),
+      type: kind === 'folder' ? 'folder' : 'entry',
       parentId: startParentId, // refined by the caller as it walks segments
     },
   };
@@ -253,33 +253,14 @@ export function findNodeById(
 }
 
 /**
- * Find a free folder name among `siblings` when `desired` is taken by a
- * non-folder (an entry) or is otherwise occupied. If `desired` is free or
- * already a folder, it is returned unchanged. Otherwise produces
- * `desired (2)`, `desired (3)`, … until a free name is found (capped at 1000).
- *
- * Used for intermediate path segments whose name collides with an existing
- * entry — VS Code would prompt; we auto-disambiguate to keep the path-create
- * flow non-modal.
+ * Whether a desired item clashes with a sibling — in display space (entries
+ * hide `.store`) or stored space (a folder named `x.store` blocks a file
+ * `x`, whose stored name would also be `x.store`).
  */
-export function nextUnusedFolderName(
-  desired: string,
-  siblings: readonly CredentialNodeDto[],
-): string {
-  const names = new Set(siblings.map((s) => s.name));
-  const existing = siblings.find((s) => s.name === desired);
-  // Free, or already a folder we can reuse → keep the name.
-  if (!existing || existing.type === 'folder') {
-    return desired;
-  }
-  let counter = 2;
-  while (counter < 1000) {
-    const candidate = `${desired} (${counter})`;
-    const clash = siblings.find((s) => s.name === candidate);
-    if (!clash || clash.type === 'folder') {
-      return candidate;
-    }
-    counter++;
-  }
-  return `${desired} (${counter})`;
+export function vaultNameClashes(
+  sibling: CredentialNodeDto,
+  displayName: string,
+  storedName: string,
+): boolean {
+  return displayNameOf(sibling) === displayName || sibling.name === storedName;
 }

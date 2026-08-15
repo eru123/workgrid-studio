@@ -1,8 +1,8 @@
 // ConnectionManager — the central database service. Holds one driver per
 // connected profile and routes all DB operations to the right driver.
 //
-// This is the "VS Code service" equivalent: a singleton registered in AppState,
-// resolved by commands via `State<ConnectionManager>`. It owns:
+// This is the "VS Code service" equivalent: a singleton registered with
+// `.manage()`, resolved by commands via `State<ConnectionManager>`. It owns:
 //   - drivers: one Box<dyn DbDriver> per connected profile (each holds its pool)
 //   - tunnels: SSH tunnel handles per profile (for teardown)
 //   - cancel_tokens: per-profile cancellation flags for connect-in-progress

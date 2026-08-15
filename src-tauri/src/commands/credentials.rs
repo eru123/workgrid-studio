@@ -1,6 +1,7 @@
 // Credential commands: thin handlers over `CredentialService`.
-// Secrets are never returned from tree paths; full entry fetches are
-// required to read credential fields.
+// Vault entries are SSH identities (user + private key path + passphrase).
+// Secrets (key passphrases) are never returned from tree paths; full entry
+// fetches are required to read credential fields.
 
 use tauri::State;
 
@@ -21,8 +22,9 @@ pub async fn credentials_get_entry(store: State<'_, CredentialService>, id: Stri
     store.full_entry(&id).await
 }
 
-/// Create or update a credential entry. Passwords are encrypted before
-/// persistence. When an existing id is supplied the entry is updated in-place.
+/// Create or update a credential entry (SSH identity). The key passphrase
+/// is encrypted before persistence. When an existing id is supplied the
+/// entry is updated in-place.
 #[tauri::command]
 pub async fn credentials_upsert_entry(
     store: State<'_, CredentialService>,
@@ -83,6 +85,16 @@ pub async fn credentials_rename_node(
     new_name: String,
 ) -> AppResult<CredentialNodeRedacted> {
     store.rename_node(&id, new_name).await
+}
+
+/// Persist a folder's UI expansion state.
+#[tauri::command]
+pub async fn credentials_set_expanded(
+    store: State<'_, CredentialService>,
+    id: String,
+    expanded: bool,
+) -> AppResult<()> {
+    store.set_expanded(&id, expanded).await
 }
 
 /// Delete a node by id.

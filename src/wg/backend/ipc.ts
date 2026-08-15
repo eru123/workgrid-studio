@@ -10,7 +10,6 @@ import type {
   ConnectionHandle,
   CredentialEntryDto,
   CredentialEntryInput,
-  CredentialKind,
   CredentialNodeDto,
   DatabaseInfo,
   QueryResultSet,
@@ -139,6 +138,12 @@ export function credentialsReorderNode(id: string, targetParent: string, beforeI
 export function credentialsRenameNode(id: string, newName: string): Promise<CredentialNodeDto> {
   return invoke<CredentialNodeDto>('credentials_rename_node', { id, newName });
 }
+
+/** Persist a folder's UI expansion state. */
+export function credentialsSetExpanded(id: string, expanded: boolean): Promise<void> {
+  return invoke<void>('credentials_set_expanded', { id, expanded });
+}
+
 export function credentialsCopyNode(id: string, targetParent: string): Promise<CredentialNodeDto> {
   return invoke<CredentialNodeDto>('credentials_copy_node', { id, targetParent });
 }

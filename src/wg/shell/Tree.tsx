@@ -31,8 +31,9 @@ export interface TreeProps {
 	/** Selection changed (plain click replaces; Ctrl toggles; Shift ranges). */
 	onSelectChange?: (ids: Set<string>, anchorId: string) => void;
 	/** Commit a create (inline input submitted). A returned string is an error
-	 *  message shown in the input without closing it; `void`/`undefined` closes. */
-	onCommitCreate?: (name: string, parentId: string | null) => Promise<string | void> | string | void;
+	 *  message shown in the input without closing it; `void`/`undefined` closes.
+	 *  `kind` reports which create action opened the input ('file' | 'folder'). */
+	onCommitCreate?: (name: string, parentId: string | null, kind: 'file' | 'folder') => Promise<string | void> | string | void;
 	/** Commit a rename (inline input submitted). Same error-string contract. */
 	onCommitRename?: (nodeId: string, newName: string) => Promise<string | void> | string | void;
 	/** Cancel the active edit (Escape). */
@@ -45,11 +46,26 @@ export interface TreeProps {
 	 * backend's own guard. Recommended to supply for instant UI rejection.
 	 */
 	descendantIdsOf?: (id: string) => string[];
+	/** Initial expansion decision for folders whose state has not been
+	 *  created yet (e.g. the vault's persisted `expanded` flags). */
+	defaultExpandedOf?: (node: TreeNode) => boolean;
+	/** Notified on every folder toggle so hosts can persist expansion. */
+	onToggleExpanded?: (node: TreeNode, expanded: boolean) => void;
+	/** Context menu on the tree's empty area (below/around the nodes). */
+	onEmptyContextMenu?: (anchor: { x: number; y: number }) => void;
+	/**
+	 * Reveal request: expand `chain` (ancestor folder ids, root → target
+	 * parent, plus the node id itself) in order, then scroll the last node
+	 * into view. Bump `key` to re-trigger; consumed after the next reload.
+	 */
+	revealRequest?: { key: number; chain: string[] };
 }
 
 /** Describes an inline edit session in the tree. */
 export interface TreeEditingState {
 	mode: 'create' | 'rename';
+	/** For create: which action opened the input — decides the created type. */
+	createType?: 'file' | 'folder';
 	/** For rename: the node being renamed. For create: undefined. */
 	nodeId?: string;
 	/** Parent under which the item is created. `null` = vault root. */
@@ -73,7 +89,10 @@ interface NodeState {
 /** Drop position computed from the pointer Y within a node row. */
 type DropPos = 'before' | 'into' | 'after';
 
-const DRAG_MIME = 'application/x-wg-tree-ids';
+/** MIME type carrying dragged node ids (also used by document-level
+ *  fallback handlers in hosts, e.g. root drops on blank sidebar areas). */
+export const TREE_DRAG_MIME = 'application/x-wg-tree-ids';
+const DRAG_MIME = TREE_DRAG_MIME;
 
 export function Tree({
 	backend,
@@ -87,13 +106,98 @@ export function Tree({
 	onCancelEdit,
 	onDropNodes,
 	descendantIdsOf,
+	defaultExpandedOf,
+	onToggleExpanded,
+	onEmptyContextMenu,
+	revealRequest,
 }: TreeProps) {
 	const [roots, setRoots] = useState<readonly TreeNode[]>(rootNodes ?? []);
 	const [states, setStates] = useState<Map<string, NodeState>>(new Map());
 	const [activeId, setActiveId] = useState<string | undefined>();
 	const [dragOver, setDragOver] = useState<{ id: string | null; pos: DropPos } | null>(null);
 	const selectionAnchor = useRef<string | null>(null);
+	// Fresh-read mirrors for async loops (reveal) without stale closures.
+	const statesRef = useRef(states);
+	useEffect(() => { statesRef.current = states; }, [states]);
+	const rootsRef = useRef(roots);
+	useEffect(() => { rootsRef.current = roots; }, [roots]);
+	const listRef = useRef<HTMLUListElement>(null);
+	// Generation guard: a backend swap invalidates in-flight reveals.
+	const revealGen = useRef(0);
+	const firstLoad = useRef(true);
+	const revealReqRef = useRef(revealRequest);
+	useEffect(() => { revealReqRef.current = revealRequest; }, [revealRequest]);
+	const lastRevealKey = useRef(-1);
 
+	/**
+	 * Recursively expand + lazy-load every folder matching `pred` (used to
+	 * restore persisted expansion and to preserve expansion across backend
+	 * reloads). `gen` aborts when a newer reveal/reload supersedes this one.
+	 * `ignoreLoaded` skips the "already expanded + loaded" shortcut — required
+	 * right after a state clear, where the states ref still holds the stale
+	 * pre-clear entries and the shortcut would silently drop the expansion.
+	 */
+	const reveal = useCallback(async (nodes: readonly TreeNode[], pred: (n: TreeNode) => boolean, visited: Set<string>, gen: number, ignoreLoaded = false) => {
+		if (!backend) return;
+		for (const node of nodes) {
+			if (gen !== revealGen.current) return;
+			if (!node.collapsible || visited.has(node.id)) continue;
+			visited.add(node.id);
+			if (!ignoreLoaded) {
+				const already = statesRef.current.get(node.id);
+				if (already?.expanded && already.children.length > 0) {
+					await reveal(already.children, pred, visited, gen, ignoreLoaded);
+					continue;
+				}
+			}
+			if (!pred(node)) continue;
+			setStates((prev) => {
+				const n = new Map(prev);
+				const cur = n.get(node.id) ?? { expanded: false, children: [] as readonly TreeNode[], loading: false };
+				n.set(node.id, { ...cur, expanded: true, loading: true });
+				return n;
+			});
+			const children = await Promise.resolve(backend.getChildren(node));
+			if (gen !== revealGen.current) return;
+			setStates((prev) => {
+				const n = new Map(prev);
+				const cur = n.get(node.id) ?? { expanded: true, children: [] as readonly TreeNode[], loading: false };
+				n.set(node.id, { ...cur, children, loading: false });
+				return n;
+			});
+			await reveal(children, pred, visited, gen, ignoreLoaded);
+		}
+	}, [backend]);
+
+	/**
+	 * Scroll a rendered node row into view (nearest scrollable ancestor).
+	 * No-op when the row is not (yet) rendered.
+	 */
+	const scrollNodeIntoView = useCallback((nodeId: string) => {
+		requestAnimationFrame(() => {
+			listRef.current
+				?.querySelector(`[data-node-id="${CSS.escape(nodeId)}"]`)
+				?.scrollIntoView({ block: 'nearest' });
+		});
+	}, []);
+
+	/** Expand `chain` and scroll its last node into view. */
+	const runRevealRequest = useCallback(async (req: { key: number; chain: string[] }, nodes: readonly TreeNode[]) => {
+		lastRevealKey.current = req.key;
+		const gen = ++revealGen.current;
+		const chain = new Set(req.chain);
+		// ignoreLoaded: runs may race a just-cleared state map (post-reload).
+		await reveal(nodes, (n) => chain.has(n.id), new Set(), gen, true);
+		const lastId = req.chain[req.chain.length - 1];
+		if (lastId) scrollNodeIntoView(lastId);
+	}, [reveal, scrollNodeIntoView]);
+
+	// (Re)load roots when the backend/rootNodes change. On a backend swap the
+	// previously expanded ids are captured and re-revealed after the reload so
+	// mutations don't collapse the user's tree; first load restores persisted
+	// defaults via `defaultExpandedOf`. A pending `revealRequest` (e.g. reveal
+	// the pasted node) is consumed here so it runs against fresh data.
+	const loadedBackendRef = useRef<TreeBackend | null>(null);
 	useEffect(() => {
 		if (rootNodes) {
 			setRoots(rootNodes);
@@ -104,9 +208,43 @@ export function Tree({
 			return;
 		}
 		let cancelled = false;
-		Promise.resolve(backend.getRoots()).then((r) => { if (!cancelled) setRoots(r); });
+		const isFirst = firstLoad.current;
+		firstLoad.current = false;
+		const gen = ++revealGen.current;
+		const prevStates = isFirst ? null : statesRef.current;
+		(async () => {
+			const expandedIds = new Set<string>();
+			if (prevStates) {
+				for (const [id, st] of prevStates) {
+					if (st.expanded) expandedIds.add(id);
+				}
+			}
+			const fresh = await Promise.resolve(backend.getRoots());
+			if (cancelled) return;
+			loadedBackendRef.current = backend;
+			setRoots(fresh);
+			setStates(new Map());
+			const pred = (n: TreeNode) => expandedIds.has(n.id) || (defaultExpandedOf?.(n) ?? false);
+			if (expandedIds.size > 0 || defaultExpandedOf) {
+				// ignoreLoaded: the states ref still holds pre-clear entries.
+				await reveal(fresh, pred, new Set(), gen, true);
+			}
+			const pending = revealReqRef.current;
+			if (pending && pending.key !== lastRevealKey.current) {
+				await runRevealRequest(pending, rootsRef.current);
+			}
+		})();
 		return () => { cancelled = true; };
-	}, [backend, rootNodes]);
+	}, [backend, rootNodes, defaultExpandedOf, reveal, runRevealRequest]);
+
+	// Reveal requests that arrive without a backend swap run immediately
+	// against the current roots — but only once this backend's roots are
+	// loaded; otherwise the post-swap reload above consumes the request.
+	useEffect(() => {
+		if (!revealRequest || revealRequest.key === lastRevealKey.current) return;
+		if (!backend || backend !== loadedBackendRef.current) return;
+		void runRevealRequest(revealRequest, rootsRef.current);
+	}, [revealRequest, backend, runRevealRequest]);
 
 	// Lazy-load children for a node id (used by toggle + reveal). Resolves the
 	// parent TreeNode from the current rendered tree so the backend seam works.
@@ -127,26 +265,35 @@ export function Tree({
 		if (!node.collapsible) {
 			return;
 		}
-		setStates((prev) => {
-			const next = new Map(prev);
-			const cur = next.get(node.id) ?? { expanded: false, children: [], loading: false };
-			const willExpand = !cur.expanded;
-			if (willExpand && cur.children.length === 0 && backend) {
-				next.set(node.id, { ...cur, expanded: true, loading: true });
-				Promise.resolve(backend.getChildren(node)).then((children) => {
-					setStates((p) => {
-						const n = new Map(p);
-						const existing = n.get(node.id)!;
-						n.set(node.id, { ...existing, children, loading: false });
-						return n;
-					});
+		const cur = statesRef.current.get(node.id);
+		const curExpanded = cur?.expanded ?? defaultExpandedOf?.(node) ?? false;
+		const willExpand = !curExpanded;
+		onToggleExpanded?.(node, willExpand);
+		if (willExpand && (cur?.children.length ?? 0) === 0 && backend) {
+			setStates((prev) => {
+				const next = new Map(prev);
+				const existing = next.get(node.id) ?? { expanded: false, children: [] as readonly TreeNode[], loading: false };
+				next.set(node.id, { ...existing, expanded: true, loading: true });
+				return next;
+			});
+			Promise.resolve(backend.getChildren(node)).then((children) => {
+				setStates((p) => {
+					const n = new Map(p);
+					const existing = n.get(node.id);
+					if (!existing) return p;
+					n.set(node.id, { ...existing, children, loading: false });
+					return n;
 				});
-			} else {
-				next.set(node.id, { ...cur, expanded: willExpand });
-			}
-			return next;
-		});
-	}, [backend]);
+			});
+		} else {
+			setStates((prev) => {
+				const next = new Map(prev);
+				const existing = next.get(node.id) ?? { expanded: false, children: [] as readonly TreeNode[], loading: false };
+				next.set(node.id, { ...existing, expanded: willExpand });
+				return next;
+			});
+		}
+	}, [backend, defaultExpandedOf, onToggleExpanded]);
 
 	// Deep-ancestor reveal: expand + lazy-load the full chain in order so an
 	// inline edit targeting a deeply-nested collapsed folder is visible.
@@ -251,6 +398,17 @@ export function Tree({
 			: [node.id];
 		e.dataTransfer.setData(DRAG_MIME, JSON.stringify(sel));
 		e.dataTransfer.effectAllowed = 'move';
+		// Custom drag chip (VS Code-style) — the browser's default snapshot of
+		// the whole row anchors poorly in WebKitGTK. The ghost is off-screen
+		// while captured and removed once the drag ends.
+		const ghost = document.createElement('div');
+		ghost.className = 'wg-tree-drag-ghost';
+		ghost.textContent = sel.length > 1 ? `${node.label} (+${sel.length - 1} more)` : node.label;
+		document.body.appendChild(ghost);
+		e.dataTransfer.setDragImage(ghost, 12, 10);
+		const cleanup = () => ghost.remove();
+		(e.currentTarget as HTMLElement).addEventListener('dragend', cleanup, { once: true });
+		window.setTimeout(cleanup, 10000);
 	}, [selectedIds]);
 
 	const computeDropPos = (e: React.DragEvent, el: HTMLElement): DropPos => {
@@ -331,6 +489,7 @@ export function Tree({
 			<li key={node.id} role="treeitem" aria-expanded={node.collapsible ? expanded : undefined}>
 				<div
 					className="wg-tree-node"
+					data-node-id={node.id}
 					data-active={activeId === node.id}
 					data-selected={isSelected || undefined}
 					data-dropping={dropHint ?? undefined}
@@ -351,7 +510,7 @@ export function Tree({
 					{isRenaming ? (
 						<InlineInput
 							initialValue={editing!.initialValue ?? node.label}
-							siblingNames={siblingNamesFor(node.data?.parentId ?? null, node.id)}
+							siblingNames={siblingNamesFor((node.data as { parentId?: string | null } | undefined)?.parentId ?? null, node.id)}
 							excludeName={node.label}
 							onSubmit={(name) => onCommitRename?.(node.id, name)}
 							onCancel={onCancelEdit}
@@ -367,13 +526,13 @@ export function Tree({
 				{expanded && (
 					<ul role="group" style={{ listStyle: 'none', padding: 0, margin: 0 }}>
 						{editing && editing.mode === 'create' && editing.parentId === node.id ? (
-							<InlineInputRow
-								depth={depth + 1}
-								initialValue={editing.initialValue ?? ''}
-								siblingNames={siblingNamesFor(node.id)}
-								onSubmit={(name) => onCommitCreate?.(name, node.id)}
-								onCancel={onCancelEdit}
-							/>
+						<InlineInputRow
+							depth={depth + 1}
+							initialValue={editing.initialValue ?? ''}
+							siblingNames={siblingNamesFor(node.id)}
+							onSubmit={(name) => onCommitCreate?.(name, node.id, editing.createType ?? 'folder')}
+							onCancel={onCancelEdit}
+						/>
 						) : null}
 						{children.map((child) => renderNode(child, depth + 1))}
 					</ul>
@@ -384,19 +543,30 @@ export function Tree({
 
 	return (
 		<ul
+			ref={listRef}
 			className="wg-tree"
 			role="tree"
 			data-drag-over-root={dragOver?.id === null ? '' : undefined}
-			style={{ listStyle: 'none', padding: 0, margin: 0, minHeight: 24 }}
+			// Stretch to fill the host pane so the blank area below the last
+			// row is a valid "drop at root" target (VS Code explorer parity).
+			style={{ listStyle: 'none', padding: 0, margin: 0, minHeight: 24, flex: '1 1 auto' }}
 			onDragOver={onDropNodes ? (e) => handleDragOver(e, null) : undefined}
 			onDrop={onDropNodes ? (e) => { void handleDrop(e, null); } : undefined}
+			onContextMenu={onEmptyContextMenu ? (e) => {
+				// Only the tree's own empty area — node rows bubble up with
+				// themselves as the target and keep their own menu.
+				if (e.target === e.currentTarget) {
+					e.preventDefault();
+					onEmptyContextMenu({ x: e.clientX, y: e.clientY });
+				}
+			} : undefined}
 		>
 			{editing && editing.mode === 'create' && editing.parentId === null ? (
 				<InlineInputRow
 					depth={0}
 					initialValue={editing.initialValue ?? ''}
 					siblingNames={siblingNamesFor(null)}
-					onSubmit={(name) => onCommitCreate?.(name, null)}
+					onSubmit={(name) => onCommitCreate?.(name, null, editing.createType ?? 'folder')}
 					onCancel={onCancelEdit}
 				/>
 			) : null}

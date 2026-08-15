@@ -11,13 +11,15 @@ const VALID_CODICON_IDS = new Set<string>(
 
 /**
  * Resolve a free-form icon id to a codicon class name (e.g. 'codicon-files').
- * Falls back to 'codicon-symbol-misc' for unknown/empty ids.
+ * Unknown ids (not in the trimmed codicon registry) fall back to
+ * 'symbol-misc' so a misspelled name renders a placeholder instead of
+ * nothing — the font only contains registered glyphs.
  */
 export function codiconClass(icon?: string): string {
 	if (!icon) {
 		return 'codicon codicon-symbol-misc';
 	}
 	const name = icon.replace(/^codicon-/, '').replace(/^\/?[^/]+\//, '');
-	const id = VALID_CODICON_IDS.has(name) ? name : (name || 'symbol-misc');
+	const id = VALID_CODICON_IDS.has(name) ? name : 'symbol-misc';
 	return `codicon codicon-${id}`;
 }

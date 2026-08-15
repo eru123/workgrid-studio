@@ -78,23 +78,22 @@ export interface ConnectionHandle {
   serverVersion: string;
 }
 
-//  ------ Credentials
+//  ------ Credentials (SSH identities)
 
-export type CredentialKind = 'login' | 'card' | 'identity' | 'note' | 'unknown';
+export type CredentialKind = 'ssh' | 'unknown';
 
 export interface CredentialFields {
-  username?: string | null;
+  /** SSH user the identity logs in as. */
+  user?: string | null;
+  /** SSH user password (password authentication). Encrypted at rest. */
   password?: string | null;
-  title?: string | null;
-  cardNumber?: string | null;
-  cardholder?: string | null;
-  expiry?: string | null;
-  fullName?: string | null;
-  email?: string | null;
-  phone?: string | null;
-  address?: string | null;
-  noteContent?: string | null;
-  custom?: unknown | null;
+  /** Private key file contents. Encrypted at rest. */
+  privateKey?: string | null;
+  /** Where the key was loaded from (provenance only). */
+  privateKeyPath?: string | null;
+  /** Passphrase protecting the private key. Encrypted at rest. */
+  passphrase?: string | null;
+  notes?: string | null;
 }
 
 export interface CredentialNode {
@@ -118,6 +117,8 @@ export interface CredentialNodeDto {
   kind?: CredentialKind;
   parentId?: string | null;
   children?: CredentialNodeDto[];
+  /** Folders only: persisted UI expansion state. */
+  expanded?: boolean;
 }
 
 export interface CredentialEntryDto {

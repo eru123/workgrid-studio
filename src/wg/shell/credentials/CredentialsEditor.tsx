@@ -1,56 +1,115 @@
 // Credential editor — fixed, tab-less replacement for the standard EditorArea
-// when the Credentials view is active. Backed by the encrypted credentials
-// vault (src-tauri/src/services/credentials.rs). Secrets are encrypted at rest
-// by the backend; the form sends plaintext fields and the Rust side encrypts
-// secret fields before persistence.
-//
-// Schema (matches models/mod.rs CredentialKind): login | card | identity | note | unknown.
+// when the Credentials view is active. Vault entries are SSH identities
+// consumed by SSH server connections. The private key can be pasted or
+// loaded from a file; in both cases the CONTENTS are stored in the vault.
+// Secret fields (user password, key contents, key passphrase) are sealed
+// with AES-256-GCM before persistence and the whole credentials file is
+// encrypted as well.
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { codiconClass } from '../icon.js';
 import { credentialsGetEntry, credentialsUpsertEntry } from '../../backend/ipc.js';
-import type { CredentialEntryInput, CredentialFields, CredentialKind } from '../../backend/types.js';
+import type { CredentialEntryInput } from '../../backend/types.js';
+import { displayNameOf, ensureStoreSuffix } from './vaultNaming.js';
 
 export interface CredentialsEditorProps {
   /** Entry id to edit. When null/undefined the form creates a new entry. */
   entryId?: string | null;
   /** Optional parent folder id for new entries. */
   parentId?: string | null;
-  /** Called after a successful save. */
-  onSaved?: () => void;
+  /** Called after a successful save with the saved entry id (created
+   *  identities report their new id so hosts can keep the form open). */
+  onSaved?: (savedId?: string) => void;
   /** Called when the user cancels. */
   onCancel?: () => void;
+  /** Notified whenever the form gains/loses unsaved changes. */
+  onDirtyChange?: (dirty: boolean) => void;
 }
 
-const KINDS: { readonly id: CredentialKind; readonly label: string; readonly icon: string }[] = [
-  { id: 'login', label: 'Login', icon: 'key' },
-  { id: 'card', label: 'Card', icon: 'credit-card' },
-  { id: 'identity', label: 'Identity', icon: 'account' },
-  { id: 'note', label: 'Note', icon: 'note' },
-  { id: 'unknown', label: 'Other', icon: 'symbol-misc' },
-];
-
-function emptyFields(): CredentialFields {
-  return {};
+/** Lightweight private-key format detection for the info hint under the
+ *  paste area. Returns null when no key content is present. */
+function keyInfoOf(text: string): { label: string; ok: boolean } | null {
+  const t = text.trim();
+  if (!t) return null;
+  if (t.startsWith('-----BEGIN OPENSSH PRIVATE KEY-----')) {
+    const algo = detectOpenSshAlgo(t);
+    return { label: algo ? `OpenSSH · ${algo}` : 'OpenSSH private key', ok: true };
+  }
+  const pem = /^-----BEGIN ((?:[A-Z0-9]+ )*)PRIVATE KEY-----/.exec(t);
+  if (pem) {
+    return { label: `PEM private key${pem[1] ? ` (${pem[1].trim().toLowerCase()})` : ''}`, ok: true };
+  }
+  if (t.startsWith('PuTTY-User-Key-File-')) {
+    return { label: 'PuTTY PPK key', ok: true };
+  }
+  return { label: 'Unrecognized format — expected an OpenSSH/PEM private key', ok: false };
 }
 
-export function CredentialsEditor({ entryId, parentId, onSaved, onCancel }: CredentialsEditorProps) {
-  const [kind, setKind] = useState<CredentialKind>('login');
+/** The key algorithm name is a length-prefixed string near the start of the
+ *  OpenSSH key body; searching the decoded prefix for known names is enough. */
+function detectOpenSshAlgo(text: string): string | null {
+  const b64 = text.split(/\s+/).filter((l) => !l.startsWith('-----')).join('');
+  const known = [
+    'ssh-ed25519', 'ssh-rsa', 'ecdsa-sha2-nistp256', 'ecdsa-sha2-nistp384',
+    'ecdsa-sha2-nistp521', 'sk-ssh-ed25519', 'sk-ecdsa-sha2-nistp256', 'ssh-dss',
+  ];
+  try {
+    const bin = atob(b64.slice(0, 256));
+    for (const algo of known) {
+      if (bin.includes(algo)) {
+        return algo.replace(/^sk-/, '').replace(/^ssh-/, '').replace(/^ecdsa-sha2-/, 'ecdsa-');
+      }
+    }
+  } catch {
+    // malformed base64 — fall through to the generic label
+  }
+  return null;
+}
+
+export function CredentialsEditor({ entryId, parentId, onSaved, onCancel, onDirtyChange }: CredentialsEditorProps) {
   const [name, setName] = useState('');
+  const [user, setUser] = useState('');
+  const [password, setPassword] = useState('');
+  const [privateKey, setPrivateKey] = useState('');
+  const [privateKeyPath, setPrivateKeyPath] = useState('');
+  const [passphrase, setPassphrase] = useState('');
   const [description, setDescription] = useState('');
-  const [fields, setFields] = useState<CredentialFields>(emptyFields);
+  const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const keyFileRef = useRef<HTMLInputElement>(null);
+  // Snapshot of the loaded state, serialized — dirty = current ≠ snapshot.
+  const [snapshot, setSnapshot] = useState('');
+  const current = JSON.stringify([name, user, password, privateKey, privateKeyPath, passphrase, description, notes]);
+  const dirty = !loading && current !== snapshot;
 
-  // Load an existing entry by id (with decrypted secrets) when editing.
   useEffect(() => {
-    if (!entryId) {
-      setKind('login');
-      setName('');
-      setDescription('');
-      setFields(emptyFields());
+    onDirtyChange?.(dirty);
+  }, [dirty, onDirtyChange, entryId]);
+
+  // Load an existing identity by id (with secrets unsealed) when editing.
+  useEffect(() => {
+    const resetTo = (values: {
+      name: string; user: string; password: string; privateKey: string;
+      privateKeyPath: string; passphrase: string; description: string; notes: string;
+    }) => {
+      setName(values.name);
+      setUser(values.user);
+      setPassword(values.password);
+      setPrivateKey(values.privateKey);
+      setPrivateKeyPath(values.privateKeyPath);
+      setPassphrase(values.passphrase);
+      setDescription(values.description);
+      setNotes(values.notes);
+      setSnapshot(JSON.stringify([
+        values.name, values.user, values.password, values.privateKey,
+        values.privateKeyPath, values.passphrase, values.description, values.notes,
+      ]));
       setError(null);
+    };
+    if (!entryId) {
+      resetTo({ name: '', user: '', password: '', privateKey: '', privateKeyPath: '', passphrase: '', description: '', notes: '' });
       return;
     }
     let cancelled = false;
@@ -59,10 +118,18 @@ export function CredentialsEditor({ entryId, parentId, onSaved, onCancel }: Cred
     credentialsGetEntry(entryId)
       .then((entry) => {
         if (cancelled) return;
-        setKind(entry.kind);
-        setName(entry.name);
-        setDescription(entry.description ?? '');
-        setFields(entry.fields ?? emptyFields());
+        resetTo({
+          // The name field works in explorer space: the on-disk `.store`
+          // suffix is hidden here and re-appended on save.
+          name: displayNameOf({ type: 'entry', name: entry.name }),
+          user: entry.fields?.user ?? '',
+          password: entry.fields?.password ?? '',
+          privateKey: entry.fields?.privateKey ?? '',
+          privateKeyPath: entry.fields?.privateKeyPath ?? '',
+          passphrase: entry.fields?.passphrase ?? '',
+          description: entry.description ?? '',
+          notes: entry.fields?.notes ?? '',
+        });
       })
       .catch((e: unknown) => {
         if (!cancelled) setError(messageOf(e));
@@ -75,8 +142,24 @@ export function CredentialsEditor({ entryId, parentId, onSaved, onCancel }: Cred
     };
   }, [entryId]);
 
-  const set = <K extends keyof CredentialFields>(key: K, value: CredentialFields[K]) => {
-    setFields((prev) => ({ ...prev, [key]: value }));
+  // "Load from file…" — reads the key contents into the vault store; the
+  // file itself is only a source, nothing on disk is referenced afterwards.
+  const handleKeyFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = ''; // allow re-selecting the same file
+    if (!file) return;
+    try {
+      const text = await file.text();
+      if (!text.trim()) {
+        setError('The selected file is empty.');
+        return;
+      }
+      setPrivateKey(text);
+      setPrivateKeyPath(file.name);
+      setError(null);
+    } catch (e: unknown) {
+      setError(messageOf(e));
+    }
   };
 
   const handleSubmit = async (event: React.FormEvent) => {
@@ -90,14 +173,22 @@ export function CredentialsEditor({ entryId, parentId, onSaved, onCancel }: Cred
     const input: CredentialEntryInput = {
       id: entryId ?? null,
       parentId: parentId ?? null,
-      kind,
-      name: name.trim(),
-      fields,
+      kind: 'ssh',
+      name: ensureStoreSuffix(name.trim()),
+      fields: {
+        user: user.trim() || null,
+        password: password || null,
+        privateKey: privateKey.trim() || null,
+        privateKeyPath: privateKeyPath.trim() || null,
+        passphrase: passphrase || null,
+        notes: notes.trim() || null,
+      },
       description: description.trim() || null,
     };
     try {
-      await credentialsUpsertEntry(input);
-      onSaved?.();
+      const dto = await credentialsUpsertEntry(input);
+      setSnapshot(current); // saved — no longer dirty
+      onSaved?.(dto.id);
     } catch (e: unknown) {
       setError(messageOf(e));
     } finally {
@@ -107,23 +198,25 @@ export function CredentialsEditor({ entryId, parentId, onSaved, onCancel }: Cred
 
   return (
     <div
+      className="wg-cred-editor"
       style={{
-        height: '100%',
-        overflow: 'auto',
+        flex: '1 1 auto',
+        minHeight: 0,
+        overflowY: 'auto',
         padding: 16,
         color: 'var(--wg-foreground, #e0e0e0)',
         background: 'var(--wg-background, #1e1e1e)',
       }}
     >
-      <div style={{ maxWidth: 720, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div style={{ maxWidth: 780, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <span className={codiconClass('key')} style={{ fontSize: 18 }} />
+          <span className={codiconClass('remote')} style={{ fontSize: 18 }} />
           <div>
             <div style={{ fontSize: 16, fontWeight: 600 }}>
-              {entryId ? 'Edit credential' : 'New credential'}
+              {entryId ? 'Edit SSH identity' : 'New SSH identity'}
             </div>
             <div style={{ color: 'var(--wg-descriptionForeground, #999999)', fontSize: 12 }}>
-              Secrets are encrypted at rest. Only this entry is fetched with decrypted fields.
+              Used to authenticate SSH servers. Secrets are encrypted at rest.
             </div>
           </div>
         </div>
@@ -135,119 +228,130 @@ export function CredentialsEditor({ entryId, parentId, onSaved, onCancel }: Cred
         ) : null}
 
         {loading ? (
-          <div style={{ color: 'var(--wg-descriptionForeground, #999999)', fontSize: 12 }}>Loading credential…</div>
+          <div style={{ color: 'var(--wg-descriptionForeground, #999999)', fontSize: 12 }}>Loading identity…</div>
         ) : (
           <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
             <Field label="Name">
               <input
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder="e.g. Production MySQL"
+                placeholder="e.g. Personal key"
                 required
                 style={{ ...inputStyle, width: '100%' }}
               />
             </Field>
 
-            <Field label="Kind">
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                {KINDS.map((item) => (
-                  <button
-                    key={item.id}
-                    type="button"
-                    onClick={() => setKind(item.id)}
-                    style={{
-                      ...btnBase,
-                      background: kind === item.id ? 'var(--wg-button-hoverBackground, rgba(255,255,255,0.12))' : 'transparent',
-                      borderColor: kind === item.id ? 'var(--wg-focusBorder, #007acc)' : 'var(--wg-border, #ffffff22)',
-                    }}
-                  >
-                    <span className={codiconClass(item.icon)} style={{ marginRight: 8 }} />
-                    {item.label}
-                  </button>
-                ))}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+              <Field label="User">
+                <input
+                  value={user}
+                  onChange={(e) => setUser(e.target.value)}
+                  placeholder="e.g. root, deploy"
+                  autoComplete="off"
+                  style={{ ...inputStyle, width: '100%' }}
+                />
+              </Field>
+              <Field label="Password">
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="SSH login password"
+                  autoComplete="new-password"
+                  title="User password for password authentication (encrypted at rest)"
+                  style={{ ...inputStyle, width: '100%' }}
+                />
+              </Field>
+            </div>
+
+            <Field label="Private key" hint="Paste the key below or load it from a file — its contents are stored encrypted in the vault.">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <button type="button" onClick={() => keyFileRef.current?.click()} style={btnSecondary}>
+                  <span className={codiconClass('folder-opened')} style={{ marginRight: 6 }} />
+                  Load from file…
+                </button>
+                {privateKeyPath ? (
+                  <span style={{ color: 'var(--wg-descriptionForeground, #999999)', fontSize: 11, display: 'inline-flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
+                    <span className={codiconClass('check')} />
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Loaded from {privateKeyPath}</span>
+                    <button
+                      type="button"
+                      title="Clear key"
+                      onClick={() => {
+                        setPrivateKey('');
+                        setPrivateKeyPath('');
+                      }}
+                      style={{ ...btnSecondary, padding: '0 4px' }}
+                    >
+                      <span className={codiconClass('close')} />
+                    </button>
+                  </span>
+                ) : null}
               </div>
+              <input
+                ref={keyFileRef}
+                type="file"
+                onChange={handleKeyFile}
+                style={{ display: 'none' }}
+              />
+              <textarea
+                value={privateKey}
+                onChange={(e) => {
+                  setPrivateKey(e.target.value);
+                  if (privateKeyPath && e.target.value.trim() === '') setPrivateKeyPath('');
+                }}
+                placeholder={'-----BEGIN OPENSSH PRIVATE KEY-----\n…paste key contents here…\n-----END OPENSSH PRIVATE KEY-----'}
+                spellCheck={false}
+                style={{ ...inputStyle, width: '100%', minHeight: 140, fontFamily: 'monospace', fontSize: 12, resize: 'vertical' }}
+              />
+              {(() => {
+                const info = keyInfoOf(privateKey);
+                if (!info) return null;
+                return (
+                  <span style={{ fontSize: 11, display: 'inline-flex', alignItems: 'center', gap: 4, color: info.ok ? 'var(--wg-descriptionForeground, #999999)' : 'var(--wg-errorForeground, #ff6b6b)' }}>
+                    <span className={codiconClass(info.ok ? 'check' : 'warning')} />
+                    {info.label}
+                  </span>
+                );
+              })()}
+            </Field>
+
+            <Field label="Key passphrase">
+              <input
+                type="password"
+                value={passphrase}
+                onChange={(e) => setPassphrase(e.target.value)}
+                placeholder="Leave blank if the key has no passphrase"
+                autoComplete="new-password"
+                title="Passphrase protecting the private key (encrypted at rest)"
+                style={{ ...inputStyle, width: '100%' }}
+              />
             </Field>
 
             <Field label="Description">
               <input
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
-                placeholder="Optional note about this credential"
+                placeholder="Optional summary shown in the vault"
                 style={{ ...inputStyle, width: '100%' }}
               />
             </Field>
 
-            {kind === 'login' ? (
-              <>
-                <Field label="Username / Email">
-                  <input value={fields.username ?? ''} onChange={(e) => set('username', e.target.value)} style={{ ...inputStyle, width: '100%' }} />
-                </Field>
-                <Field label="Password">
-                  <input type="password" value={fields.password ?? ''} onChange={(e) => set('password', e.target.value)} style={{ ...inputStyle, width: '100%' }} />
-                </Field>
-                <Field label="URL">
-                  <input value={fields.title ?? ''} onChange={(e) => set('title', e.target.value)} placeholder="https://…" style={{ ...inputStyle, width: '100%' }} />
-                </Field>
-              </>
-            ) : null}
+            <Field label="Notes">
+              <textarea
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                placeholder="Optional notes (e.g. which servers this identity is used for)"
+                style={{ ...inputStyle, width: '100%', minHeight: 90, resize: 'vertical' }}
+              />
+            </Field>
 
-            {kind === 'card' ? (
-              <>
-                <Field label="Cardholder">
-                  <input value={fields.cardholder ?? ''} onChange={(e) => set('cardholder', e.target.value)} style={{ ...inputStyle, width: '100%' }} />
-                </Field>
-                <Field label="Card number">
-                  <input value={fields.cardNumber ?? ''} onChange={(e) => set('cardNumber', e.target.value)} style={{ ...inputStyle, width: '100%' }} />
-                </Field>
-                <Field label="Expiry">
-                  <input value={fields.expiry ?? ''} onChange={(e) => set('expiry', e.target.value)} placeholder="MM/YY" style={{ ...inputStyle, width: '100%' }} />
-                </Field>
-              </>
-            ) : null}
-
-            {kind === 'identity' ? (
-              <>
-                <Field label="Full name">
-                  <input value={fields.fullName ?? ''} onChange={(e) => set('fullName', e.target.value)} style={{ ...inputStyle, width: '100%' }} />
-                </Field>
-                <Field label="Email">
-                  <input value={fields.email ?? ''} onChange={(e) => set('email', e.target.value)} style={{ ...inputStyle, width: '100%' }} />
-                </Field>
-                <Field label="Phone">
-                  <input value={fields.phone ?? ''} onChange={(e) => set('phone', e.target.value)} style={{ ...inputStyle, width: '100%' }} />
-                </Field>
-                <Field label="Address">
-                  <input value={fields.address ?? ''} onChange={(e) => set('address', e.target.value)} style={{ ...inputStyle, width: '100%' }} />
-                </Field>
-              </>
-            ) : null}
-
-            {kind === 'note' ? (
-              <Field label="Note content">
-                <textarea
-                  value={fields.noteContent ?? ''}
-                  onChange={(e) => set('noteContent', e.target.value)}
-                  style={{ ...inputStyle, width: '100%', minHeight: 120, fontFamily: 'monospace', fontSize: 12 }}
-                />
-              </Field>
-            ) : null}
-
-            {kind === 'unknown' ? (
-              <Field label="Custom (free text)">
-                <textarea
-                  value={(fields.noteContent as string) ?? ''}
-                  onChange={(e) => set('noteContent', e.target.value)}
-                  style={{ ...inputStyle, width: '100%', minHeight: 120, fontFamily: 'monospace', fontSize: 12 }}
-                />
-              </Field>
-            ) : null}
-
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', paddingTop: 4 }}>
               {onCancel ? (
-                <button type="button" onClick={onCancel} style={btnSecondary}>Cancel</button>
+                <button type="button" onClick={onCancel} disabled={saving} style={btnSecondary}>Cancel</button>
               ) : null}
               <button type="submit" disabled={saving} style={btnPrimary}>
-                {saving ? 'Saving…' : entryId ? 'Update credential' : 'Create credential'}
+                {saving ? 'Saving…' : entryId ? 'Save identity' : 'Create identity'}
               </button>
             </div>
           </form>
@@ -257,10 +361,13 @@ export function CredentialsEditor({ entryId, parentId, onSaved, onCancel }: Cred
   );
 }
 
-function Field({ label, children }: { label: string; children?: React.ReactNode }) {
+function Field({ label, hint, children }: { label: string; hint?: string; children?: React.ReactNode }) {
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 0 }}>
       <label style={{ color: 'var(--wg-sidebarTitle-foreground, #cccccc)', fontSize: 12 }}>{label}</label>
+      {hint ? (
+        <span style={{ color: 'var(--wg-descriptionForeground, #999999)', fontSize: 11 }}>{hint}</span>
+      ) : null}
       {children ?? <span style={{ color: 'var(--wg-descriptionForeground, #999999)', fontSize: 12 }}>—</span>}
     </div>
   );
@@ -270,7 +377,7 @@ function messageOf(e: unknown): string {
   if (e instanceof Error) return e.message;
   if (typeof e === 'string') return e;
   if (e && typeof e === 'object' && 'message' in e) return String((e as { message: unknown }).message);
-  return 'Failed to save credential.';
+  return 'Failed to save identity.';
 }
 
 const inputStyle: React.CSSProperties = {

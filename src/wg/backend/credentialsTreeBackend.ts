@@ -1,6 +1,7 @@
 import type { TreeBackend, TreeNode } from "./BackendAdapter";
 import type { CredentialNodeDto } from "./types";
 import { credentialsGetTree } from "./ipc";
+import { displayNameOf } from "../shell/credentials/vaultNaming";
 
 export type CredentialsTreeNode = TreeNode<CredentialNodeDto>;
 
@@ -42,7 +43,8 @@ export function createCredentialsTreeBackend(
     const walk = (node: CredentialNodeDto, parentId: string | null) => {
       const treeNode: CredentialsTreeNode = {
         id: node.id,
-        label: node.name,
+        // Entries hide the on-disk `.store` suffix (see vaultNaming).
+        label: displayNameOf(node),
         icon: node.type === 'folder' ? 'folder' : iconForKind(node.kind),
         tooltip: node.description ?? undefined,
         collapsible: node.type === 'folder',
@@ -118,17 +120,12 @@ export function createCredentialsTreeBackend(
   };
 }
 
-function iconForKind(kind?: string): string {
+export function iconForKind(kind?: string): string {
   switch (kind) {
-    case 'login':
+    case 'ssh':
       return 'key';
-    case 'card':
-      return 'credit-card';
-    case 'identity':
-      return 'account';
-    case 'note':
-      return 'note';
     default:
+      // Legacy entries written by the old generic-credential schema.
       return 'symbol-misc';
   }
 }

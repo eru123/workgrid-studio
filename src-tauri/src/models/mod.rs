@@ -159,32 +159,35 @@ pub struct ConnectionHandle {
 /// Opaque session id (a pinned connection for cross-command affinity).
 pub type SessionId = String;
 
-//  ------ Credentials store
+//  ------ Credentials store (SSH identities)
 
+// The vault stores SSH identities (user + private key path + passphrase)
+// consumed later by the SSH server / tunnel connections. `Unknown` only
+// appears when loading files written by the old generic-credential schema.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum CredentialKind {
-    Login,
-    Card,
-    Identity,
-    Note,
+    Ssh,
     Unknown,
 }
 
+// Wire format is lowercase ("ssh" | "unknown"); Display and FromStr keep
+// that contract so kinds round-trip through persistence and DTOs unchanged.
 impl std::fmt::Display for CredentialKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
+        let s = match self {
+            CredentialKind::Ssh => "ssh",
+            CredentialKind::Unknown => "unknown",
+        };
+        write!(f, "{s}")
     }
 }
 
 impl std::str::FromStr for CredentialKind {
     type Err = ();
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(match s {
-            "login" => CredentialKind::Login,
-            "card" => CredentialKind::Card,
-            "identity" => CredentialKind::Identity,
-            "note" => CredentialKind::Note,
+        Ok(match s.to_ascii_lowercase().as_str() {
+            "ssh" => CredentialKind::Ssh,
             _ => CredentialKind::Unknown,
         })
     }
@@ -193,30 +196,24 @@ impl std::str::FromStr for CredentialKind {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct CredentialFields {
+    /// SSH user the identity logs in as.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub username: Option<String>,
+    pub user: Option<String>,
+    /// SSH user password (password authentication). Secret: sealed at rest.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub password: Option<String>,
+    /// Private key file contents. Secret: sealed at rest.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub title: Option<String>,
+    pub private_key: Option<String>,
+    /// Where the key was loaded from (provenance only; the contents live in
+    /// `private_key`). Not a secret.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub card_number: Option<String>,
+    pub private_key_path: Option<String>,
+    /// Passphrase protecting the private key. Secret: sealed at rest.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cardholder: Option<String>,
+    pub passphrase: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub expiry: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub full_name: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub email: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub phone: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub address: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub note_content: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub custom: Option<serde_json::Value>,
+    pub notes: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -276,6 +273,9 @@ pub struct CredentialEntryDto {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CredentialEntryInput {
+    /// Existing entry id to update in place. None/null creates a new entry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
     pub parent_id: Option<String>,
     pub kind: String,
     pub name: String,
