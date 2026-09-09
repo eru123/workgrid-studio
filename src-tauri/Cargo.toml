@@ -41,7 +41,7 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 tiberius = { version = "0.12", default-features = false, features = ["tokio", "rustls"] }
 
 # SSH tunneling (russh bundles key handling via russh::keys since 0.50)
-russh = "0.61"
+russh = "0.62"
 
 # Credential encryption
 aes-gcm = "0.10"
